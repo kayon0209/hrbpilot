@@ -5,7 +5,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev)
 [![Milvus](https://img.shields.io/badge/Milvus-Vector_DB-1A73E8?logo=vector-database&logoColor=white)](https://milvus.io)
-[![License](https://img.shields.io/badge/License-Proprietary-lightgrey)](./PRD.md)
+[![License](https://img.shields.io/badge/License-Proprietary-lightgrey)](./LICENSE)
 
 ## 核心场景
 
