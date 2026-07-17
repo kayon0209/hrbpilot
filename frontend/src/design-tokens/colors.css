@@ -1,0 +1,78 @@
+/* HRBP AI Workbench — Hallmark-driven color system
+ *
+ * Principles:
+ *   - OKLCH only (perceptually uniform, predictable lightness)
+ *   - Single anchor hue (50° — warm stone) tinting all neutrals
+ *   - One accent (#E85D04 — deep orange, 3% footprint rule)
+ *   - No pure black/white — always trace chroma
+ *
+ * Anchor hue: 50 (warm-stone)
+ *   paper ~ L96   ·   ink ~ L20   ·   rule ~ L80
+ */
+
+:root {
+  /* === Surface (Paper) === */
+  --color-paper:     oklch(97% 0.008 50);
+  --color-paper-2:   oklch(94% 0.010 50);
+  --color-paper-3:   oklch(90% 0.012 50);
+
+  /* === Rules & Borders === */
+  --color-rule:      oklch(84% 0.010 50);
+  --color-rule-2:    oklch(72% 0.012 50);
+
+  /* === Text (Ink) === */
+  --color-muted:     oklch(52% 0.010 50);
+  --color-neutral:   oklch(38% 0.012 50);
+  --color-ink-2:     oklch(28% 0.012 50);
+  --color-ink:       oklch(20% 0.012 50);
+
+  /* === Accent (one only, ≤3% viewport footprint) === */
+  --color-accent:            #E85D04;
+  --color-accent-hover:      #C94A03;
+  --color-accent-soft:       oklch(94% 0.04 50);
+  --color-accent-ink:        oklch(50% 0.18 40);
+
+  /* === Focus === */
+  --color-focus:             #E85D04;
+  --color-focus-ring:        oklch(55% 0.19 50 / 30%);
+
+  /* === Semantic (tinted to anchor) === */
+  --color-success:     oklch(55% 0.15 145);
+  --color-success-soft: oklch(94% 0.04 145);
+  --color-warning:     oklch(60% 0.16 70);
+  --color-warning-soft: oklch(96% 0.06 70);
+  --color-danger:      oklch(50% 0.17 25);
+  --color-danger-soft:  oklch(95% 0.03 25);
+  --color-info:        oklch(55% 0.14 250);
+  --color-info-soft:    oklch(94% 0.03 250);
+
+  /* === Scene Accent Hints (subtle, not full accent) === */
+  --scene-policy-qa:       oklch(55% 0.12 270);   /* violet indigo */
+  --scene-interview:       oklch(55% 0.13 230);   /* sky */
+  --scene-voice-insight:   oklch(55% 0.14 155);   /* emerald */
+  --scene-weekly-report:   oklch(60% 0.13 70);    /* amber */
+  --scene-culture:         oklch(55% 0.14 10);    /* rose */
+
+  --scene-policy-qa-soft:    oklch(94% 0.03 270);
+  --scene-interview-soft:    oklch(94% 0.03 230);
+  --scene-voice-insight-soft: oklch(94% 0.03 155);
+  --scene-weekly-report-soft: oklch(96% 0.04 70);
+  --scene-culture-soft:      oklch(94% 0.03 10);
+
+  /* === Layout Surfaces === */
+  --surface-sidebar:  oklch(99% 0.004 50);
+  --surface-topbar:   oklch(99% 0.004 50);
+  --surface-card:     oklch(99% 0.004 50);
+  --surface-hover:    oklch(96% 0.008 50);
+  --surface-page:     oklch(97% 0.008 50);
+
+  /* === Shadows (very subtle — no heavy AI drop-shadows) === */
+  --shadow-xs: 0 1px 2px oklch(0% 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px oklch(0% 0 0 / 0.06);
+  --shadow-md: 0 2px 6px oklch(0% 0 0 / 0.08);
+
+  /* === Transitions === */
+  --transition-fast:   150ms ease;
+  --transition-normal: 220ms ease;
+  --transition-slow:   350ms ease;
+}

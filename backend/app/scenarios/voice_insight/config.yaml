@@ -1,0 +1,19 @@
+scenario_id: voice_insight
+knowledge_base_id: voice_kb
+retrieval_strategy: dense
+retrieval_top_k: 10
+rerank_enabled: false
+prompt_template: prompts/voice_insight.txt
+output_schema: InsightReportResponse
+guardrail_rules:
+  input:
+    - pii_detection
+  output:
+    - toxicity_detection
+eval_metrics:
+  - cluster_quality
+  - risk_signal_accuracy
+fallback_strategy: data_insufficient
+max_tokens: 2048
+temperature: 0.3
+required_role: hrbp

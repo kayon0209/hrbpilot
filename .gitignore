@@ -1,0 +1,34 @@
+# HRBP AI Workbench
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.egg
+
+# Node
+node_modules/
+dist/
+
+# Docker / secrets
+.env
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+
+# Excluded from public repo
+backend/kb_docs/
+backend/interview_samples/
+.codebuddy/
+.workbuddy/

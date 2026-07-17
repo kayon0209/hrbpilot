@@ -1,0 +1,19 @@
+scenario_id: interview_digest
+knowledge_base_id: interview_kb
+retrieval_strategy: dense
+retrieval_top_k: 3
+rerank_enabled: false
+prompt_template: prompts/interview_digest.txt
+output_schema: InterviewDigestResponse
+guardrail_rules:
+  input:
+    - pii_detection
+  output:
+    - toxicity_detection
+eval_metrics:
+  - extraction_accuracy
+  - risk_signal_relevance
+fallback_strategy: data_insufficient
+max_tokens: 2048
+temperature: 0.2
+required_role: hrbp

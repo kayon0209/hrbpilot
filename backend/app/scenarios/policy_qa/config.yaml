@@ -1,0 +1,21 @@
+scenario_id: policy_qa
+knowledge_base_id: policy_kb
+retrieval_strategy: hybrid
+retrieval_top_k: 5
+rerank_enabled: true
+prompt_template: prompts/policy_qa.txt
+output_schema: QAResponse
+guardrail_rules:
+  input:
+    - pii_detection
+    - prompt_injection
+  output:
+    - citation_verification
+    - factuality_check
+eval_metrics:
+  - citation_accuracy
+  - answer_relevance
+fallback_strategy: no_evidence
+max_tokens: 1024
+temperature: 0.1
+required_role: employee

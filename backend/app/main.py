@@ -1,0 +1,101 @@
+"""HRBP AI Workbench — FastAPI application entry point.
+
+Middleware chain (in order):
+  Request → RequestID → CORS → TenantContext → Auth → RBAC → Handler → ErrorHandler → Response
+
+All routes and middleware are registered here.
+"""
+
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+
+from app.config.settings import settings
+from app.shared.logger import setup_logging, get_logger
+from app.shared.errors import AppError
+from app.shared.error_handler import app_error_handler, unhandled_error_handler
+from app.access.middleware.request_id import RequestIDMiddleware
+from app.access.middleware.cors import add_cors_middleware
+from app.access.middleware.tenant import TenantContextMiddleware
+from app.access.middleware.auth import AuthMiddleware
+from app.access.middleware.rbac import RBACMiddleware
+from app.access.middleware.security_headers import SecurityHeadersMiddleware
+from app.access.routes.health import router as health_router
+from app.access.routes.auth import router as auth_router
+from app.access.routes.policy_qa import router as policy_qa_router
+from app.access.routes.interview_digest import router as interview_router
+from app.access.routes.voice_insight import router as voice_router
+from app.access.routes.weekly_report import router as weekly_router
+from app.access.routes.culture_content import router as culture_router
+from app.access.routes.kb import router as kb_router
+from app.access.routes.settings import router as settings_router
+from app.evaluation.feedback import router as eval_router
+from app.access.routes.eval import router as eval_metrics_router
+
+logger = get_logger(__name__)
+
+# Initialize structured logging before anything else
+setup_logging()
+
+
+def create_app() -> FastAPI:
+    """Application factory — creates and configures the FastAPI app."""
+    app = FastAPI(
+        title=settings.app_name,
+        version="0.1.0",
+        docs_url="/docs" if settings.app_debug else None,
+        redoc_url="/redoc" if settings.app_debug else None,
+    )
+
+    # --- Middleware (order: SecurityHeaders → RequestID → CORS → Tenant → Auth → RBAC → Handler) ---
+    app.add_middleware(RBACMiddleware)       # innermost
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(TenantContextMiddleware)
+    add_cors_middleware(app)
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)  # outermost
+
+    # --- Exception handlers ---
+    app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(Exception, unhandled_error_handler)
+
+    # --- Routes ---
+    app.include_router(health_router, prefix="/api")
+    app.include_router(auth_router)
+    app.include_router(policy_qa_router)
+    app.include_router(interview_router)
+    app.include_router(voice_router)
+    app.include_router(weekly_router)
+    app.include_router(culture_router)
+    app.include_router(kb_router)
+    app.include_router(settings_router)
+    app.include_router(eval_router)
+    app.include_router(eval_metrics_router)
+
+    logger.info("app_created", app=settings.app_name, env=settings.app_env)
+
+    return app
+
+
+async def _validation_error_handler(request, exc: RequestValidationError):
+    """Map FastAPI's built-in validation errors to our AppError format."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    errors = [
+        {
+            "field": ".".join(str(loc) for loc in err.get("loc", [])),
+            "message": err.get("msg", ""),
+            "type": err.get("type", ""),
+        }
+        for err in exc.errors()
+    ]
+    return {
+        "code": "VALIDATION_ERROR",
+        "status": 422,
+        "message": "Request validation failed",
+        "request_id": request_id,
+        "errors": errors,
+    }
+
+
+# Application instance
+app = create_app()

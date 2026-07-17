@@ -1,0 +1,18 @@
+scenario_id: weekly_report
+knowledge_base_id: weekly_kb
+retrieval_strategy: hybrid
+retrieval_top_k: 5
+rerank_enabled: true
+prompt_template: prompts/weekly_report.txt
+output_schema: WeeklyReportResponse
+guardrail_rules:
+  input: []
+  output:
+    - factuality_check
+eval_metrics:
+  - data_coverage
+  - action_relevance
+fallback_strategy: data_insufficient
+max_tokens: 2048
+temperature: 0.4
+required_role: hrbp

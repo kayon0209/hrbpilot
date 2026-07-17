@@ -1,0 +1,18 @@
+scenario_id: culture_content
+knowledge_base_id: culture_kb
+retrieval_strategy: hybrid
+retrieval_top_k: 5
+rerank_enabled: true
+prompt_template: prompts/culture_content.txt
+output_schema: CultureContentResponse
+guardrail_rules:
+  input: []
+  output:
+    - toxicity_detection
+eval_metrics:
+  - content_quality
+  - tone_consistency
+fallback_strategy: raw_preserve
+max_tokens: 3072
+temperature: 0.7
+required_role: hrbp
