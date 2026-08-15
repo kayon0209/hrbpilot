@@ -1,34 +1,38 @@
-# HRBP AI Workbench
-
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
-.venv/
-*.egg
-
-# Node
-node_modules/
+.eggs/
+build/
 dist/
 
-# Docker / secrets
-.env
-*.local
+# --- Virtual envs ---
+.venv/
+venv/
+env/
 
-# IDE
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Tooling caches ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- IDE ---
 .idea/
 .vscode/
 *.swp
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
 
-# Test artifacts
-.pytest_cache/
-
-# Excluded from public repo
-backend/kb_docs/
-backend/interview_samples/
-.codebuddy/
-.workbuddy/
+# --- Local data artifacts (keep kb_docs / interview_samples as project assets) ---
+*.log
+data/local_db*
