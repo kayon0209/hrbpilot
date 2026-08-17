@@ -58,7 +58,7 @@ Backend files only change in Task 9 for CORS/static deployment routing if the pr
 - Produces `App(): JSX.Element` mounted by `main.tsx`.
 - Produces `VITE_API_BASE_URL` with default `""`; Vite proxies `/api` and `/openapi.json` to `http://localhost:8001`.
 
-- [ ] **Step 1: Write the failing smoke test**
+- [x] **Step 1: Write the failing smoke test**
 
 ```tsx
 import { render, screen } from '@testing-library/react'
@@ -70,12 +70,12 @@ test('renders the frontend shell', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `corepack pnpm --dir web test --run tests/app-smoke.test.tsx`
 Expected: failure because the frontend package and `App` do not exist.
 
-- [ ] **Step 3: Create project conventions and minimal implementation**
+- [x] **Step 3: Create project conventions and minimal implementation**
 
 `web/AGENTS.md` must define feature-folder ownership, `*.module.css` naming, no mock business data, no secret logging, and deletion of `playwright-report/` and `test-results/` before commits. Add React, React Router, TanStack Query, Zustand, Zod, Vitest and Testing Library as project-local dependencies. Implement `App` with the approved title, token imports and a minimal visible shell.
 
@@ -85,12 +85,12 @@ export function App() {
 }
 ```
 
-- [ ] **Step 4: Verify foundation checks**
+- [x] **Step 4: Verify foundation checks**
 
 Run: `corepack pnpm --dir web test --run tests/app-smoke.test.tsx && corepack pnpm --dir web build`
 Expected: smoke test and production bundle pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web
