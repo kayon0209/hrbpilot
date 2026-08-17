@@ -101,6 +101,15 @@ services:
         condition: service_started
     command: ["celery", "-A", "app.shared.celery_app:celery_app", "worker", "--loglevel=info"]
 
+  web:
+    build:
+      context: ./web
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "3000:80"
+
 volumes:
   etcd_data:
   minio_data:

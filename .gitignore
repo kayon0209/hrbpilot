@@ -24,6 +24,14 @@ env/
 .coverage
 htmlcov/
 
+# --- Frontend tooling ---
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+playwright-report/
+test-results/
+
 # --- IDE ---
 .idea/
 .vscode/
