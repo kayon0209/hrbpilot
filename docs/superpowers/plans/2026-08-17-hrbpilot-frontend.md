@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-17-hrbpilot-frontend-design.md`
 
+**Execution status (2026-08-17):** Tasks 1–9 implemented. Verified with ESLint, 9 Vitest tests, TypeScript production build, Docker image build, live Nginx `/api/ready` proxy, and Chromium login-page acceptance. The authenticated Playwright flow remains environment-gated so credentials never enter source or command logs.
+
 ## Global Constraints
 
 - Desktop-first at 1440px; 375px supports login, status viewing and lightweight policy Q&A only.
