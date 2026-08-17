@@ -3,10 +3,10 @@
 RLS enabled via tenant_id.
 """
 
-from sqlalchemy import String, Integer, Float, Text, ForeignKey
+from sqlalchemy import Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.data.models.base import Base, UUIDPrimaryKey, TimestampMixin, TenantMixin
+from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 
 
 class ChatSession(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):

@@ -1,31 +1,40 @@
 """HRBP AI Workbench — Knowledge Base management API routes.
 
-POST /api/kb/create → Create a new knowledge base
-GET  /api/kb/list → List knowledge bases for tenant
-GET  /api/kb/{kb_id} → Get KB details
-POST /api/kb/{kb_id}/upload → Upload document to KB
-POST /api/kb/{kb_id}/ingest → Trigger ingestion pipeline
-GET  /api/kb/{kb_id}/documents → List documents in KB
-DELETE /api/kb/{kb_id}/documents/{doc_id} → Delete a document
+POST   /api/kb/create                        → create KB (PostgreSQL)
+GET    /api/kb/list                          → list KBs for tenant
+GET    /api/kb/{kb_id}                       → KB details
+POST   /api/kb/{kb_id}/upload                → upload doc → MinIO + Document
+POST   /api/kb/{kb_id}/ingest                → trigger async ingestion task
+GET    /api/kb/{kb_id}/documents             → list docs + chunk counts
+DELETE /api/kb/{kb_id}/documents/{doc_id}    → delete doc (MinIO + PG + Milvus)
+POST   /api/kb/delete                        → delete KB (MinIO + PG + Milvus)
 """
 
+import json
 import uuid
-from fastapi import APIRouter, Request, UploadFile, File
-from pydantic import BaseModel
+from typing import Any
 
-from app.rag.ingestion.pipeline import IngestionPipeline
+from fastapi import APIRouter, Depends, File, Request, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.access.middleware.decorators import require_auth, require_role
-from app.shared.errors import NotFoundError
+from app.data.database import get_db
+from app.data.models.infra import AsyncTask
+from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
+from app.rag.ingestion.pipeline import SUPPORTED_TYPES, sha256_hex
+from app.rag.ingestion.tasks import dispatch_ingestion_task
+from app.rag.storage.milvus import MilvusStore
+from app.rag.storage.object_store import ObjectStore
+from app.shared.errors import ConflictError, NotFoundError, ValidationError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
 
-ingestion = IngestionPipeline()
-
-# In-memory KB store (replace with DB in production)
-_kb_store: dict[str, dict] = {}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 class CreateKBBody(BaseModel):
@@ -35,32 +44,65 @@ class CreateKBBody(BaseModel):
     chunk_strategy: str = "fixed_512"
 
 
+class DeleteKBBody(BaseModel):
+    kb_id: str
+
+
+def _kb_to_dict(kb: KnowledgeBase, document_count: int = 0, total_chunks: int = 0) -> dict[str, Any]:
+    return {
+        "id": kb.id,
+        "tenant_id": kb.tenant_id,
+        "name": kb.name,
+        "scenario_id": kb.scenario_id,
+        "chunk_strategy": kb.chunk_strategy,
+        "chunk_size": kb.chunk_size,
+        "status": kb.status,
+        "document_count": document_count,
+        "total_chunks": total_chunks,
+        "created_at": kb.created_at.isoformat() if kb.created_at else None,
+        "updated_at": kb.updated_at.isoformat() if kb.updated_at else None,
+    }
+
+
+def _doc_to_dict(doc: Document, chunk_count: int = 0) -> dict[str, Any]:
+    return {
+        "id": doc.id,
+        "kb_id": doc.kb_id,
+        "tenant_id": doc.tenant_id,
+        "filename": doc.filename,
+        "file_type": doc.file_type,
+        "size_bytes": doc.size_bytes,
+        "content_sha256": doc.content_sha256,
+        "status": doc.status,
+        "error_message": doc.error_message,
+        "chunk_count": chunk_count,
+        "indexed_at": doc.indexed_at.isoformat() if doc.indexed_at else None,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+    }
+
+
 @router.post("/create")
 @require_auth
 @require_role("hr_manager")
 async def create_kb(
-    request: Request,
     body: CreateKBBody,
-):
-    """Create a new knowledge base."""
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     tenant_id = getattr(request.state, "tenant_id", "default")
-
-    kb_id = str(uuid.uuid4())
-    kb = {
-        "id": kb_id,
-        "tenant_id": tenant_id,
-        "name": body.name,
-        "scenario_id": body.scenario_id,
-        "description": body.description,
-        "chunk_strategy": body.chunk_strategy,
-        "status": "active",
-        "document_count": 0,
-        "total_chunks": 0,
-    }
-    _kb_store[kb_id] = kb
-
-    logger.info("kb_created", kb_id=kb_id, name=kb["name"], tenant_id=tenant_id)
-    return kb
+    kb = KnowledgeBase(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        name=body.name or "未命名知识库",
+        scenario_id=body.scenario_id,
+        chunk_strategy=body.chunk_strategy,
+        chunk_size=512,
+        status="active",
+    )
+    session.add(kb)
+    await session.flush()
+    logger.info("kb_created", kb_id=kb.id, name=kb.name, tenant_id=tenant_id)
+    return _kb_to_dict(kb)
 
 
 @router.get("/list")
@@ -68,23 +110,40 @@ async def create_kb(
 async def list_kbs(
     request: Request,
     scenario_id: str | None = None,
-):
-    """List knowledge bases for the current tenant."""
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     tenant_id = getattr(request.state, "tenant_id", "default")
-    kbs = [kb for kb in _kb_store.values() if kb["tenant_id"] == tenant_id]
+    stmt = select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id)
     if scenario_id:
-        kbs = [kb for kb in kbs if kb["scenario_id"] == scenario_id]
-    return {"knowledge_bases": kbs, "total": len(kbs)}
+        stmt = stmt.where(KnowledgeBase.scenario_id == scenario_id)
+    kbs = (await session.execute(stmt)).scalars().all()
+    return {"knowledge_bases": [_kb_to_dict(kb) for kb in kbs], "total": len(kbs)}
 
 
 @router.get("/{kb_id}")
 @require_auth
-async def get_kb(kb_id: str, request: Request):
-    """Get knowledge base details."""
-    kb = _kb_store.get(kb_id)
-    if not kb:
+async def get_kb(
+    kb_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant_id = getattr(request.state, "tenant_id", "default")
+    kb = (
+        await session.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
-    return kb
+
+    counts = (
+        await session.execute(
+            select(func.count(Document.id), func.count(DocumentChunk.id))
+            .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+            .where(Document.kb_id == kb_id)
+        )
+    ).one()
+    return _kb_to_dict(kb, document_count=int(counts[0]), total_chunks=int(counts[1] or 0))
 
 
 @router.post("/{kb_id}/upload")
@@ -94,29 +153,78 @@ async def upload_document(
     kb_id: str,
     request: Request,
     file: UploadFile = File(...),
-):
-    """Upload a document to a knowledge base."""
-    kb = _kb_store.get(kb_id)
-    if not kb:
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant_id = getattr(request.state, "tenant_id", "default")
+    kb = (
+        await session.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
 
+    filename = file.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in SUPPORTED_TYPES:
+        raise ValidationError(f"不支持的文件类型 .{ext or '(无扩展名)'}；仅支持 {', '.join(sorted(SUPPORTED_TYPES))}")
+
     content = await file.read()
+    if len(content) == 0:
+        raise ValidationError("文件内容为空")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValidationError(f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+
+    content_sha256 = sha256_hex(content)
+
+    # Hash dedup — never silently create a duplicate index for the same bytes.
+    existing = (
+        (
+            await session.execute(
+                select(Document).where(Document.kb_id == kb_id, Document.content_sha256 == content_sha256)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        raise ConflictError(
+            f"相同内容的文件已存在（doc_id={existing.id}），跳过重复上传",
+            resource="document",
+        )
 
     doc_id = str(uuid.uuid4())
-    doc = {
-        "id": doc_id,
-        "kb_id": kb_id,
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "size_bytes": len(content),
-        "status": "uploaded",
-        "indexed_at": None,
-    }
+    s3_key = f"{kb_id}/{doc_id}/{filename or 'document'}"
 
-    kb["document_count"] += 1
+    store = ObjectStore()
+    await store.ensure_bucket_async()
+    await store.put_async(s3_key, content, content_type=file.content_type or "application/octet-stream")
 
-    logger.info("kb_document_uploaded", kb_id=kb_id, doc_id=doc_id, filename=file.filename)
-    return doc
+    doc = Document(
+        id=doc_id,
+        tenant_id=tenant_id,
+        kb_id=kb_id,
+        filename=filename,
+        s3_key=s3_key,
+        file_type=ext,
+        content_type=file.content_type,
+        size_bytes=len(content),
+        content_sha256=content_sha256,
+        status="uploaded",
+    )
+    session.add(doc)
+    try:
+        await session.flush()
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        try:
+            await store.delete_async(s3_key)
+        except Exception as cleanup_error:
+            logger.error("orphan_upload_cleanup_failed", key=s3_key, error=str(cleanup_error))
+        raise
+    logger.info("kb_document_uploaded", kb_id=kb_id, doc_id=doc_id, filename=filename)
+    return _doc_to_dict(doc)
 
 
 @router.post("/{kb_id}/ingest")
@@ -125,18 +233,61 @@ async def upload_document(
 async def trigger_ingestion(
     kb_id: str,
     request: Request,
-):
-    """Trigger the ingestion pipeline for a knowledge base."""
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     tenant_id = getattr(request.state, "tenant_id", "default")
-
-    kb = _kb_store.get(kb_id)
-    if not kb:
+    kb = (
+        await session.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
 
-    task_id = await ingestion.start_ingestion(kb_id, tenant_id)
+    # Atomic claim: concurrent requests cannot enqueue the same document twice.
+    claimed_ids = list(
+        (
+            await session.execute(
+                update(Document)
+                .where(
+                    Document.kb_id == kb_id,
+                    Document.tenant_id == tenant_id,
+                    Document.status.in_(["uploaded", "error"]),
+                )
+                .values(status="parsing", error_message=None)
+                .returning(Document.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not claimed_ids:
+        return {"task_id": None, "status": "noop", "message": "没有待处理的文档"}
 
-    logger.info("kb_ingestion_started", kb_id=kb_id, task_id=task_id)
-    return {"task_id": task_id, "status": "processing"}
+    task = AsyncTask(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        type="document_ingestion",
+        status="pending",
+        progress=0,
+        result_json=json.dumps({"kb_id": kb_id, "document_ids": claimed_ids}),
+    )
+    session.add(task)
+    await session.flush()
+    # The worker opens a separate session.  Commit the task first so it cannot
+    # race this request transaction and observe a missing task row.
+    await session.commit()
+
+    try:
+        dispatch_ingestion_task(task.id, tenant_id)
+    except Exception as exc:
+        await session.execute(update(Document).where(Document.id.in_(claimed_ids)).values(status="uploaded"))
+        task.status = "failed"
+        task.error_message = f"Failed to dispatch ingestion worker: {exc}"[:2000]
+        await session.commit()
+        raise
+    logger.info("kb_ingestion_started", kb_id=kb_id, task_id=task.id, documents=len(claimed_ids))
+    return {"task_id": task.id, "status": "processing", "documents": len(claimed_ids)}
 
 
 @router.get("/{kb_id}/documents")
@@ -145,24 +296,42 @@ async def list_documents(
     kb_id: str,
     request: Request,
     limit: int = 50,
-):
-    """List documents in a knowledge base."""
-    return {"documents": [], "total": 0}
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant_id = getattr(request.state, "tenant_id", "default")
+    kb = (
+        await session.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if kb is None:
+        raise NotFoundError("KnowledgeBase", kb_id)
 
+    docs = (
+        (
+            await session.execute(
+                select(Document).where(Document.kb_id == kb_id).order_by(Document.created_at.desc()).limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
-class DeleteKBBody(BaseModel):
-    kb_id: str
+    chunk_counts: dict[str, int] = {
+        str(row[0]): int(row[1])
+        for row in (
+            await session.execute(
+                select(DocumentChunk.document_id, func.count(DocumentChunk.id))
+                .where(DocumentChunk.kb_id == kb_id)
+                .group_by(DocumentChunk.document_id)
+            )
+        ).fetchall()
+    }
 
-
-@router.post("/delete")
-@require_auth
-@require_role("hr_manager")
-async def delete_kb(body: DeleteKBBody, request: Request):
-    kb = _kb_store.pop(body.kb_id, None)
-    if not kb:
-        raise NotFoundError("KnowledgeBase", body.kb_id)
-    logger.info("kb_deleted", kb_id=body.kb_id, name=kb.get("name", ""))
-    return {"status": "deleted", "kb_id": body.kb_id}
+    return {
+        "documents": [_doc_to_dict(d, chunk_count=int(chunk_counts.get(d.id, 0))) for d in docs],
+        "total": len(docs),
+    }
 
 
 @router.delete("/{kb_id}/documents/{doc_id}")
@@ -172,7 +341,79 @@ async def delete_document(
     kb_id: str,
     doc_id: str,
     request: Request,
-):
-    """Delete a document from a knowledge base."""
-    logger.info("kb_document_deleted", kb_id=kb_id, doc_id=doc_id)
-    return {"status": "deleted"}
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant_id = getattr(request.state, "tenant_id", "default")
+    doc = (
+        await session.execute(
+            select(Document).where(Document.id == doc_id, Document.kb_id == kb_id, Document.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if doc is None:
+        raise NotFoundError("Document", doc_id)
+
+    scope: dict[str, Any] = {"document_id": doc_id, "kb_id": kb_id, "minio_key": doc.s3_key}
+
+    # Commit the authoritative metadata deletion first. If external cleanup
+    # fails, stale vectors cannot hydrate and the object is no longer exposed.
+    await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
+    await session.delete(doc)
+    await session.commit()
+
+    try:
+        await ObjectStore().delete_async(doc.s3_key)
+    except Exception as e:
+        logger.warning("minio_delete_failed", key=doc.s3_key, error=str(e))
+
+    try:
+        removed_vectors = await MilvusStore().delete_by_document_async(doc_id)
+    except Exception as e:
+        removed_vectors = 0
+        logger.warning("milvus_delete_failed", document_id=doc_id, error=str(e))
+
+    scope["removed_vectors"] = removed_vectors
+    logger.info("kb_document_deleted", kb_id=kb_id, doc_id=doc_id, vectors=removed_vectors)
+    return {"status": "deleted", **scope}
+
+
+@router.post("/delete")
+@require_auth
+@require_role("hr_manager")
+async def delete_kb(
+    body: DeleteKBBody,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant_id = getattr(request.state, "tenant_id", "default")
+    kb = (
+        await session.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == body.kb_id, KnowledgeBase.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if kb is None:
+        raise NotFoundError("KnowledgeBase", body.kb_id)
+
+    docs = (await session.execute(select(Document).where(Document.kb_id == body.kb_id))).scalars().all()
+
+    object_keys = [doc.s3_key for doc in docs]
+    for doc in docs:
+        await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
+        await session.delete(doc)
+
+    await session.delete(kb)
+    await session.commit()
+
+    store = ObjectStore()
+    for object_key in object_keys:
+        try:
+            await store.delete_async(object_key)
+        except Exception as e:
+            logger.warning("minio_delete_failed", key=object_key, error=str(e))
+    try:
+        removed_vectors = await MilvusStore().delete_by_kb_async(body.kb_id)
+    except Exception as e:
+        removed_vectors = 0
+        logger.warning("milvus_delete_failed", kb_id=body.kb_id, error=str(e))
+
+    logger.info("kb_deleted", kb_id=body.kb_id, documents=len(docs), vectors=removed_vectors)
+    return {"status": "deleted", "kb_id": body.kb_id, "documents": len(docs), "removed_vectors": removed_vectors}

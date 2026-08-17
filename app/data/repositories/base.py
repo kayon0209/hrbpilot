@@ -4,27 +4,25 @@ All repositories inherit from this. Tenant context is enforced via RLS,
 but we also provide helper methods for explicit tenant filtering.
 """
 
-from typing import TypeVar, Generic, Type, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.models.base import Base, UUIDPrimaryKey, TenantMixin
-
-ModelType = TypeVar("ModelType", bound=Base)
+from app.data.models.base import Base
 
 
-class BaseRepository(Generic[ModelType]):
+class BaseRepository[ModelType: Base]:
     """Generic async repository with CRUD operations."""
 
-    def __init__(self, model: Type[ModelType], session: AsyncSession) -> None:
+    def __init__(self, model: type[ModelType], session: AsyncSession) -> None:
         self.model = model
         self.session = session
 
     async def get_by_id(self, id: str) -> ModelType | None:
         """Get a single record by primary key."""
         result = await self.session.execute(
-            select(self.model).where(self.model.id == id)
+            select(self.model).where(self.model.id == id)  # type: ignore[attr-defined]
         )
         return result.scalar_one_or_none()
 

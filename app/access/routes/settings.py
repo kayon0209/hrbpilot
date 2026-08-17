@@ -8,14 +8,14 @@ GET  /api/settings/llm-provider/test → Test current provider connectivity
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.rag.llm.orchestrator import (
-    get_available_providers,
-    get_active_provider,
-    set_active_provider,
-    get_llm_client,
-    get_active_model,
-)
 from app.access.middleware.decorators import require_auth, require_role
+from app.rag.llm.orchestrator import (
+    get_active_model,
+    get_active_provider,
+    get_available_providers,
+    get_llm_client,
+    set_active_provider,
+)
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

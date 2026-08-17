@@ -1,84 +1,56 @@
-"""HRBP AI Workbench — Vector retrieval service.
+"""HRBP AI Workbench — hybrid retrieval service.
 
-Supports dense, sparse, and hybrid retrieval strategies.
-Reranking is optional per ScenarioConfig.
+Real implementation:
+  - dense:  query embedding -> Milvus cosine search (tenant_id + kb_id filter)
+  - sparse: jieba tokenize -> PostgreSQL FTS (plainto_tsquery / ts_rank_cd)
+  - hybrid: dense + sparse in parallel -> RRF fusion
 
-In dev mode (no Milvus running), returns mock context chunks so the LLM
-has something to work with. This lets you test the full pipeline end-to-end.
+There is NO mock fallback: if an external service (Milvus / PostgreSQL /
+embedding) is unavailable, an infrastructure error propagates to the caller
+rather than silently returning fabricated results.
 """
 
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from sqlalchemy import select, text
+
+from app.config.settings import settings
+from app.data.database import make_tenant_session
+from app.data.models.knowledge_base import Document, DocumentChunk
 from app.rag.config_loader import RetrievalStrategy
+from app.rag.embedding import EmbeddingClient, get_embedder
+from app.rag.retrieval.fusion import dense_confidence, rrf_fusion, sparse_confidence
+from app.rag.retrieval.tokenizer import tokenize_for_query
+from app.rag.retrieval.types import RetrievedChunk
+from app.rag.storage.milvus import MilvusStore
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Mock knowledge base for dev mode — sample HR policy documents
-_MOCK_KB: dict[str, list[dict]] = {
-    "policy_kb": [
-        {
-            "source": "员工手册v3.2.pdf",
-            "section": "第三章 考勤管理",
-            "content": (
-                "第3.1条 工作时间：公司实行标准工时制，工作日为周一至周五，"
-                "每日工作8小时，上午9:00-12:00，下午13:30-18:00。"
-                "弹性工作制需经部门负责人审批后方可实施。"
-            ),
-            "score": 0.92,
-        },
-        {
-            "source": "员工手册v3.2.pdf",
-            "section": "第三章 考勤管理",
-            "content": (
-                "第3.3条 请假流程：员工请假需提前在OA系统提交申请，"
-                "1天以内由直接主管审批，1-3天由部门负责人审批，"
-                "3天以上需HR总监审批。病假需提供医院证明。"
-            ),
-            "score": 0.88,
-        },
-        {
-            "source": "薪酬福利管理制度.pdf",
-            "section": "第五章 年假制度",
-            "content": (
-                "第5.2条 年假标准：入职满1年享有5天年假，满3年享有10天，"
-                "满5年享有15天。年假当年未休完可顺延至次年3月31日。"
-                "离职时未休年假按日薪折算。"
-            ),
-            "score": 0.85,
-        },
-        {
-            "source": "薪酬福利管理制度.pdf",
-            "section": "第六章 社保公积金",
-            "content": (
-                "第6.1条 社会保险：公司依法为正式员工缴纳五险一金"
-                "（养老、医疗、失业、工伤、生育保险及住房公积金）。"
-                "缴纳基数为员工上年度月平均工资，个人缴纳部分从月工资中代扣。"
-            ),
-            "score": 0.80,
-        },
-        {
-            "source": "绩效考核管理办法v2.0.pdf",
-            "section": "第二章 考核周期",
-            "content": (
-                "第2.1条 考核周期：绩效考核分为季度考核和年度考核。"
-                "季度考核在每季度结束后10个工作日内完成，"
-                "年度考核在次年1月底前完成。考核结果分为S/A/B/C/D五个等级。"
-            ),
-            "score": 0.78,
-        },
-    ],
-    "interview_kb": [
-        {
-            "source": "面试评估表模板.docx",
-            "section": "能力评估维度",
-            "content": "评估维度包括：专业技能(40%)、沟通能力(20%)、团队协作(15%)、学习能力(15%)、文化匹配(10%)。",
-            "score": 0.90,
-        },
-    ],
-}
-
 
 class Retriever:
-    """Retrieve relevant document chunks from vector database."""
+    """Retrieve document chunks via dense / sparse / hybrid strategies."""
+
+    def __init__(
+        self,
+        embedder: EmbeddingClient | None = None,
+        milvus: MilvusStore | None = None,
+    ) -> None:
+        self._embedder = embedder
+        self._milvus = milvus
+
+    def _get_embedder(self) -> EmbeddingClient:
+        if self._embedder is None:
+            self._embedder = get_embedder()
+        return self._embedder
+
+    def _get_milvus(self) -> MilvusStore:
+        if self._milvus is None:
+            self._milvus = MilvusStore()
+        return self._milvus
 
     async def retrieve(
         self,
@@ -88,51 +60,165 @@ class Retriever:
         top_k: int = 5,
         rerank: bool = False,
         tenant_id: str = "default",
-    ) -> list[dict]:
-        """Retrieve top_k relevant chunks for the query.
+    ) -> list[dict[str, Any]]:
+        """Retrieve top_k chunks for the query using the given strategy.
 
-        In dev mode, returns mock data from the in-memory knowledge base.
-        In production, this queries Milvus/Qdrant vector database.
+        Returns a list of unified dicts (chunk_id, document_id, kb_id, source,
+        section, content, score, dense_rank, sparse_rank, dense_score,
+        sparse_score).
         """
+        if isinstance(strategy, str):
+            strategy = RetrievalStrategy(strategy)
+
+        if rerank:
+            logger.warning(
+                "rerank_requested_but_not_implemented",
+                strategy=strategy.value,
+                note="rerank=True keeps the interface only; no cross-encoder/rerank API wired",
+            )
+
         logger.info(
             "retrieval_requested",
             query=query[:50],
             kb_id=kb_id,
-            strategy=strategy.value if hasattr(strategy, 'value') else str(strategy),
+            strategy=strategy.value,
             top_k=top_k,
-            rerank=rerank,
             tenant_id=tenant_id,
         )
 
-        # Dev mode: return mock data from in-memory KB
-        mock_chunks = _MOCK_KB.get(kb_id, [])
+        if strategy is RetrievalStrategy.DENSE:
+            chunks = await self._dense(query, kb_id, tenant_id, top_k)
+        elif strategy is RetrievalStrategy.SPARSE:
+            chunks = await self._sparse(query, kb_id, tenant_id, top_k)
+        else:
+            chunks = await self._hybrid(query, kb_id, tenant_id, top_k)
 
-        if not mock_chunks:
-            logger.info("retrieval_empty", kb_id=kb_id, reason="no_mock_data")
+        logger.info("retrieval_completed", kb_id=kb_id, strategy=strategy.value, count=len(chunks))
+        return [c.to_dict() for c in chunks]
+
+    # --- strategies ---
+
+    async def _dense(self, query: str, kb_id: str, tenant_id: str, top_k: int) -> list[RetrievedChunk]:
+        vector = await self._embed_query(query)
+        hits = await self._get_milvus().search_async(vector, tenant_id, kb_id, settings.dense_top_k)
+        if not hits:
+            return []
+        return (await self._hydrate(list(hits), kb_id, tenant_id, dense=True))[:top_k]
+
+    async def _sparse(self, query: str, kb_id: str, tenant_id: str, top_k: int) -> list[RetrievedChunk]:
+        tokenized = tokenize_for_query(query)
+        if not tokenized:
             return []
 
-        # Simple keyword matching for dev mode (production uses vector similarity)
-        query_lower = query.lower()
-        scored = []
-        for chunk in mock_chunks:
-            # Simple relevance: check if any query words appear in the content
-            content_lower = chunk["content"].lower()
-            overlap = sum(1 for word in query_lower if len(word) > 1 and word in content_lower)
-            # Blend the base score with the overlap bonus
-            dev_score = min(1.0, chunk["score"] + overlap * 0.02)
-            scored.append({**chunk, "score": dev_score})
+        # ``plainto_tsquery`` joins every query term with AND.  Natural-language
+        # questions invariably include qualifiers that are absent from the
+        # source (for example, "多久" in "请假要提前多久申请"), which would turn
+        # an otherwise relevant Chinese document into a false negative.  Use
+        # the same jieba terms but OR them for recall, then let ts_rank_cd and
+        # RRF rank the results.  Terms are parameterized and are only joined
+        # with the PostgreSQL tsquery OR operator.
+        tsquery = " | ".join(tokenized.split())
 
-        # Sort by score descending
-        scored.sort(key=lambda x: x["score"], reverse=True)
-
-        # Return top_k results
-        results = scored[:top_k]
-
-        logger.info(
-            "retrieval_completed",
-            kb_id=kb_id,
-            results_count=len(results),
-            top_score=results[0]["score"] if results else 0.0,
+        sql = text(
+            """
+            SELECT c.id, c.document_id, c.kb_id, c.content, c.section, d.filename,
+                   ts_rank_cd(c.search_vector, to_tsquery('simple', :q)) AS rank
+            FROM document_chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.tenant_id = :tenant_id
+              AND c.kb_id = :kb_id
+              AND c.search_vector @@ to_tsquery('simple', :q)
+            ORDER BY rank DESC
+            LIMIT :limit
+            """
         )
 
-        return results
+        session = await make_tenant_session(tenant_id)
+        try:
+            result = await session.execute(
+                sql,
+                {"q": tsquery, "tenant_id": tenant_id, "kb_id": kb_id, "limit": settings.sparse_top_k},
+            )
+            rows = result.fetchall()
+        finally:
+            await session.close()
+
+        chunks: list[RetrievedChunk] = []
+        for row in rows:
+            chunks.append(
+                RetrievedChunk(
+                    chunk_id=row.id,
+                    document_id=row.document_id,
+                    kb_id=row.kb_id,
+                    source=row.filename,
+                    section=row.section or "",
+                    content=row.content,
+                    score=float(row.rank or 0.0),
+                    confidence=sparse_confidence(float(row.rank or 0.0)),
+                    sparse_score=float(row.rank or 0.0),
+                )
+            )
+        return chunks[:top_k]
+
+    async def _hybrid(self, query: str, kb_id: str, tenant_id: str, top_k: int) -> list[RetrievedChunk]:
+        dense, sparse = await asyncio.gather(
+            self._dense(query, kb_id, tenant_id, settings.dense_top_k),
+            self._sparse(query, kb_id, tenant_id, settings.sparse_top_k),
+        )
+        return rrf_fusion(dense, sparse, k=settings.rrf_k, top_k=top_k)
+
+    # --- helpers ---
+
+    async def _embed_query(self, query: str) -> list[float]:
+        vectors = await self._get_embedder().embed([query])
+        return vectors[0]
+
+    async def _hydrate(
+        self,
+        hits: list[tuple[str, float]],
+        kb_id: str,
+        tenant_id: str,
+        dense: bool,
+    ) -> list[RetrievedChunk]:
+        """Fetch chunk metadata from PostgreSQL for Milvus hit chunk_ids."""
+        chunk_ids = [cid for cid, _ in hits]
+        if not chunk_ids:
+            return []
+
+        stmt = (
+            select(DocumentChunk, Document.filename)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(
+                DocumentChunk.tenant_id == tenant_id,
+                DocumentChunk.kb_id == kb_id,
+                DocumentChunk.id.in_(chunk_ids),
+            )
+        )
+        session = await make_tenant_session(tenant_id)
+        try:
+            rows = (await session.execute(stmt)).all()
+        finally:
+            await session.close()
+
+        by_id = {chunk.id: (chunk, filename) for chunk, filename in rows}
+
+        chunks: list[RetrievedChunk] = []
+        for chunk_id, score in hits:
+            pair = by_id.get(chunk_id)
+            if pair is None:
+                continue
+            chunk, filename = pair
+            chunks.append(
+                RetrievedChunk(
+                    chunk_id=chunk_id,
+                    document_id=chunk.document_id,
+                    kb_id=chunk.kb_id,
+                    source=filename,
+                    section=chunk.section or "",
+                    content=chunk.content,
+                    score=float(score),
+                    confidence=dense_confidence(float(score)),
+                    dense_score=float(score) if dense else None,
+                )
+            )
+        return chunks

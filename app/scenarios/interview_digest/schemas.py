@@ -1,7 +1,8 @@
 """HRBP AI Workbench — Interview Digest schemas."""
 
-from pydantic import BaseModel, Field
 from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 class RiskLevel(str, Enum):

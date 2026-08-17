@@ -4,7 +4,6 @@ Tenant-level + user-level rate limiting using Redis counters.
 """
 
 from app.config.settings import settings
-from app.shared.errors import RateLimitError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

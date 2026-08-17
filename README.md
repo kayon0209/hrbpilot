@@ -19,7 +19,7 @@ HR 场景的痛点是**风险与成本**，不是"能不能答出来"。一句�
   - `culture_content` 文化内容：企业文化相关内容生成
   - `voice_insight` 语音洞察：语音 / 会议内容的洞察提炼
   - `weekly_report` 周报：自动周报生成
-- **RAG 检索**：`dense` / `sparse` / `hybrid` 三策略，可选 rerank；生产对接 Milvus / Qdrant，dev 模式内置 mock 知识库可端到端联调
+- **真实 Hybrid RAG**：`dense`（Milvus 向量召回）+ `sparse`（PostgreSQL 全文检索 + jieba 中文分词）+ RRF 融合；**无 mock 回退**，外部服务不可用时抛出明确的基础设施错误
 - **合规护栏（guardrails）**：输入护栏、输出护栏、合规校验、限流（rate limiter）
 - **评测（evaluation）**：按场景聚合并持久化质量指标（avg / min / max / 趋势），含 golden dataset 接口
 - **Token 预算管控**：按租户月度 token 预算（默认 1000 万）统计消耗，75% 预警 / 90% 严重告警
@@ -72,7 +72,7 @@ API 网关（Auth / RBAC / 租户上下文中间件）
 
 ## 技术栈
 
-FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy(async) + AsyncPG · Alembic · Redis · Celery · MinIO · Milvus · Sentence-Transformers · OpenAI / Anthropic SDK · PyYAML
+FastAPI · Uvicorn · Pydantic v2 · SQLAlchemy(async) + AsyncPG · Alembic · Redis · Celery · MinIO · Milvus · jieba · OpenAI / Anthropic SDK · PyYAML
 
 ## 目录结构
 
@@ -103,7 +103,30 @@ uvicorn app.main:app --reload --port 8000
 # API 文档: http://localhost:8000/docs
 ```
 
-> dev 模式未连接 Milvus 时，检索器返回内置 mock 知识库，可完整跑通链路。
+### 服务依赖与启动（真实 Hybrid RAG）
+
+RAG 依赖四个外部服务：PostgreSQL、Milvus、MinIO（对象存储）、Redis。一键启动：
+
+```bash
+docker compose up --build
+```
+
+启动前必须在 `env.docker` 中填写至少 32 位的 `JWT_SECRET`、`EMBEDDING_API_KEY` 和 `LLM_API_KEY`；生产模式会拒绝默认 JWT 密钥。
+
+启动顺序（`docker compose` 已用 healthcheck 编排）：PostgreSQL → 应用执行 `alembic upgrade head` 迁移 → Milvus / MinIO / Redis 就绪 → uvicorn + Celery ingestion worker。PostgreSQL 应用账号为非超级用户，确保 RLS 不会被连接账号绕过。
+
+应用启动时自动确保 Milvus collection（维度须与 `EMBEDDING_DIMENSION` 一致）与 MinIO bucket 存在。
+
+### 支持的文档格式
+
+- 支持：`txt` / `pdf` / `docx`
+- 明确不支持：`doc` / `xls` / `ppt`（上传会被拒绝，不会假装已入库）
+
+### 索引流程
+
+上传文件 → MinIO → `documents`(PostgreSQL, status=uploaded) → 原子领取并投递 Redis/Celery 任务 → 解析 → 切分 → jieba 分词 → embedding → `document_chunks`(PostgreSQL) + Milvus `upsert` → 标记 `indexed`。重建失败会保留上一版可用向量，新旧版本按 chunk id 精确补偿清理。
+
+查询时：PostgreSQL 关键词召回（`plainto_tsquery('simple', jieba_query)`）与 Milvus 稠密召回（tenant_id + kb_id 标量过滤）并发执行 → RRF 融合 → 独立证据置信度校准 → top-k → LLM 引用。Policy QA 只接受当前租户下启用且 `scenario_id=policy_qa` 的真实知识库。
 
 ## 测试
 

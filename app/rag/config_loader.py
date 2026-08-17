@@ -13,7 +13,6 @@ The prompt_template field in YAML can be either:
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 import yaml
 

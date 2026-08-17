@@ -5,8 +5,8 @@ approaching monthly budget thresholds.
 """
 
 import threading
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
 
 from app.shared.logger import get_logger
 

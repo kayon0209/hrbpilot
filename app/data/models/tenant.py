@@ -3,7 +3,9 @@
 No RLS on this table — Admin can access all tenants.
 """
 
-from app.data.models.base import Base, UUIDPrimaryKey, TimestampMixin
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.data.models.base import Base, TimestampMixin, UUIDPrimaryKey
 
 
 class Tenant(Base, UUIDPrimaryKey, TimestampMixin):

@@ -14,13 +14,13 @@ from jose import jwt
 from pydantic import BaseModel
 
 from app.config.settings import settings
-from app.shared.errors import AuthError, NotFoundError
-from app.shared.logger import get_logger
 from app.shared.dev_mock_users import (
     get_mock_user_by_email,
     get_mock_user_by_id,
     verify_mock_password,
 )
+from app.shared.errors import AuthError, DatabaseError, ExternalServiceError, NotFoundError
+from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -36,8 +36,10 @@ async def _check_db_available() -> bool:
     if _db_available is not None:
         return _db_available
     try:
-        from app.data.database import get_engine
         from sqlalchemy import text
+
+        from app.data.database import get_engine
+
         engine = get_engine()
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -73,9 +75,7 @@ class UserProfile(BaseModel):
 
 def _create_access_token(user_id: str, role: str, tenant_id: str, email: str) -> str:
     """Generate short-lived JWT access token."""
-    expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-        minutes=settings.jwt_access_expires_minutes
-    )
+    expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=settings.jwt_access_expires_minutes)
     payload = {
         "sub": user_id,
         "role": role,
@@ -84,14 +84,12 @@ def _create_access_token(user_id: str, role: str, tenant_id: str, email: str) ->
         "exp": expires,
         "iat": datetime.datetime.now(datetime.UTC),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return str(jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
 def _create_refresh_token(user_id: str, tenant_id: str) -> str:
     """Generate long-lived refresh token."""
-    expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-        days=settings.jwt_refresh_expires_days
-    )
+    expires = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=settings.jwt_refresh_expires_days)
     payload = {
         "sub": user_id,
         "tenant_id": tenant_id,
@@ -99,7 +97,7 @@ def _create_refresh_token(user_id: str, tenant_id: str) -> str:
         "exp": expires,
         "iat": datetime.datetime.now(datetime.UTC),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return str(jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -109,34 +107,39 @@ async def login(body: LoginBody):
 
     if db_ok:
         # Use real database
-        from app.data.database import get_db
-        from app.data.repositories.user_repo import UserRepository
         from passlib.context import CryptContext
+
+        from app.data.database import get_db_session
+        from app.data.repositories.user_repo import UserRepository
+
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
         try:
-            async for db in get_db():
+            async for db in get_db_session():
                 repo = UserRepository(db)
                 user = await repo.get_by_email(body.email)
-        except Exception:
-            user = None  # DB query failed — fall back to mock
+        except Exception as exc:
+            logger.error("login_database_failed", error=str(exc))
+            raise DatabaseError("Authentication database query failed") from exc
 
-            if not user or not pwd_context.verify(body.password, user.hashed_password):
-                logger.warning("login_failed", email=body.email)
-                raise AuthError("Invalid email or password")
+        if not user or not pwd_context.verify(body.password, user.hashed_password):
+            logger.warning("login_failed", email=body.email)
+            raise AuthError("Invalid email or password")
 
-            access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
-            refresh_token = _create_refresh_token(user.id, user.tenant_id)
-            logger.info("login_success", user_id=user.id, role=user.role)
+        access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
+        refresh_token = _create_refresh_token(user.id, user.tenant_id)
+        logger.info("login_success", user_id=user.id, role=user.role)
 
-            return TokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_in=settings.jwt_access_expires_minutes * 60,
-            )
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=settings.jwt_access_expires_minutes * 60,
+        )
     else:
+        if settings.is_production:
+            raise ExternalServiceError("database", "Authentication database is unavailable")
         # Dev mode: use mock users
-        user = get_mock_user_by_email(body.email.lower())
+        user = get_mock_user_by_email(body.email.lower())  # type: ignore[assignment]
         if not user or not verify_mock_password(body.password, user.hashed_password):
             logger.warning("login_failed_dev", email=body.email)
             raise AuthError("Invalid email or password")
@@ -162,7 +165,7 @@ async def refresh(body: RefreshBody):
             algorithms=[settings.jwt_algorithm],
         )
     except jwt.JWTError:
-        raise AuthError("Invalid or expired refresh token")
+        raise AuthError("Invalid or expired refresh token") from None
 
     if payload.get("type") != "refresh":
         raise AuthError("Not a refresh token")
@@ -171,10 +174,10 @@ async def refresh(body: RefreshBody):
     db_ok = await _check_db_available()
 
     if db_ok:
-        from app.data.database import get_db
+        from app.data.database import get_db_session
         from app.data.repositories.user_repo import UserRepository
 
-        async for db in get_db():
+        async for db in get_db_session():
             repo = UserRepository(db)
             user = await repo.get_by_id(user_id)
             if not user:
@@ -188,7 +191,7 @@ async def refresh(body: RefreshBody):
                 expires_in=settings.jwt_access_expires_minutes * 60,
             )
     else:
-        user = get_mock_user_by_id(user_id)
+        user = get_mock_user_by_id(user_id)  # type: ignore[assignment]
         if not user:
             raise NotFoundError("User", user_id)
 
@@ -211,10 +214,10 @@ async def get_profile(request: Request):
     db_ok = await _check_db_available()
 
     if db_ok:
-        from app.data.database import get_db
+        from app.data.database import get_db_session
         from app.data.repositories.user_repo import UserRepository
 
-        async for db in get_db():
+        async for db in get_db_session():
             repo = UserRepository(db)
             user = await repo.get_by_id(user_id)
             if not user:
@@ -227,7 +230,7 @@ async def get_profile(request: Request):
                 tenant_id=user.tenant_id,
             )
     else:
-        user = get_mock_user_by_id(user_id)
+        user = get_mock_user_by_id(user_id)  # type: ignore[assignment]
         if not user:
             raise NotFoundError("User", user_id)
         return UserProfile(
@@ -246,9 +249,9 @@ async def list_dev_users():
         raise NotFoundError("Endpoint", "dev-users")
 
     from app.shared.dev_mock_users import _MOCK_USERS
+
     return {
         "users": [
-            {"email": u.email, "name": u.name, "role": u.role, "password": "123456"}
-            for u in _MOCK_USERS.values()
+            {"email": u.email, "name": u.name, "role": u.role, "password": "123456"} for u in _MOCK_USERS.values()
         ],
     }

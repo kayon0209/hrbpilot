@@ -7,11 +7,12 @@ GET  /api/weekly-report/history → Recent report history
 """
 
 import uuid
+
 from fastapi import APIRouter, Request
 
+from app.access.middleware.decorators import require_auth, require_role
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
 from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest
-from app.access.middleware.decorators import require_auth, require_role
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 

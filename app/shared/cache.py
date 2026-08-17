@@ -12,7 +12,8 @@ when Redis is unavailable.
 import functools
 import hashlib
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.shared.logger import get_logger
 

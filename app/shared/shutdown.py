@@ -7,7 +7,6 @@ complete in-flight requests → close DB connections → exit.
 import asyncio
 import signal
 
-from app.config.settings import settings
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -51,7 +50,7 @@ async def shutdown(
     # Wait for in-flight requests
     if _inflight_requests:
         try:
-            done, pending = await asyncio.wait(
+            _done, pending = await asyncio.wait(
                 _inflight_requests,
                 timeout=timeout,
             )
@@ -89,7 +88,7 @@ def register_shutdown_handlers(timeout: float = 30.0) -> None:
             sig = getattr(signal, sig_name)
             loop.add_signal_handler(
                 sig,
-                lambda name=sig_name: asyncio.create_task(shutdown(name, timeout)),
+                lambda name=sig_name: asyncio.create_task(shutdown(name, timeout)),  # type: ignore[misc]
             )
         except NotImplementedError:
             # Windows doesn't support add_signal_handler

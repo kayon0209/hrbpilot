@@ -28,7 +28,7 @@ def setup_logging() -> None:
     ]
 
     if settings.log_format == "json":
-        renderer = structlog.processors.JSONRenderer()
+        renderer: structlog.types.Processor = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
@@ -65,4 +65,4 @@ def setup_logging() -> None:
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Get a bound logger with optional module name."""
-    return structlog.get_logger(name)
+    return structlog.get_logger(name)  # type: ignore[no-any-return]

@@ -10,18 +10,20 @@ import asyncio
 import json
 import re
 import time
-from typing import AsyncIterator
 
-from app.rag.config_loader import ScenarioConfig, load_scenario_config
-from app.rag.llm.orchestrator import LLMOrchestrator, ZhipuEmbeddingClient
-from app.rag.retrieval.retriever import Retriever
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
+from app.rag.config_loader import ScenarioConfig, load_scenario_config
+from app.rag.llm.orchestrator import LLMOrchestrator
 from app.scenarios.voice_insight.schemas import (
-    InsightReportResponse, Cluster, RiskSignal, Trend,
-    Severity, TrendDirection, TaskStatusResponse,
+    Cluster,
+    InsightReportResponse,
+    RiskSignal,
+    Severity,
+    TaskStatusResponse,
+    Trend,
+    TrendDirection,
 )
-from app.config.settings import settings
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,7 +37,7 @@ def _extract_json_from_llm_output(output: str) -> dict:
     json_match = re.search(r"\{[\s\S]*\}", output)
     if json_match:
         try:
-            return json.loads(json_match.group())
+            return dict(json.loads(json_match.group()))
         except json.JSONDecodeError:
             pass
     return {}
@@ -71,12 +73,12 @@ class VoiceInsightOrchestrator:
 
         # 2. PII desensitization
         if self.config.guardrail_rules.input:
-            all_content, input_flags = await self.input_guard.check(
+            all_content, _input_flags = await self.input_guard.check(
                 all_content, self.config.guardrail_rules.input
             )
 
         # 3. LLM clustering + risk analysis
-        raw_output, tokens_used = await self.llm.generate(
+        raw_output, _tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
             context=[{"source": "员工声音数据", "section": "批量", "content": all_content}],
             query="请按指定JSON格式输出聚类分析、风险信号和趋势分析结果",
@@ -161,7 +163,7 @@ class VoiceInsightOrchestrator:
                 _task_store[task_id].status = "failed"
                 _task_store[task_id].error = str(e)
 
-        asyncio.create_task(_run())
+        asyncio.create_task(_run())  # noqa: RUF006
         return task_id
 
     def get_task_status(self, task_id: str) -> TaskStatusResponse | None:

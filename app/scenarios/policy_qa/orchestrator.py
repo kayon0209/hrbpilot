@@ -9,22 +9,33 @@ This is the per-scenario entry point that coordinates the pipeline.
 import asyncio
 import json
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-from app.rag.config_loader import ScenarioConfig
-from app.rag.pipeline import CapabilityPipeline, PipelineResult
-from app.rag.llm.orchestrator import LLMOrchestrator
-from app.rag.retrieval.retriever import Retriever
+from app.config.settings import settings
+from app.evaluation.auto_eval import AutoEvaluator
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
-from app.evaluation.auto_eval import AutoEvaluator
-from app.scenarios.policy_qa.preprocessors import rewrite_query
+from app.rag.config_loader import ScenarioConfig
+from app.rag.llm.orchestrator import LLMOrchestrator
+from app.rag.pipeline import CapabilityPipeline
+from app.rag.retrieval.retriever import Retriever
 from app.scenarios.policy_qa.postprocessors import no_evidence_fallback
-from app.scenarios.policy_qa.schemas import QAResponse, CitationSource, SSEEvent
-from app.config.settings import settings
+from app.scenarios.policy_qa.preprocessors import rewrite_query
+from app.scenarios.policy_qa.schemas import CitationSource, QAResponse, SSEEvent
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _bounded_score(value: object) -> float:
+    """Convert native retrieval scores to the response contract's [0, 1] range."""
+    if not isinstance(value, (int, float, str)):
+        return 0.0
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
 
 # Shared pipeline instance (DI-managed later)
 _pipeline = CapabilityPipeline(
@@ -41,6 +52,7 @@ class PolicyQAOrchestrator:
 
     def __init__(self, config: ScenarioConfig | None = None):
         from app.rag.config_loader import load_scenario_config
+
         self.config = config or load_scenario_config("policy_qa")
         self.llm = LLMOrchestrator()
         self.retriever = Retriever()
@@ -52,6 +64,7 @@ class PolicyQAOrchestrator:
         question: str,
         tenant_id: str,
         user_id: str,
+        kb_id: str | None = None,
     ) -> QAResponse:
         """Execute the full Policy QA pipeline — returns structured response."""
         start_time = time.time()
@@ -61,27 +74,30 @@ class PolicyQAOrchestrator:
         logger.info("policy_qa_query_rewritten", original=question, rewritten=rewritten_query)
 
         # 2. Input guardrail
-        guarded_input, input_flags = {}, {}
+        guarded_input: str = rewritten_query
+        input_flags: dict[str, object] = {}
         if self.config.guardrail_rules.input:
             guarded_input, input_flags = await self.input_guard.check(
                 rewritten_query, self.config.guardrail_rules.input
             )
             if input_flags.get("blocked"):
                 return QAResponse(
-                    answer=input_flags.get("block_message", "输入被护栏拦截"),
-                    citations=[], confidence=0.0, has_evidence=False,
+                    answer=str(input_flags.get("block_message", "输入被护栏拦截")),
+                    citations=[],
+                    confidence=0.0,
+                    has_evidence=False,
                     guardrail_flags={"input": input_flags},
                     latency_ms=int((time.time() - start_time) * 1000),
+                    tokens_used=0,
                 )
-        else:
-            guarded_input = rewritten_query
 
         # 3. RAG retrieval
         context_chunks = []
-        if self.config.knowledge_base_id:
+        target_kb_id = kb_id or self.config.knowledge_base_id
+        if target_kb_id:
             context_chunks = await self.retriever.retrieve(
                 query=guarded_input,
-                kb_id=self.config.knowledge_base_id,
+                kb_id=target_kb_id,
                 strategy=self.config.retrieval_strategy,
                 top_k=self.config.retrieval_top_k,
                 rerank=self.config.rerank_enabled,
@@ -99,7 +115,7 @@ class PolicyQAOrchestrator:
 
         # 5. Output guardrail
         guarded_output = raw_output
-        output_flags = {}
+        output_flags: dict[str, object] = {}
         if self.config.guardrail_rules.output:
             guarded_output, output_flags = await self.output_guard.check(
                 raw_output, self.config.guardrail_rules.output, sources=context_chunks
@@ -111,14 +127,14 @@ class PolicyQAOrchestrator:
         # 7. Build response
         confidence = 0.0
         if context_chunks:
-            confidence = max(chunk.get("score", 0.0) for chunk in context_chunks)
+            confidence = max(_bounded_score(chunk.get("confidence", 0.0)) for chunk in context_chunks)
 
         citations = [
             CitationSource(
                 document_name=s.get("source", "unknown"),
                 section=s.get("section", "unknown"),
                 content_snippet=s.get("content", "")[:200],
-                confidence=s.get("score", 0.0),
+                confidence=_bounded_score(s.get("confidence", 0.0)),
             )
             for s in context_chunks[:3]
         ]
@@ -128,7 +144,7 @@ class PolicyQAOrchestrator:
         # 8. Async evaluation
         if self.config.eval_metrics:
             evaluator = AutoEvaluator()
-            asyncio.create_task(
+            asyncio.create_task(  # noqa: RUF006
                 evaluator.evaluate(
                     output=final_output,
                     query=guarded_input,
@@ -153,6 +169,7 @@ class PolicyQAOrchestrator:
         question: str,
         tenant_id: str,
         user_id: str,
+        kb_id: str | None = None,
     ) -> AsyncIterator[str]:
         """Execute the pipeline with SSE streaming — yields SSEEvent JSON strings."""
         start_time = time.time()
@@ -162,26 +179,27 @@ class PolicyQAOrchestrator:
 
         # 2. Input guardrail (blocking check)
         if self.config.guardrail_rules.input:
-            _, input_flags = await self.input_guard.check(
-                rewritten_query, self.config.guardrail_rules.input
-            )
+            _, input_flags = await self.input_guard.check(rewritten_query, self.config.guardrail_rules.input)
             if input_flags.get("blocked"):
                 event = SSEEvent(
                     event="error",
-                    data=json.dumps({
-                        "message": input_flags.get("block_message", "输入被护栏拦截"),
-                        "code": "INPUT_BLOCKED",
-                    }),
+                    data=json.dumps(
+                        {
+                            "message": input_flags.get("block_message", "输入被护栏拦截"),
+                            "code": "INPUT_BLOCKED",
+                        }
+                    ),
                 )
                 yield json.dumps({"event": event.event, "data": event.data})
                 return
 
         # 3. RAG retrieval (non-streaming)
         context_chunks = []
-        if self.config.knowledge_base_id:
+        target_kb_id = kb_id or self.config.knowledge_base_id
+        if target_kb_id:
             context_chunks = await self.retriever.retrieve(
                 query=rewritten_query,
-                kb_id=self.config.knowledge_base_id,
+                kb_id=target_kb_id,
                 strategy=self.config.retrieval_strategy,
                 top_k=self.config.retrieval_top_k,
                 rerank=self.config.rerank_enabled,
@@ -194,7 +212,7 @@ class PolicyQAOrchestrator:
                 "document_name": s.get("source", "unknown"),
                 "section": s.get("section", "unknown"),
                 "content_snippet": s.get("content", "")[:200],
-                "confidence": s.get("score", 0.0),
+                "confidence": _bounded_score(s.get("confidence", 0.0)),
             }
             for s in context_chunks[:3]
         ]
@@ -202,7 +220,6 @@ class PolicyQAOrchestrator:
 
         # 5. Stream LLM generation
         full_output = ""
-        tokens_used = 0
         try:
             async for chunk_text in self.llm.generate_stream(
                 prompt_template=self.config.prompt_template,
@@ -221,7 +238,7 @@ class PolicyQAOrchestrator:
         # 6. Output guardrail (on complete output)
         guarded_output = full_output
         if self.config.guardrail_rules.output:
-            guarded_output, output_flags = await self.output_guard.check(
+            guarded_output, _output_flags = await self.output_guard.check(
                 full_output, self.config.guardrail_rules.output, sources=context_chunks
             )
 
@@ -235,16 +252,20 @@ class PolicyQAOrchestrator:
         # 8. Send done event with metadata
         confidence = 0.0
         if context_chunks:
-            confidence = max(chunk.get("score", 0.0) for chunk in context_chunks)
+            confidence = max(_bounded_score(chunk.get("confidence", 0.0)) for chunk in context_chunks)
 
         latency_ms = int((time.time() - start_time) * 1000)
 
-        yield json.dumps({
-            "event": "done",
-            "data": json.dumps({
-                "confidence": confidence,
-                "has_evidence": confidence >= settings.guardrail_confidence_threshold,
-                "latency_ms": latency_ms,
-                "guardrail_flags": {},
-            }),
-        })
+        yield json.dumps(
+            {
+                "event": "done",
+                "data": json.dumps(
+                    {
+                        "confidence": confidence,
+                        "has_evidence": confidence >= settings.guardrail_confidence_threshold,
+                        "latency_ms": latency_ms,
+                        "guardrail_flags": {},
+                    }
+                ),
+            }
+        )

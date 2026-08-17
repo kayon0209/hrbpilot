@@ -7,8 +7,8 @@ Examples:
 """
 
 from app.rag.config_loader import ScenarioConfig
-from app.shared.logger import get_logger
 from app.rag.llm.orchestrator import LLMOrchestrator
+from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 

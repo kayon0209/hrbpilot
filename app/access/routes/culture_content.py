@@ -7,11 +7,12 @@ GET  /api/culture-content/history → Recent generation history
 """
 
 import uuid
+
 from fastapi import APIRouter, Request
 
+from app.access.middleware.decorators import require_auth, require_role
 from app.scenarios.culture_content.orchestrator import CultureContentOrchestrator
 from app.scenarios.culture_content.schemas import GenerateContentRequest
-from app.access.middleware.decorators import require_auth, require_role
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 

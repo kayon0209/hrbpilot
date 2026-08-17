@@ -1,7 +1,8 @@
 """HRBP AI Workbench — Weekly Report schemas."""
 
-from pydantic import BaseModel, Field
 from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 class TaskStatus(str, Enum):

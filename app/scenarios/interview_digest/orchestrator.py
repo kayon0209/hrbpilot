@@ -10,16 +10,19 @@ import asyncio
 import json
 import re
 import time
-from pathlib import Path
 
-from app.rag.config_loader import ScenarioConfig, load_scenario_config
-from app.rag.llm.orchestrator import LLMOrchestrator
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
+from app.rag.config_loader import ScenarioConfig, load_scenario_config
+from app.rag.llm.orchestrator import LLMOrchestrator
 from app.scenarios.interview_digest.schemas import (
-    InterviewDigestResponse, Demand, ActionItem, RiskLevel, Urgency, DigestStatus,
+    ActionItem,
+    Demand,
+    DigestStatus,
+    InterviewDigestResponse,
+    RiskLevel,
+    Urgency,
 )
-from app.config.settings import settings
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,7 +49,7 @@ def _extract_json_from_llm_output(output: str) -> dict:
     json_match = re.search(r"\{[\s\S]*\}", output)
     if json_match:
         try:
-            return json.loads(json_match.group())
+            return dict(json.loads(json_match.group()))
         except json.JSONDecodeError:
             logger.warning("json_parse_failed", output=output[:200])
     # Fallback: return empty dict
@@ -77,9 +80,8 @@ class InterviewDigestOrchestrator:
             )
 
         # 2. PII desensitization (input guardrail)
-        guarded_content, input_flags = {}, {}
         if self.config.guardrail_rules.input:
-            guarded_content, input_flags = await self.input_guard.check(
+            _guarded_content, _input_flags = await self.input_guard.check(
                 cleaned_content, self.config.guardrail_rules.input
             )
 
@@ -174,7 +176,7 @@ class InterviewDigestOrchestrator:
                 _task_store[task_id].error = str(e)
                 logger.error("interview_digest_task_failed", task_id=task_id, error=str(e))
 
-        asyncio.create_task(_run())
+        asyncio.create_task(_run())  # noqa: RUF006
         return task_id
 
     def get_task_status(self, task_id: str) -> DigestStatus | None:

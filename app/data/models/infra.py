@@ -8,10 +8,10 @@ All have tenant_id for RLS.
 
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Float, Text, DateTime
+from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.data.models.base import Base, UUIDPrimaryKey, TimestampMixin, TenantMixin
+from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 
 
 class AsyncTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):

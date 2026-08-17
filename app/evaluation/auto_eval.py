@@ -30,13 +30,7 @@ class AutoEvaluator:
                 scores[metric] = self._answer_relevance(output, query)
             elif metric == "faithfulness":
                 scores[metric] = self._faithfulness(output, sources)
-            elif metric == "extraction_completeness":
-                scores[metric] = 0.5  # Placeholder
-            elif metric == "topic_coverage":
-                scores[metric] = 0.5  # Placeholder
-            elif metric == "information_completeness":
-                scores[metric] = 0.5  # Placeholder
-            elif metric == "content_diversity":
+            elif metric == "extraction_completeness" or metric == "topic_coverage" or metric == "information_completeness" or metric == "content_diversity":
                 scores[metric] = 0.5  # Placeholder
             else:
                 logger.warning("unknown_metric", metric=metric)

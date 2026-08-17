@@ -9,7 +9,7 @@ Scene-level visibility matrix:
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response, JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from app.shared.logger import get_logger
 

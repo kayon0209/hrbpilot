@@ -7,14 +7,13 @@ Automatically generates RLS policies for tables with tenant_id.
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
-
-from app.data.models import Base  # Import all models for autogenerate
 from app.config.settings import settings
+from app.data.models import Base  # Import all models for autogenerate
 
 config = context.config
 

@@ -9,8 +9,8 @@ GET  /api/eval/golden/{id}        — golden dataset for scenario
 
 from fastapi import APIRouter, Query
 
-from app.evaluation.metrics import metrics_aggregator
 from app.evaluation.golden_dataset import GOLDEN_DATASETS
+from app.evaluation.metrics import metrics_aggregator
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

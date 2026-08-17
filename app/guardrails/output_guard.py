@@ -12,7 +12,6 @@ Per architecture spec ADR-004:
   - Toxicity detected → replace with safe response
 """
 
-from app.rag.config_loader import GuardrailRules
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

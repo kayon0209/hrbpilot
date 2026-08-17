@@ -1,13 +1,15 @@
 """HRBP AI Workbench — Policy QA PostProcessor: No-Evidence Fallback.
 
-Per ADR-004: When top-1 retrieval similarity < confidence-threshold (default 0.65),
-replace the LLM output with a clear "no evidence found" message.
-This prevents hallucination in the policy QA scenario.
+When retrieval returns no chunks, replace the LLM output with a clear
+"no evidence found" message instead of letting the LLM fabricate an answer.
+
+The retriever exposes a separate calibrated ``confidence`` value. RRF score is
+used only for ranking and is never treated as evidence probability.
 """
 
+from app.config.settings import settings
 from app.rag.config_loader import ScenarioConfig
 from app.shared.logger import get_logger
-from app.config.settings import settings
 
 logger = get_logger(__name__)
 
@@ -25,34 +27,23 @@ async def no_evidence_fallback(
     config: ScenarioConfig,
     context: list[dict],
 ) -> str:
-    """Post-process the pipeline output with a single confidence threshold check.
+    """Post-process the pipeline output with a no-evidence check.
 
-    Per ADR-004:
-      - If no context chunks retrieved → return "no evidence" message
-      - If top-1 similarity < guardrail_confidence_threshold (0.65) → "no evidence"
-      - Otherwise → pass through unchanged
+    Return the fallback when recall is empty or every hit is below the configured
+    evidence threshold.
     """
-    # No context at all
     if not context:
         logger.info("postprocessor_no_evidence", reason="no_context")
         return NO_EVIDENCE_TEMPLATE
 
-    # Single threshold check — matches ADR-004 spec
-    top_confidence = max(chunk.get("score", 0.0) for chunk in context)
-    threshold = settings.guardrail_confidence_threshold
-
-    if top_confidence < threshold:
+    best_confidence = max(float(chunk.get("confidence", 0.0)) for chunk in context)
+    if best_confidence < settings.guardrail_confidence_threshold:
         logger.info(
             "postprocessor_no_evidence",
-            reason="confidence_below_threshold",
-            confidence=round(top_confidence, 4),
-            threshold=threshold,
+            reason="low_confidence",
+            confidence=best_confidence,
         )
         return NO_EVIDENCE_TEMPLATE
 
-    # Confidence meets threshold — pass through
-    logger.info(
-        "postprocessor_confidence_ok",
-        confidence=round(top_confidence, 4),
-    )
+    logger.info("postprocessor_evidence_ok", chunks=len(context))
     return output

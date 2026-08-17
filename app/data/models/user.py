@@ -4,7 +4,9 @@ RBAC roles: Employee, HRBP, HRManager, Admin.
 RLS enabled via tenant_id.
 """
 
-from app.data.models.base import Base, UUIDPrimaryKey, TimestampMixin, TenantMixin
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 
 
 class User(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):

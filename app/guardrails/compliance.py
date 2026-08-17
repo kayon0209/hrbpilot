@@ -27,47 +27,49 @@ PRIVACY_PATTERNS = [
 class ComplianceChecker:
     """HR-specific compliance rules for input and output."""
 
-    async def check_input(self, text: str) -> dict:
+    async def check_input(self, text: str) -> dict[str, bool | list[str]]:
         """Check user input for HR compliance issues.
 
         Returns: {flagged: bool, reasons: list[str]}
         """
-        result = {"flagged": False, "reasons": []}
+        flagged = False
+        reasons: list[str] = []
 
         # Salary confidentiality
         if self._contains_any(text, SALARY_CONFIDENTIAL_PATTERNS):
-            result["flagged"] = True
-            result["reasons"].append("salary_confidentiality")
+            flagged = True
+            reasons.append("salary_confidentiality")
             logger.info("compliance_flag", type="input", reason="salary_confidentiality")
 
         # Privacy violation
         if self._contains_any(text, PRIVACY_PATTERNS):
-            result["flagged"] = True
-            result["reasons"].append("privacy_concern")
+            flagged = True
+            reasons.append("privacy_concern")
             logger.info("compliance_flag", type="input", reason="privacy_concern")
 
-        return result
+        return {"flagged": flagged, "reasons": reasons}
 
-    async def check_output(self, text: str) -> dict:
+    async def check_output(self, text: str) -> dict[str, bool | list[str]]:
         """Check LLM output for HR compliance issues.
 
         Returns: {flagged: bool, reasons: list[str]}
         """
-        result = {"flagged": False, "reasons": []}
+        flagged = False
+        reasons: list[str] = []
 
         # Output should never expose specific salary data
         if self._contains_any(text, SALARY_CONFIDENTIAL_PATTERNS):
-            result["flagged"] = True
-            result["reasons"].append("salary_exposure")
+            flagged = True
+            reasons.append("salary_exposure")
             logger.warning("compliance_flag", type="output", reason="salary_exposure")
 
         # Output should never include PII
         if self._contains_any(text, PRIVACY_PATTERNS):
-            result["flagged"] = True
-            result["reasons"].append("pii_exposure")
+            flagged = True
+            reasons.append("pii_exposure")
             logger.warning("compliance_flag", type="output", reason="pii_exposure")
 
-        return result
+        return {"flagged": flagged, "reasons": reasons}
 
     @staticmethod
     def _contains_any(text: str, patterns: list[str]) -> bool:

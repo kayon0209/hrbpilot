@@ -6,11 +6,11 @@ GET  /api/voice-insight/report/{task_id} → Get completed report
 GET  /api/voice-insight/history → Recent analysis history
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
 from app.access.middleware.decorators import require_auth, require_role
+from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
 

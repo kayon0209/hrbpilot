@@ -6,7 +6,7 @@ All models inherit from Base. TenantMixin adds tenant_id column for RLS.
 import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, String, DateTime, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 

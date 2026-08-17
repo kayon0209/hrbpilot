@@ -9,7 +9,6 @@ Interception strategies:
 
 import re
 
-from app.shared.errors import PromptInjectionError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

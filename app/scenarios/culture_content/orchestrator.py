@@ -14,7 +14,8 @@ from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.rag.retrieval.retriever import Retriever
 from app.scenarios.culture_content.schemas import (
-    CultureContentResponse, KeywordExpansionResponse,
+    CultureContentResponse,
+    KeywordExpansionResponse,
 )
 from app.shared.logger import get_logger
 
@@ -41,7 +42,7 @@ def _extract_json_from_llm_output(output: str) -> dict:
     json_match = re.search(r"\{[\s\S]*\}", output)
     if json_match:
         try:
-            return json.loads(json_match.group())
+            return dict(json.loads(json_match.group()))
         except json.JSONDecodeError:
             pass
     return {}
@@ -109,7 +110,7 @@ class CultureContentOrchestrator:
         prompt = self.config.prompt_template
         keywords_str = ", ".join(keywords)
 
-        raw_output, tokens_used = await self.llm.generate(
+        raw_output, _tokens_used = await self.llm.generate(
             prompt_template=prompt.replace("{{ keywords }}", keywords_str).replace("{{ content }}", context_text or "暂无文化素材"),
             context=[{"source": "文化素材", "section": "关键词", "content": context_text or "暂无"}],
             query=f"请基于关键词 [{keywords_str}] 生成4个渠道的文化传播内容，基调: {tone}",

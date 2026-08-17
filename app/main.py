@@ -6,30 +6,32 @@ Middleware chain (in order):
 All routes and middleware are registered here.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.config.settings import settings
-from app.shared.logger import setup_logging, get_logger
-from app.shared.errors import AppError
-from app.shared.error_handler import app_error_handler, unhandled_error_handler
-from app.access.middleware.request_id import RequestIDMiddleware
-from app.access.middleware.cors import add_cors_middleware
-from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.middleware.auth import AuthMiddleware
+from app.access.middleware.cors import add_cors_middleware
 from app.access.middleware.rbac import RBACMiddleware
+from app.access.middleware.request_id import RequestIDMiddleware
 from app.access.middleware.security_headers import SecurityHeadersMiddleware
-from app.access.routes.health import router as health_router
+from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.routes.auth import router as auth_router
-from app.access.routes.policy_qa import router as policy_qa_router
+from app.access.routes.culture_content import router as culture_router
+from app.access.routes.eval import router as eval_metrics_router
+from app.access.routes.health import router as health_router
 from app.access.routes.interview_digest import router as interview_router
+from app.access.routes.kb import router as kb_router
+from app.access.routes.policy_qa import router as policy_qa_router
+from app.access.routes.settings import router as settings_router
 from app.access.routes.voice_insight import router as voice_router
 from app.access.routes.weekly_report import router as weekly_router
-from app.access.routes.culture_content import router as culture_router
-from app.access.routes.kb import router as kb_router
-from app.access.routes.settings import router as settings_router
+from app.config.settings import settings
 from app.evaluation.feedback import router as eval_router
-from app.access.routes.eval import router as eval_metrics_router
+from app.shared.error_handler import app_error_handler, unhandled_error_handler
+from app.shared.errors import AppError
+from app.shared.logger import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -37,11 +39,36 @@ logger = get_logger(__name__)
 setup_logging()
 
 
+async def _ensure_infrastructure() -> None:
+    """Best-effort startup check: ensure Milvus collection + MinIO bucket exist.
+
+    Failures are logged, not fatal — the store layers lazily (re)ensure on first
+    use, so a briefly-unavailable Milvus/MinIO does not crash the app.
+    """
+    try:
+        from app.rag.storage.milvus import MilvusStore
+        await MilvusStore().ensure_collection_async()
+    except Exception as e:
+        logger.warning("milvus_not_ready_at_startup", error=str(e))
+    try:
+        from app.rag.storage.object_store import ObjectStore
+        await ObjectStore().ensure_bucket_async()
+    except Exception as e:
+        logger.warning("minio_not_ready_at_startup", error=str(e))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _ensure_infrastructure()
+    yield
+
+
 def create_app() -> FastAPI:
     """Application factory — creates and configures the FastAPI app."""
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
+        lifespan=lifespan,
         docs_url="/docs" if settings.app_debug else None,
         redoc_url="/redoc" if settings.app_debug else None,
     )
@@ -55,8 +82,8 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)  # outermost
 
     # --- Exception handlers ---
-    app.add_exception_handler(AppError, app_error_handler)
-    app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     # --- Routes ---

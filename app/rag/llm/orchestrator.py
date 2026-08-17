@@ -10,7 +10,7 @@ Active provider can be switched at runtime via the /api/settings/llm-provider en
 """
 
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -134,7 +134,7 @@ def get_llm_client() -> AsyncOpenAI:
 
 def get_active_model() -> str:
     """Get the model name for the active provider."""
-    return get_active_config().get("model", "gpt-4")
+    return str(get_active_config().get("model", "gpt-4"))
 
 
 # ---- Prompt building ----

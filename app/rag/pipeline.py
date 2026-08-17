@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 
 from app.rag.config_loader import ScenarioConfig
+from app.shared.errors import AppError, ExternalServiceError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -84,14 +85,20 @@ class CapabilityPipeline:
         # 2. RAG retrieval (optional — some scenarios may skip)
         context_chunks = []
         if self.retriever and config.knowledge_base_id:
-            context_chunks = await self.retriever.retrieve(
-                query=guarded_input,
-                kb_id=config.knowledge_base_id,
-                strategy=config.retrieval_strategy,
-                top_k=config.retrieval_top_k,
-                rerank=config.rerank_enabled,
-                tenant_id=tenant_id,
-            )
+            try:
+                context_chunks = await self.retriever.retrieve(
+                    query=guarded_input,
+                    kb_id=config.knowledge_base_id,
+                    strategy=config.retrieval_strategy,
+                    top_k=config.retrieval_top_k,
+                    rerank=config.rerank_enabled,
+                    tenant_id=tenant_id,
+                )
+            except AppError:
+                raise
+            except Exception as e:
+                logger.error("retrieval_failed", error=str(e))
+                raise ExternalServiceError("retrieval", str(e)) from e
 
         # Compute confidence from retrieval scores (must be set before the
         # audit task below reads it, otherwise it raises UnboundLocalError).
@@ -138,7 +145,7 @@ class CapabilityPipeline:
 
         # 7. Evaluation (async, non-blocking)
         if self.evaluator and config.eval_metrics:
-            asyncio.create_task(
+            asyncio.create_task(  # noqa: RUF006
                 self.evaluator.evaluate(
                     output=final_output,
                     query=guarded_input,
@@ -151,7 +158,7 @@ class CapabilityPipeline:
         latency_ms = int((time.time() - start_time) * 1000)
 
         # 8. Audit log (async, non-blocking)
-        asyncio.create_task(
+        asyncio.create_task(  # noqa: RUF006
             _write_audit_async(
                 tenant_id=tenant_id,
                 user_id=user_id,

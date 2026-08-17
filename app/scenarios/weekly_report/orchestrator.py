@@ -12,8 +12,13 @@ from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.rag.retrieval.retriever import Retriever
 from app.scenarios.weekly_report.schemas import (
-    WeeklyReportResponse, ProgressItem, RiskItem, PlanItem,
-    TaskStatus, Priority, Severity,
+    PlanItem,
+    Priority,
+    ProgressItem,
+    RiskItem,
+    Severity,
+    TaskStatus,
+    WeeklyReportResponse,
 )
 from app.shared.logger import get_logger
 
@@ -27,7 +32,7 @@ def _extract_json_from_llm_output(output: str) -> dict:
     json_match = re.search(r"\{[\s\S]*\}", output)
     if json_match:
         try:
-            return json.loads(json_match.group())
+            return dict(json.loads(json_match.group()))
         except json.JSONDecodeError:
             pass
     return {}
@@ -74,9 +79,9 @@ class WeeklyReportOrchestrator:
             )
 
         # 3. LLM generation
-        raw_output, tokens_used = await self.llm.generate(
+        raw_output, _tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
-            context=[{"source": "多源数据", "section": "聚合", "content": aggregated}] + kb_context,
+            context=[{"source": "多源数据", "section": "聚合", "content": aggregated}, *kb_context],
             query=f"请为 {period} 周期生成结构化周报",
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,

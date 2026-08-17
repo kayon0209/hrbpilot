@@ -26,8 +26,10 @@ async def readiness_check():
 
     # Database check
     try:
-        from app.data.database import get_engine
         from sqlalchemy import text
+
+        from app.data.database import get_engine
+
         engine = get_engine()
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -39,6 +41,7 @@ async def readiness_check():
     # Redis check
     try:
         import redis.asyncio as aioredis
+
         r = aioredis.from_url(settings.redis_url)
         await r.ping()
         await r.close()
@@ -47,10 +50,32 @@ async def readiness_check():
         logger.warning("redis_unavailable", error=str(e))
         checks["redis"] = {"status": "error", "detail": str(e)}
 
+    try:
+        from app.rag.storage.milvus import MilvusStore
+
+        await MilvusStore().check_connection_async()
+        checks["milvus"] = {"status": "ok"}
+    except Exception as e:
+        logger.warning("milvus_unavailable", error=str(e))
+        checks["milvus"] = {"status": "error", "detail": str(e)}
+
+    try:
+        from app.rag.storage.object_store import ObjectStore
+
+        await ObjectStore().check_connection_async()
+        checks["minio"] = {"status": "ok"}
+    except Exception as e:
+        logger.warning("minio_unavailable", error=str(e))
+        checks["minio"] = {"status": "error", "detail": str(e)}
+
+    embedding_configured = bool(settings.embedding_base_url and settings.effective_embedding_api_key)
+    checks["embedding"] = {
+        "status": "ok" if embedding_configured else "error",
+        "detail": "configured" if embedding_configured else "missing endpoint or API key",
+    }
+
     # Overall status
     all_ok = all(c.get("status") == "ok" for c in checks.values())
-    status_code = 200 if all_ok else 503
-
     return {
         "status": "ok" if all_ok else "degraded",
         "checks": checks,

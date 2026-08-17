@@ -4,10 +4,10 @@ Interview digest, Insight report, Weekly report, Culture content.
 All have tenant_id for RLS.
 """
 
-from sqlalchemy import String, Integer, Float, Text, ForeignKey
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.data.models.base import Base, UUIDPrimaryKey, TimestampMixin, TenantMixin
+from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 
 
 class InterviewDigest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):

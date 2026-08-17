@@ -7,12 +7,10 @@ GET  /api/interview-digest/result/{task_id} → Get completed result
 GET  /api/interview-digest/history → Recent digest history
 """
 
-import json
-from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
-from app.scenarios.interview_digest.schemas import DigestStatus, InterviewDigestResponse, UploadRequest
 from app.access.middleware.decorators import require_auth, require_role
+from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
 
@@ -51,24 +49,26 @@ async def upload_document(
     if content_type == "text/plain":
         raw_text = content.decode("utf-8", errors="replace")
     elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        # TODO: Use python-docx for real parsing
         try:
+            import io
+
             from docx import Document
-            doc = Document(content)  # This needs a file-like object
+            doc = Document(io.BytesIO(content))
             raw_text = "\n".join(para.text for para in doc.paragraphs)
         except Exception as e:
             logger.warning("docx_parse_failed", error=str(e))
-            raw_text = f"[文档解析失败: {str(e)}]"
+            raw_text = f"[文档解析失败: {e!s}]"
     elif content_type == "application/pdf":
         # TODO: Use pypdf for real parsing
         try:
-            from pypdf import PdfReader
             import io
+
+            from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as e:
             logger.warning("pdf_parse_failed", error=str(e))
-            raw_text = f"[PDF解析失败: {str(e)}]"
+            raw_text = f"[PDF解析失败: {e!s}]"
 
     logger.info(
         "interview_document_uploaded",

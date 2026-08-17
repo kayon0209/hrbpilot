@@ -7,10 +7,9 @@ Sets user_id, role, tenant_id in request state for downstream use.
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response, JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from app.config.settings import settings
-from app.shared.errors import AuthError, ForbiddenError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)

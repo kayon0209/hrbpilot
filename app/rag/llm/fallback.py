@@ -9,12 +9,8 @@ and get a response from whichever provider is available.
 """
 
 from app.rag.llm.orchestrator import (
-    get_active_provider,
-    get_active_config,
-    get_llm_client,
-    get_active_model,
     _PROVIDER_REGISTRY,
-    _CLIENTS,
+    get_active_provider,
     set_active_provider,
 )
 from app.shared.logger import get_logger

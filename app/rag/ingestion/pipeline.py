@@ -1,68 +1,73 @@
-"""HRBP AI Workbench — Document ingestion pipeline.
+"""HRBP AI Workbench — document ingestion pipeline.
 
-Parse → Chunk → Embed → Index into vector database.
-Supports docx, pdf, txt formats.
-Uses Zhipu embedding-3 for vectorization.
+Real pipeline: Parse → Chunk → Tokenize → Embed → PostgreSQL chunks → Milvus.
+
+Key invariants:
+  - No zero-vector fallback: if embedding fails the document is marked error.
+  - Rebuilding keeps the old Milvus vectors until the new PostgreSQL version
+    commits. Failed rebuilds therefore leave the last good index available.
+  - Only txt / pdf / docx are supported. .doc / .xls / .ppt are rejected.
 """
 
-import asyncio
-import uuid
-from pathlib import Path
-from typing import BinaryIO
+from __future__ import annotations
 
-from app.rag.config_loader import ScenarioConfig
-from app.rag.llm.orchestrator import ZhipuEmbeddingClient
+import asyncio
+import hashlib
+import io
+import json
+import re
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config.settings import settings
+from app.data.database import make_tenant_session
+from app.data.models.infra import AsyncTask
+from app.data.models.knowledge_base import Document, DocumentChunk
+from app.rag.embedding import EmbeddingClient, get_embedder
+from app.rag.retrieval.tokenizer import tokenize
+from app.rag.storage.milvus import MilvusStore
+from app.rag.storage.object_store import ObjectStore
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# In-memory task store for async ingestion
-_ingestion_tasks: dict[str, dict] = {}
+SUPPORTED_TYPES = {"txt", "pdf", "docx"}
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 class DocumentParser:
-    """Parse uploaded files into plain text."""
+    """Parse uploaded files into plain text. Raises on any failure."""
 
-    async def parse(self, content: bytes, file_type: str, filename: str = "") -> str:
-        """Extract text from docx/pdf/txt files."""
-        if file_type == "txt":
+    def parse(self, content: bytes, file_type: str) -> str:
+        ft = (file_type or "").lower().lstrip(".")
+        if ft not in SUPPORTED_TYPES:
+            raise ValueError(f"Unsupported file type: {file_type}. Supported: {', '.join(sorted(SUPPORTED_TYPES))}")
+
+        if ft == "txt":
             return content.decode("utf-8", errors="replace")
 
-        elif file_type == "docx":
-            try:
-                import io
-                from docx import Document
-                doc = Document(io.BytesIO(content))
-                paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
-                return "\n".join(paragraphs)
-            except Exception as e:
-                logger.warning("docx_parse_failed", filename=filename, error=str(e))
-                return f"[文档解析失败: {str(e)}]"
+        if ft == "docx":
+            from docx import Document as DocxDocument
 
-        elif file_type == "pdf":
-            try:
-                import io
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(content))
-                pages = [page.extract_text() or "" for page in reader.pages]
-                return "\n".join(pages)
-            except Exception as e:
-                logger.warning("pdf_parse_failed", filename=filename, error=str(e))
-                return f"[PDF解析失败: {str(e)}]"
+            doc = DocxDocument(io.BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-        else:
-            raise ValueError(f"Unsupported file type: {file_type}")
+        # pdf
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 class Chunker:
-    """Split parsed text into chunks for embedding.
-
-    Strategies:
-    - fixed_512: Fixed-size chunks with overlap (default)
-    - section: Split by section headings (制度文档)
-    - semantic: Semantic-aware chunking (future)
-    """
+    """Split parsed text into chunks for embedding."""
 
     def chunk(
         self,
@@ -71,162 +76,285 @@ class Chunker:
         chunk_size: int = 512,
         overlap: int = 50,
         source: str = "",
-        filename: str = "",
-    ) -> list[dict]:
-        """Split text into overlapping chunks."""
+    ) -> list[dict[str, Any]]:
+        """Split text into overlapping chunks (or by section)."""
         if strategy == "section":
-            return self._chunk_by_section(text, source, filename)
+            return self._chunk_by_section(text, source)
 
-        # Fixed-size chunking (default)
-        chunks = []
-        # For Chinese text, approximate characters instead of words
+        if chunk_size <= overlap:
+            overlap = max(0, chunk_size // 10)
+
+        chunks: list[dict[str, Any]] = []
         text_len = len(text)
-
-        for i in range(0, text_len, chunk_size - overlap):
+        step = max(1, chunk_size - overlap)
+        for i in range(0, text_len, step):
             chunk_text = text[i : i + chunk_size]
-            if chunk_text.strip():
-                chunks.append({
+            if not chunk_text.strip():
+                continue
+            chunks.append(
+                {
                     "content": chunk_text.strip(),
                     "index": len(chunks),
-                    "source": source or filename,
                     "section": f"片段 {len(chunks) + 1}",
                     "start_char": i,
                     "end_char": min(i + chunk_size, text_len),
-                })
-
+                }
+            )
         return chunks
 
-    def _chunk_by_section(self, text: str, source: str, filename: str) -> list[dict]:
-        """Split text by section headings (common in HR policy documents)."""
-        import re
-        # Match common section patterns
-        section_pattern = r"(第[一二三四五六七八九十\d]+[章节条]|[一二三四五六七八九十\d]+、|\d+\.\d+)"
-        sections = re.split(section_pattern, text)
-
-        chunks = []
+    def _chunk_by_section(self, text: str, source: str) -> list[dict[str, Any]]:
+        pattern = r"(第[一二三四五六七八九十\d]+[章节条]|[一二三四五六七八九十\d]+、|\d+\.\d+)"
+        parts = re.split(pattern, text)
+        chunks: list[dict[str, Any]] = []
         current_section = "总则"
         current_text = ""
 
-        for i, part in enumerate(sections):
-            if re.match(section_pattern, part):
+        for part in parts:
+            if re.match(pattern, part):
                 if current_text.strip():
-                    chunks.append({
-                        "content": current_text.strip(),
-                        "index": len(chunks),
-                        "source": source or filename,
-                        "section": current_section,
-                        "start_char": 0,
-                        "end_char": len(current_text),
-                    })
+                    chunks.append(
+                        {
+                            "content": current_text.strip(),
+                            "index": len(chunks),
+                            "section": current_section,
+                            "start_char": 0,
+                            "end_char": len(current_text),
+                        }
+                    )
                 current_section = part.strip()
                 current_text = part
             else:
                 current_text += part
 
-        # Don't forget the last section
         if current_text.strip():
-            chunks.append({
-                "content": current_text.strip(),
-                "index": len(chunks),
-                "source": source or filename,
-                "section": current_section,
-                "start_char": 0,
-                "end_char": len(current_text),
-            })
+            chunks.append(
+                {
+                    "content": current_text.strip(),
+                    "index": len(chunks),
+                    "section": current_section,
+                    "start_char": 0,
+                    "end_char": len(current_text),
+                }
+            )
 
-        return chunks if chunks else self.chunk(text, strategy="fixed_512", source=source, filename=filename)
-
-
-class Embedder:
-    """Generate embeddings using Zhipu embedding-3 (2048 dim)."""
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a list of text chunks using Zhipu API."""
-        if not texts:
-            return []
-
-        # Batch embed (Zhipu API supports batch)
-        try:
-            embed_client = ZhipuEmbeddingClient()
-            embeddings = await embed_client.embed(texts)
-            return embeddings
-        except Exception as e:
-            logger.warning("zhipu_embedding_failed", error=str(e), count=len(texts))
-            # Fallback: return zero vectors (won't match anything in search)
-            return [[0.0] * settings.embedding_dimension for _ in texts]
+        return chunks if chunks else self.chunk(text, source=source)
 
 
-class IngestionPipeline:
-    """Full ingestion: Parse → Chunk → Embed → Index."""
+class IngestionService:
+    """Parse → chunk → tokenize → embed → PG → Milvus, with atomic rebuild."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        embedder: EmbeddingClient | None = None,
+        milvus: MilvusStore | None = None,
+        object_store: ObjectStore | None = None,
+    ) -> None:
         self.parser = DocumentParser()
         self.chunker = Chunker()
-        self.embedder = Embedder()
+        self._embedder = embedder
+        self._milvus = milvus
+        self._object_store = object_store
 
-    async def ingest(
+    def _get_embedder(self) -> EmbeddingClient:
+        if self._embedder is None:
+            self._embedder = get_embedder()
+        return self._embedder
+
+    def _get_milvus(self) -> MilvusStore:
+        if self._milvus is None:
+            self._milvus = MilvusStore()
+        return self._milvus
+
+    def _get_object_store(self) -> ObjectStore:
+        if self._object_store is None:
+            self._object_store = ObjectStore()
+        return self._object_store
+
+    async def process_document(
         self,
-        content: bytes,
-        file_type: str,
-        kb_id: str,
-        tenant_id: str,
-        filename: str = "",
+        document: Document,
+        session: AsyncSession,
         chunk_strategy: str = "fixed_512",
         chunk_size: int = 512,
-    ) -> list[dict]:
-        """Ingest one document into the vector database."""
-        # 1. Parse
-        text = await self.parser.parse(content, file_type, filename)
+    ) -> None:
+        """Ingest a single document into PostgreSQL + Milvus.
 
-        # 2. Chunk
-        chunks = self.chunker.chunk(
-            text, strategy=chunk_strategy, chunk_size=chunk_size,
-            source=filename, filename=filename,
+        Raises on failure; the caller marks the document as error. New vectors
+        are compensated by exact id if the PostgreSQL commit fails. Old vectors
+        are removed only after that commit succeeds.
+        """
+        doc_id = document.id
+        kb_id = document.kb_id
+        tenant_id = document.tenant_id
+
+        # 1. Fetch raw bytes from object storage
+        content = await self._get_object_store().get_async(document.s3_key)
+
+        # 2. Parse
+        text = await asyncio.to_thread(self.parser.parse, content, document.file_type)
+        if not text.strip():
+            raise ValueError("Parsed document produced empty text")
+
+        # 3. Chunk
+        raw_chunks = self.chunker.chunk(text, strategy=chunk_strategy, chunk_size=chunk_size, source=document.filename)
+        if not raw_chunks:
+            raise ValueError("No chunks produced from document")
+
+        # 4. Embed (raises on failure — no zero-vector fallback)
+        contents = [c["content"] for c in raw_chunks]
+        embeddings = await self._get_embedder().embed(contents)
+        if len(embeddings) != len(contents):
+            raise ValueError(f"Embedding count {len(embeddings)} != chunk count {len(contents)}")
+
+        # 5. Record the last good vector ids, then replace PG chunks inside the
+        # current transaction. Old Milvus rows remain searchable until commit.
+        old_result = await session.execute(select(DocumentChunk.id).where(DocumentChunk.document_id == doc_id))
+        old_chunk_ids = list(old_result.scalars().all()) if old_result is not None else []
+        await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
+
+        # 6. Write new chunks to PostgreSQL + build Milvus rows
+        milvus_rows: list[dict[str, Any]] = []
+        for c, emb in zip(raw_chunks, embeddings, strict=False):
+            chunk_id = str(uuid4())
+            session.add(
+                DocumentChunk(
+                    id=chunk_id,
+                    tenant_id=tenant_id,
+                    kb_id=kb_id,
+                    document_id=doc_id,
+                    chunk_index=c["index"],
+                    content=c["content"],
+                    keyword_text=tokenize(c["content"]),
+                    section=c["section"],
+                    start_char=c["start_char"],
+                    end_char=c["end_char"],
+                    content_sha256=sha256_hex(c["content"].encode("utf-8")),
+                    embedding_model=settings.embedding_model,
+                    status="active",
+                )
+            )
+            milvus_rows.append(
+                {
+                    "chunk_id": chunk_id,
+                    "tenant_id": tenant_id,
+                    "kb_id": kb_id,
+                    "document_id": doc_id,
+                    "embedding": emb,
+                }
+            )
+
+        # Surface PostgreSQL constraint/serialization errors before creating
+        # vectors in Milvus.
+        await session.flush()
+
+        # 7. Upsert to Milvus (if this fails, roll back the PG chunk writes)
+        try:
+            await self._get_milvus().upsert_async(milvus_rows)
+        except Exception:
+            await session.rollback()
+            raise
+
+        # 8. Mark indexed
+        document.status = "indexed"
+        document.error_message = None
+        document.indexed_at = datetime.now(UTC)
+        try:
+            await session.commit()
+        except Exception:
+            # PostgreSQL and Milvus cannot share a transaction. Compensate only
+            # the new version; deleting by document would also erase last-good
+            # vectors that the rolled-back PostgreSQL rows still reference.
+            try:
+                await self._get_milvus().delete_by_ids_async([str(row["chunk_id"]) for row in milvus_rows])
+            except Exception as cleanup_error:
+                logger.error(
+                    "ingestion_milvus_compensation_failed",
+                    document_id=doc_id,
+                    error=str(cleanup_error),
+                )
+            await session.rollback()
+            raise
+
+        # The new PG version is now authoritative. Cleanup failure is harmless
+        # to recall correctness: hydration drops old vector ids whose PG rows no
+        # longer exist, and a later maintenance pass can retry the deletion.
+        try:
+            await self._get_milvus().delete_by_ids_async(old_chunk_ids)
+        except Exception as cleanup_error:
+            logger.warning(
+                "ingestion_old_vector_cleanup_failed",
+                document_id=doc_id,
+                error=str(cleanup_error),
+            )
+
+        logger.info("ingestion_document_indexed", document_id=doc_id, chunks=len(milvus_rows))
+
+
+async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
+    """Background worker: process all pending documents for one AsyncTask."""
+    session = await make_tenant_session(tenant_id)
+    service = IngestionService()
+    try:
+        task = (await session.execute(select(AsyncTask).where(AsyncTask.id == task_id))).scalar_one_or_none()
+        if task is None:
+            logger.error("ingestion_task_not_found", task_id=task_id)
+            return
+
+        payload = json.loads(task.result_json or "{}")
+        kb_id = payload.get("kb_id", "")
+        document_ids = payload.get("document_ids", [])
+
+        task.status = "running"
+        task.started_at = datetime.now(UTC)
+        await session.commit()
+
+        total = len(document_ids)
+        completed = 0
+        failed = 0
+        for doc_id in document_ids:
+            document = (
+                await session.execute(
+                    select(Document).where(
+                        Document.id == doc_id,
+                        Document.tenant_id == tenant_id,
+                        Document.kb_id == kb_id,
+                        Document.status == "parsing",
+                    )
+                )
+            ).scalar_one_or_none()
+            if document is None:
+                continue
+            try:
+                await service.process_document(document, session)
+            except Exception as e:
+                document.status = "error"
+                document.error_message = str(e)[:2000]
+                await session.commit()
+                logger.error("ingestion_document_failed", document_id=doc_id, error=str(e))
+                failed += 1
+            completed += 1
+            task.progress = int(completed / total * 100) if total else 100
+            await session.commit()
+
+        task.status = "failed" if failed else "completed"
+        task.progress = 100
+        task.completed_at = datetime.now(UTC)
+        task.result_json = json.dumps(
+            {"kb_id": kb_id, "processed": completed, "succeeded": completed - failed, "failed": failed}
         )
-
-        # 3. Embed
-        texts = [c["content"] for c in chunks]
-        embeddings = await self.embedder.embed(texts)
-
-        # 4. Index into vector database
-        # TODO: Write to Milvus/Qdrant
-        for i, chunk in enumerate(chunks):
-            chunk["embedding"] = embeddings[i]
-            chunk["kb_id"] = kb_id
-            chunk["tenant_id"] = tenant_id
-            chunk["chunk_id"] = str(uuid.uuid4())
-
-        logger.info(
-            "ingestion_complete",
-            kb_id=kb_id,
-            tenant_id=tenant_id,
-            filename=filename,
-            chunks=len(chunks),
-        )
-
-        return chunks
-
-    async def start_ingestion(self, kb_id: str, tenant_id: str) -> str:
-        """Start async ingestion task — returns task_id."""
-        task_id = str(uuid.uuid4())
-        _ingestion_tasks[task_id] = {
-            "task_id": task_id,
-            "kb_id": kb_id,
-            "tenant_id": tenant_id,
-            "status": "pending",
-            "progress": 0.0,
-        }
-
-        logger.info("ingestion_task_started", task_id=task_id, kb_id=kb_id)
-
-        # TODO: Load un-ingested documents from DB and process them
-        # For now, just mark as completed
-        async def _run():
-            _ingestion_tasks[task_id]["status"] = "processing"
-            _ingestion_tasks[task_id]["progress"] = 0.5
-            await asyncio.sleep(0.5)  # Simulated processing
-            _ingestion_tasks[task_id]["status"] = "completed"
-            _ingestion_tasks[task_id]["progress"] = 1.0
-
-        asyncio.create_task(_run())
-        return task_id
+        task.error_message = f"{failed} document(s) failed" if failed else None
+        await session.commit()
+        logger.info("ingestion_task_completed", task_id=task_id, processed=completed)
+    except Exception as e:
+        logger.error("ingestion_task_failed", task_id=task_id, error=str(e))
+        try:
+            task = (await session.execute(select(AsyncTask).where(AsyncTask.id == task_id))).scalar_one_or_none()
+            if task is not None:
+                task.status = "failed"
+                task.error_message = str(e)[:2000]
+                task.completed_at = datetime.now(UTC)
+                await session.commit()
+        except Exception:
+            pass
+    finally:
+        await session.close()
