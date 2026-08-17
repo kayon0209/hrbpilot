@@ -29,6 +29,9 @@ htmlcov/
 .vscode/
 *.swp
 
+# --- Isolated Git worktrees ---
+.worktrees/
+
 # --- OS ---
 .DS_Store
 Thumbs.db
