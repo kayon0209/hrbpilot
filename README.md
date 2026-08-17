@@ -103,6 +103,47 @@ uvicorn app.main:app --reload --port 8000
 # API 文档: http://localhost:8000/docs
 ```
 
+### Web 工作台
+
+前端位于 `web/`，覆盖制度问答、知识库、面谈纪要、员工声音、HR 周报、文化内容、检索评测和模型服务设置。页面只读取真实后端状态，不内置业务 mock 数据。
+
+使用 Docker 启动完整环境：
+
+```bash
+docker compose up -d --build
+```
+
+启动后访问：
+
+- Web 工作台：`http://localhost:3000`
+- FastAPI / OpenAPI：`http://localhost:8001/docs`
+- MinIO 控制台：`http://localhost:9001`
+
+登录账号必须通过项目已有的用户初始化流程创建。不要把邮箱、密码、JWT 或供应商 API Key 写入前端源码。Nginx 会将浏览器的 `/api/*` 请求反向代理到 `app:8000`，因此生产镜像不需要持有任何模型密钥。
+
+不使用 Docker 时，可在安装 Node.js 22 与 Corepack 后运行：
+
+```bash
+corepack pnpm --dir web install
+corepack pnpm --dir web dev
+```
+
+开发服务器位于 `http://localhost:5173`，Vite 会把 `/api` 代理到 `http://localhost:8001`。
+
+前端验证命令：
+
+```bash
+corepack pnpm --dir web lint
+corepack pnpm --dir web test:run
+corepack pnpm --dir web build
+```
+
+端到端测试只从本地环境变量读取测试账号：
+
+```bash
+E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec playwright test
+```
+
 ### 服务依赖与启动（真实 Hybrid RAG）
 
 RAG 依赖四个外部服务：PostgreSQL、Milvus、MinIO（对象存储）、Redis。一键启动：
