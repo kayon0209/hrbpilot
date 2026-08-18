@@ -51,6 +51,12 @@ def test_chunk_section():
     assert any("第一章" in c["content"] for c in chunks)
 
 
+def test_chunk_section_offsets_are_document_offsets():
+    text = "前言\n第一章 总则\n第一条 工作时间\n第二章 附则"
+    chunks = Chunker().chunk(text, strategy="section")
+    assert all(text[c["start_char"] : c["end_char"]].strip() == c["content"] for c in chunks)
+
+
 # --- sha256 ---
 
 

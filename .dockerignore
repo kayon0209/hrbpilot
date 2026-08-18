@@ -1,5 +1,6 @@
 .git
 .gitignore
+.worktrees
 __pycache__
 *.pyc
 *.pyo
@@ -12,7 +13,5 @@ venv
 *.egg-info
 kb_docs
 interview_samples
-tests
-evaluation
 docs
 assets

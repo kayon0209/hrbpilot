@@ -10,6 +10,7 @@ GET  /api/interview-digest/history → Recent digest history
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
@@ -29,7 +30,7 @@ async def upload_document(
     file: UploadFile = File(...),
 ):
     """Upload an interview document (docx/pdf/txt) — returns parsed content."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
 
     # Validate file type
     allowed_types = {
@@ -95,7 +96,7 @@ async def start_analysis(
     body: dict,
 ):
     """Start async interview digest analysis — returns task_id."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
 
     content = body.get("content", "")

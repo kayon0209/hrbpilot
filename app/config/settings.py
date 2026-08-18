@@ -113,8 +113,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
-        if self.app_env == "production" and (self.jwt_secret == "change-me-in-production" or len(self.jwt_secret) < 32):
-            raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production")
+        if self.app_env == "production":
+            if self.jwt_secret == "change-me-in-production" or len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production")
+            if not self.llm_api_key or self.llm_api_key == "change-me":
+                raise ValueError("LLM_API_KEY must be configured in production")
+            if not self.effective_embedding_api_key or not self.embedding_base_url:
+                raise ValueError("EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be configured in production")
         return self
 
     # --- Computed helpers ---

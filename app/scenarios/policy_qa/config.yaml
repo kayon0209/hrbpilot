@@ -2,7 +2,7 @@ scenario_id: policy_qa
 knowledge_base_id: policy_kb
 retrieval_strategy: hybrid
 retrieval_top_k: 5
-rerank_enabled: true
+rerank_enabled: false  # No reranker is wired; do not claim a disabled feature.
 prompt_template: prompts/policy_qa.txt
 output_schema: QAResponse
 guardrail_rules:

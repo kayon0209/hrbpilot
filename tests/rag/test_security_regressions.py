@@ -2,9 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
+from starlette.requests import Request
 
+from app.access.middleware.tenant import require_tenant_id
 from app.access.routes import auth
 from app.config.settings import Settings
+from app.shared.errors import AuthError
 
 
 async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -> None:
@@ -43,5 +46,32 @@ def test_production_rejects_default_jwt_secret() -> None:
 
 
 def test_production_accepts_strong_jwt_secret() -> None:
-    configured = Settings(app_env="production", jwt_secret="a" * 32)
+    configured = Settings(
+        app_env="production",
+        jwt_secret="a" * 32,
+        llm_api_key="configured-llm-key",
+        embedding_api_key="configured-embedding-key",
+        embedding_base_url="https://embedding.example/v1",
+    )
     assert configured.is_production
+
+
+def test_production_rejects_missing_llm_or_embedding_configuration() -> None:
+    with pytest.raises(PydanticValidationError, match="LLM_API_KEY"):
+        Settings(
+            app_env="production",
+            jwt_secret="a" * 32,
+            llm_api_key="change-me",
+            embedding_api_key="",
+            embedding_base_url="",
+        )
+
+
+def test_request_without_tenant_context_fails_closed() -> None:
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+
+    with pytest.raises(AuthError, match="Tenant context is required"):
+        require_tenant_id(request)
+
+    request.state.tenant_id = "tenant-1"
+    assert require_tenant_id(request) == "tenant-1"

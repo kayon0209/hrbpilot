@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 
 from app.config.settings import settings
+from app.shared.errors import AuthError
 
 # Lazy engine initialization — avoid crashing on import if DB isn't reachable
 _engine: AsyncEngine | None = None
@@ -93,7 +94,9 @@ async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
     Request automatically.
     """
     session = _get_factory()()
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if not tenant_id:
+        raise AuthError("Tenant context is required")
     session.info["tenant_id"] = tenant_id
     try:
         await session.execute(text("SELECT 1"))

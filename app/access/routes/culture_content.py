@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, Request
 
 from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.scenarios.culture_content.orchestrator import CultureContentOrchestrator
 from app.scenarios.culture_content.schemas import GenerateContentRequest
 from app.shared.errors import NotFoundError
@@ -37,7 +38,7 @@ async def expand_keywords(body: GenerateContentRequest, request: Request):
 @require_role("hrbp")
 async def generate_content(body: GenerateContentRequest, request: Request):
     """Generate 4-channel culture content from keywords."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
 
     keywords = body.keywords

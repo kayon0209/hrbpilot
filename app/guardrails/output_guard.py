@@ -12,6 +12,7 @@ Per architecture spec ADR-004:
   - Toxicity detected → replace with safe response
 """
 
+from app.rag.retrieval.tokenizer import tokenize
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -98,8 +99,8 @@ class OutputGuardrail:
             snippet = source.get("content", "")
             if snippet and len(snippet) > 20:
                 # Check for partial overlap
-                words = set(snippet.lower().split())
-                output_words = set(output.lower().split())
+                words = set(tokenize(snippet.lower()).split())
+                output_words = set(tokenize(output.lower()).split())
                 overlap = words & output_words
                 if len(overlap) >= 3:
                     return False  # Found matching source

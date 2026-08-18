@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import settings
 from app.data.database import make_tenant_session
 from app.data.models.infra import AsyncTask
-from app.data.models.knowledge_base import Document, DocumentChunk
+from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.rag.embedding import EmbeddingClient, get_embedder
 from app.rag.retrieval.tokenizer import tokenize
 from app.rag.storage.milvus import MilvusStore
@@ -108,6 +108,8 @@ class Chunker:
         chunks: list[dict[str, Any]] = []
         current_section = "总则"
         current_text = ""
+        current_start = 0
+        cursor = 0
 
         for part in parts:
             if re.match(pattern, part):
@@ -117,14 +119,16 @@ class Chunker:
                             "content": current_text.strip(),
                             "index": len(chunks),
                             "section": current_section,
-                            "start_char": 0,
-                            "end_char": len(current_text),
+                            "start_char": current_start,
+                            "end_char": current_start + len(current_text),
                         }
                     )
                 current_section = part.strip()
                 current_text = part
+                current_start = cursor
             else:
                 current_text += part
+            cursor += len(part)
 
         if current_text.strip():
             chunks.append(
@@ -132,8 +136,8 @@ class Chunker:
                     "content": current_text.strip(),
                     "index": len(chunks),
                     "section": current_section,
-                    "start_char": 0,
-                    "end_char": len(current_text),
+                    "start_char": current_start,
+                    "end_char": current_start + len(current_text),
                 }
             )
 
@@ -303,14 +307,19 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
         payload = json.loads(task.result_json or "{}")
         kb_id = payload.get("kb_id", "")
         document_ids = payload.get("document_ids", [])
+        kb = (await session.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id))).scalar_one_or_none()
+        if kb is None:
+            raise ValueError(f"Knowledge base {kb_id} not found for ingestion task")
 
         task.status = "running"
         task.started_at = datetime.now(UTC)
         await session.commit()
 
         total = len(document_ids)
-        completed = 0
+        processed = 0
+        succeeded = 0
         failed = 0
+        skipped = 0
         for doc_id in document_ids:
             document = (
                 await session.execute(
@@ -323,28 +332,54 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
                 )
             ).scalar_one_or_none()
             if document is None:
+                processed += 1
+                skipped += 1
+                task.progress = int(processed / total * 100) if total else 100
+                await session.commit()
+                logger.warning("ingestion_document_skipped", document_id=doc_id, task_id=task_id)
                 continue
             try:
-                await service.process_document(document, session)
+                await service.process_document(document, session, chunk_strategy=kb.chunk_strategy, chunk_size=kb.chunk_size)
             except Exception as e:
                 document.status = "error"
                 document.error_message = str(e)[:2000]
                 await session.commit()
                 logger.error("ingestion_document_failed", document_id=doc_id, error=str(e))
                 failed += 1
-            completed += 1
-            task.progress = int(completed / total * 100) if total else 100
+            else:
+                succeeded += 1
+            processed += 1
+            task.progress = int(processed / total * 100) if total else 100
             await session.commit()
 
-        task.status = "failed" if failed else "completed"
+        # Avoid sealing a tiny segment for every document. A single batch flush
+        # preserves predictable visibility while keeping Milvus segment churn low.
+        if succeeded:
+            await service._get_milvus().flush_async()
+
+        if succeeded == 0 and (failed or skipped):
+            task.status = "failed"
+        elif failed or skipped:
+            task.status = "partial"
+        else:
+            task.status = "completed"
         task.progress = 100
         task.completed_at = datetime.now(UTC)
         task.result_json = json.dumps(
-            {"kb_id": kb_id, "processed": completed, "succeeded": completed - failed, "failed": failed}
+            {"kb_id": kb_id, "processed": processed, "succeeded": succeeded, "failed": failed, "skipped": skipped}
         )
-        task.error_message = f"{failed} document(s) failed" if failed else None
+        task.error_message = (
+            f"{failed} document(s) failed; {skipped} skipped" if failed or skipped else None
+        )
         await session.commit()
-        logger.info("ingestion_task_completed", task_id=task_id, processed=completed)
+        logger.info(
+            "ingestion_task_completed",
+            task_id=task_id,
+            processed=processed,
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+        )
     except Exception as e:
         logger.error("ingestion_task_failed", task_id=task_id, error=str(e))
         try:

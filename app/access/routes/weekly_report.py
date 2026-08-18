@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, Request
 
 from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
 from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest
 from app.shared.errors import NotFoundError
@@ -31,7 +32,7 @@ async def generate_report(
     request: Request,
 ):
     """Generate a weekly report draft from multi-source data."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
 
     # Use mock data if no source_ids provided

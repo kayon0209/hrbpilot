@@ -52,7 +52,7 @@ class DocumentChunk(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_document_chunks_document_index"),)
 
     kb_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), nullable=False, index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     keyword_text: Mapped[str] = mapped_column(Text, nullable=False)  # jieba tokens, space-joined

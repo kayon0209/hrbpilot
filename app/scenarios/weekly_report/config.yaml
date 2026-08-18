@@ -2,7 +2,7 @@ scenario_id: weekly_report
 knowledge_base_id: weekly_kb
 retrieval_strategy: hybrid
 retrieval_top_k: 5
-rerank_enabled: true
+rerank_enabled: false  # No reranker is wired; do not claim a disabled feature.
 prompt_template: prompts/weekly_report.txt
 output_schema: WeeklyReportResponse
 guardrail_rules:

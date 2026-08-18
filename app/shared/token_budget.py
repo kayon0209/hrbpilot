@@ -6,7 +6,8 @@ approaching monthly budget thresholds.
 
 import threading
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 from app.shared.logger import get_logger
 
@@ -28,7 +29,11 @@ _lock = threading.Lock()
 
 def _current_month_key() -> str:
     """Return YYYY-MM key for the current month."""
-    return datetime.now().strftime("%Y-%m")
+    return datetime.now(UTC).strftime("%Y-%m")
+
+
+def _usage_key(tenant_id: str, month_key: str) -> str:
+    return f"{tenant_id}:{month_key}"
 
 
 def record_token_usage(
@@ -44,7 +49,7 @@ def record_token_usage(
     month_key = _current_month_key()
 
     with _lock:
-        entry = _monthly_usage[month_key]
+        entry = _monthly_usage[_usage_key(tenant_id, month_key)]
         entry["total"] += tokens
         entry["by_model"][model] += tokens
         total = entry["total"]
@@ -88,7 +93,16 @@ def get_monthly_usage(tenant_id: str | None = None) -> dict:
     If tenant_id is None, return all tenants' usage.
     """
     month_key = _current_month_key()
-    entry = _monthly_usage.get(month_key, {"total": 0, "by_model": {}})
+    if tenant_id is None:
+        totals: dict[str, Any] = {"total": 0, "by_model": defaultdict(int)}
+        for key, entry in _monthly_usage.items():
+            if key.endswith(f":{month_key}"):
+                totals["total"] += entry["total"]
+                for model, count in entry["by_model"].items():
+                    totals["by_model"][model] += count
+        entry = totals
+    else:
+        entry = _monthly_usage.get(_usage_key(tenant_id, month_key), {"total": 0, "by_model": {}})
 
     return {
         "month": month_key,

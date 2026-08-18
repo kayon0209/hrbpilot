@@ -17,9 +17,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.infra import AsyncTask
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
@@ -89,7 +91,7 @@ async def create_kb(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = KnowledgeBase(
         id=str(uuid.uuid4()),
         tenant_id=tenant_id,
@@ -112,7 +114,7 @@ async def list_kbs(
     scenario_id: str | None = None,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     stmt = select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id)
     if scenario_id:
         stmt = stmt.where(KnowledgeBase.scenario_id == scenario_id)
@@ -127,7 +129,7 @@ async def get_kb(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = (
         await session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
@@ -138,7 +140,7 @@ async def get_kb(
 
     counts = (
         await session.execute(
-            select(func.count(Document.id), func.count(DocumentChunk.id))
+            select(func.count(func.distinct(Document.id)), func.count(DocumentChunk.id))
             .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
             .where(Document.kb_id == kb_id)
         )
@@ -155,7 +157,7 @@ async def upload_document(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = (
         await session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
@@ -216,6 +218,13 @@ async def upload_document(
     try:
         await session.flush()
         await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        try:
+            await store.delete_async(s3_key)
+        except Exception as cleanup_error:
+            logger.error("orphan_upload_cleanup_failed", key=s3_key, error=str(cleanup_error))
+        raise ConflictError("相同内容的文件已存在，跳过重复上传", resource="document") from exc
     except Exception:
         await session.rollback()
         try:
@@ -235,7 +244,7 @@ async def trigger_ingestion(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = (
         await session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
@@ -298,7 +307,7 @@ async def list_documents(
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = (
         await session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
@@ -343,7 +352,7 @@ async def delete_document(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     doc = (
         await session.execute(
             select(Document).where(Document.id == doc_id, Document.kb_id == kb_id, Document.tenant_id == tenant_id)
@@ -356,7 +365,6 @@ async def delete_document(
 
     # Commit the authoritative metadata deletion first. If external cleanup
     # fails, stale vectors cannot hydrate and the object is no longer exposed.
-    await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
     await session.delete(doc)
     await session.commit()
 
@@ -384,7 +392,7 @@ async def delete_kb(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     kb = (
         await session.execute(
             select(KnowledgeBase).where(KnowledgeBase.id == body.kb_id, KnowledgeBase.tenant_id == tenant_id)
@@ -396,10 +404,7 @@ async def delete_kb(
     docs = (await session.execute(select(Document).where(Document.kb_id == body.kb_id))).scalars().all()
 
     object_keys = [doc.s3_key for doc in docs]
-    for doc in docs:
-        await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
-        await session.delete(doc)
-
+    await session.execute(delete(Document).where(Document.kb_id == body.kb_id, Document.tenant_id == tenant_id))
     await session.delete(kb)
     await session.commit()
 

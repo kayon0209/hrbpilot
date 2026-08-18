@@ -18,7 +18,7 @@ class AsyncTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "async_tasks"
 
     type: Mapped[str] = mapped_column(String(50), nullable=False)  # voice_insight_analysis | document_ingestion | ...
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # pending | running | completed | failed
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # pending | running | completed | partial | failed
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0-100 percentage
     result_json: Mapped[str | None] = mapped_column(Text, default=None)
     error_message: Mapped[str | None] = mapped_column(Text, default=None)

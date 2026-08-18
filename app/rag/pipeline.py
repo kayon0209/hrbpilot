@@ -9,13 +9,36 @@ Pipeline code is zero-modification — all variance comes from config.
 
 import asyncio
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
+from typing import Any
 
 from app.rag.config_loader import ScenarioConfig
 from app.shared.errors import AppError, ExternalServiceError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _schedule_background_task(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+    """Keep non-blocking work alive and surface unexpected failures."""
+    task: asyncio.Task[Any] = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+
+    def _on_complete(done_task: asyncio.Task[Any]) -> None:
+        _background_tasks.discard(done_task)
+        if done_task.cancelled():
+            return
+        try:
+            error = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is not None:
+            logger.error("pipeline_background_task_failed", task_name=name, error=str(error))
+
+    task.add_done_callback(_on_complete)
 
 
 @dataclass
@@ -100,11 +123,11 @@ class CapabilityPipeline:
                 logger.error("retrieval_failed", error=str(e))
                 raise ExternalServiceError("retrieval", str(e)) from e
 
-        # Compute confidence from retrieval scores (must be set before the
-        # audit task below reads it, otherwise it raises UnboundLocalError).
+        # ``score`` is strategy-specific ranking data (RRF, cosine, or FTS),
+        # while ``confidence`` is calibrated to the 0..1 guardrail scale.
         confidence = 0.0
         if context_chunks:
-            confidence = max(chunk.get("score", 0.0) for chunk in context_chunks)
+            confidence = max(chunk.get("confidence", 0.0) for chunk in context_chunks)
 
         # 3. LLM generation
         if self.llm_generator:
@@ -145,20 +168,21 @@ class CapabilityPipeline:
 
         # 7. Evaluation (async, non-blocking)
         if self.evaluator and config.eval_metrics:
-            asyncio.create_task(  # noqa: RUF006
+            _schedule_background_task(
                 self.evaluator.evaluate(
                     output=final_output,
                     query=guarded_input,
                     sources=context_chunks,
                     metrics=config.eval_metrics,
                     tenant_id=tenant_id,
-                )
+                ),
+                name="pipeline-evaluation",
             )
 
         latency_ms = int((time.time() - start_time) * 1000)
 
         # 8. Audit log (async, non-blocking)
-        asyncio.create_task(  # noqa: RUF006
+        _schedule_background_task(
             _write_audit_async(
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -170,7 +194,8 @@ class CapabilityPipeline:
                 confidence=confidence,
                 guardrail_flags=guardrail_flags,
                 sources=context_chunks,
-            )
+            ),
+            name="pipeline-audit-log",
         )
 
         # 9. Token budget tracking (sync, fast)
@@ -214,8 +239,8 @@ async def _write_audit_async(
             guardrail_flags=guardrail_flags,
             sources=sources,
         )
-    except Exception:
-        pass  # Audit failure must never block the response
+    except Exception as exc:
+        logger.error("audit_write_failed", error=str(exc))
 
 
 def _record_token_budget(tenant_id: str, tokens: int) -> None:
@@ -223,5 +248,5 @@ def _record_token_budget(tenant_id: str, tokens: int) -> None:
     try:
         from app.shared.token_budget import record_token_usage
         record_token_usage(tenant_id, tokens)
-    except Exception:
-        pass  # Budget tracking failure must never block
+    except Exception as exc:
+        logger.error("token_budget_record_failed", tenant_id=tenant_id, error=str(exc))

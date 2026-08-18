@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
+from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.knowledge_base import KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
@@ -63,7 +64,7 @@ async def ask_question(
     session: AsyncSession = Depends(get_db),
 ):
     """Ask a policy question — supports both SSE streaming and JSON response."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
 
@@ -113,7 +114,7 @@ async def list_policy_knowledge_bases(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     rows = (
         (
             await session.execute(

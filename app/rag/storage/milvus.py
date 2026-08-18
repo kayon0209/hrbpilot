@@ -17,6 +17,7 @@ from typing import Any
 from pymilvus import DataType, MilvusClient
 
 from app.config.settings import settings
+from app.shared.errors import ValidationError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,7 +29,7 @@ _FILTER_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
 def validate_filter_id(value: str) -> str:
     """Validate an identifier before interpolating it into a Milvus expression."""
     if _FILTER_ID_PATTERN.fullmatch(value) is None:
-        raise ValueError(f"Invalid Milvus filter identifier: {value!r}")
+        raise ValidationError("Invalid Milvus filter identifier")
     return value
 
 
@@ -109,13 +110,18 @@ class MilvusStore:
         client = self._get_client()
         self.ensure_collection()
         client.upsert(collection_name=self.collection_name, data=rows)
-        # Flush so newly upserted vectors land in a sealed segment and become
-        # immediately searchable.  Without this, search returns [] because the
-        # growing segment has not been flushed / indexed yet.
-        client.flush(self.collection_name)
 
     async def upsert_async(self, rows: list[dict[str, Any]]) -> None:
         await asyncio.to_thread(self.upsert, rows)
+
+    def flush(self) -> None:
+        """Seal writes once a complete ingestion batch has finished."""
+        client = self._get_client()
+        if client.has_collection(self.collection_name):
+            client.flush(self.collection_name)
+
+    async def flush_async(self) -> None:
+        await asyncio.to_thread(self.flush)
 
     def delete_by_document(self, document_id: str) -> int:
         client = self._get_client()

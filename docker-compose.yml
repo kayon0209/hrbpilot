@@ -70,7 +70,9 @@ services:
       - "6379:6379"
 
   app:
-    build: .
+    build:
+      context: .
+      target: runtime
     user: "10001:10001"
     env_file: env.docker
     depends_on:
@@ -87,7 +89,9 @@ services:
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
   worker:
-    build: .
+    build:
+      context: .
+      target: runtime
     user: "10001:10001"
     env_file: env.docker
     depends_on:
@@ -100,6 +104,14 @@ services:
       redis:
         condition: service_started
     command: ["celery", "-A", "app.shared.celery_app:celery_app", "worker", "--loglevel=info"]
+
+  test:
+    build:
+      context: .
+      target: test
+    env_file: env.docker
+    profiles: ["test"]
+    command: ["pytest"]
 
 volumes:
   etcd_data:

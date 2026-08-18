@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
@@ -34,7 +35,7 @@ async def start_analysis(
     body: AnalyzeRequest,
 ):
     """Start voice insight analysis — returns task_id."""
-    tenant_id = getattr(request.state, "tenant_id", "default")
+    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
 
     # Use inline content if provided, otherwise use document_ids
