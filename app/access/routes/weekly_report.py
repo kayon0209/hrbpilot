@@ -35,17 +35,22 @@ async def generate_report(
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
 
-    # Use mock data if no source_ids provided
     source_data = [
         {"type": "interview_digest", "id": sid, "content": f"[访谈结果 {sid} 内容待加载]"}
         for sid in body.source_ids
     ]
 
     if not source_data:
-        source_data = [
-            {"type": "interview_digest", "id": "auto", "content": "本周3场访谈，2位员工表达薪酬诉求，1位有离职倾向"},
-            {"type": "voice_insight", "id": "auto", "content": "声音洞察: 薪酬满意度下降趋势，加班疲劳情绪上升"},
-        ]
+        return {
+            "report_id": str(uuid.uuid4()),
+            "report": {
+                "period": body.period,
+                "summary": "未收到任何多源数据，无法生成周报。请先上传面谈纪要或员工声音数据。",
+                "has_evidence": False,
+                "confidence": 0.0,
+            },
+            "is_draft": body.draft_mode,
+        }
 
     result = await orchestrator.generate(
         period=body.period,

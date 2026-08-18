@@ -119,7 +119,29 @@ async def list_kbs(
     if scenario_id:
         stmt = stmt.where(KnowledgeBase.scenario_id == scenario_id)
     kbs = (await session.execute(stmt)).scalars().all()
-    return {"knowledge_bases": [_kb_to_dict(kb) for kb in kbs], "total": len(kbs)}
+
+    counts = (
+        await session.execute(
+            select(
+                Document.kb_id,
+                func.count(func.distinct(Document.id)).label("document_count"),
+                func.count(DocumentChunk.id).label("total_chunks"),
+            )
+            .select_from(Document)
+            .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+            .where(Document.tenant_id == tenant_id)
+            .group_by(Document.kb_id)
+        )
+    ).all()
+    count_map = {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in counts}
+
+    return {
+        "knowledge_bases": [
+            _kb_to_dict(kb, document_count=count_map.get(kb.id, (0, 0))[0], total_chunks=count_map.get(kb.id, (0, 0))[1])
+            for kb in kbs
+        ],
+        "total": len(kbs),
+    }
 
 
 @router.get("/{kb_id}")

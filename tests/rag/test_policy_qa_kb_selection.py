@@ -53,6 +53,7 @@ async def test_execute_uses_request_kb_override() -> None:
 
     assert retriever.kb_id == "real-kb-uuid"
     assert response.has_evidence is True
+    assert response.citations
 
 
 async def test_citation_confidence_is_bounded_for_sparse_native_score() -> None:

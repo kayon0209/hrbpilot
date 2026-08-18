@@ -51,7 +51,7 @@ class WeeklyReportResponse(BaseModel):
     plan: list[PlanItem] = Field(default_factory=list)
     data_sources: list[str] = Field(default_factory=list)
     confidence: float = Field(0.0, ge=0.0, le=1.0)
-    has_evidence: bool = Field(True)
+    has_evidence: bool = Field(False)
 
 
 class GenerateRequest(BaseModel):

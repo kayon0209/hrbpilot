@@ -256,11 +256,14 @@ class PolicyQAOrchestrator:
 
         latency_ms = int((time.time() - start_time) * 1000)
 
+        message_id = f"msg_{user_id}_{int(start_time * 1000)}"
+
         yield json.dumps(
             {
                 "event": "done",
                 "data": json.dumps(
                     {
+                        "message_id": message_id,
                         "confidence": confidence,
                         "has_evidence": confidence >= settings.guardrail_confidence_threshold,
                         "latency_ms": latency_ms,

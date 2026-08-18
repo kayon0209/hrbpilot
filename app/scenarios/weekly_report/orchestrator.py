@@ -63,8 +63,10 @@ class WeeklyReportOrchestrator:
 
         if not aggregated.strip():
             return WeeklyReportResponse(
-                period=period, summary="无数据来源，无法生成周报",
-                confidence=0.0, has_evidence=False,
+                period=period,
+                summary="未收到任何多源数据，无法生成周报",
+                confidence=0.0,
+                has_evidence=False,
             )
 
         # 2. RAG retrieval (optional: supplement with KB context)

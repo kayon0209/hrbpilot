@@ -6,6 +6,8 @@ POST /api/policy-qa/feedback → thumbs up/down feedback on a response
 """
 
 import json
+import time
+from collections import deque
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -27,6 +29,23 @@ router = APIRouter(prefix="/api/policy-qa", tags=["policy-qa"])
 
 orchestrator = PolicyQAOrchestrator()
 
+# In-memory QA history per user (process-scoped; not persisted across restarts).
+# Capped to bound memory; production persistence should move to PostgreSQL.
+_HISTORY_MAX = 200
+_user_history: dict[str, deque] = {}
+
+
+def _record_history(user_id: str, question: str, answer: str, message_id: str) -> None:
+    history = _user_history.setdefault(user_id, deque(maxlen=_HISTORY_MAX))
+    history.appendleft(
+        {
+            "message_id": message_id,
+            "question": question,
+            "answer": answer,
+            "created_at": time.time(),
+        }
+    )
+
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
@@ -35,7 +54,7 @@ class AskRequest(BaseModel):
 
 
 class FeedbackBody(BaseModel):
-    message_id: str = ""
+    message_id: str = Field(..., min_length=1, description="对应回答的事件标识（done 事件返回的 message_id）")
     rating: str = Field(..., pattern="^(up|down)$")
     correction: str = ""
 
@@ -69,16 +88,31 @@ async def ask_question(
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
 
     if body.stream:
+        question_text = body.question
 
         async def event_stream():
+            full_answer = ""
+            message_id = ""
             try:
                 async for sse_data in orchestrator.execute_stream(
-                    question=body.question,
+                    question=question_text,
                     tenant_id=tenant_id,
                     user_id=user_id,
                     kb_id=kb.id,
                 ):
                     yield f"data: {sse_data}\n\n"
+                    try:
+                        event = json.loads(sse_data)
+                        if event.get("event") == "chunk":
+                            payload = json.loads(event.get("data", "{}"))
+                            full_answer += payload.get("text", "")
+                        elif event.get("event") == "done":
+                            payload = json.loads(event.get("data", "{}"))
+                            message_id = payload.get("message_id", "")
+                            if not message_id:
+                                message_id = f"msg_{user_id}_{int(time.time() * 1000)}"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
             except Exception as e:
                 logger.error("policy_qa_sse_error", error=str(e))
                 error_event = json.dumps(
@@ -88,6 +122,9 @@ async def ask_question(
                     }
                 )
                 yield f"data: {error_event}\n\n"
+            finally:
+                if full_answer or message_id:
+                    _record_history(user_id, question_text, full_answer, message_id)
 
         return StreamingResponse(
             event_stream(),
@@ -105,6 +142,8 @@ async def ask_question(
             user_id=user_id,
             kb_id=kb.id,
         )
+        message_id = f"msg_{user_id}_{int(time.time() * 1000)}"
+        _record_history(user_id, body.question, result.answer, message_id)
         return result
 
 
@@ -144,8 +183,8 @@ async def get_history(
 ):
     """Get recent policy QA history for the current user."""
     user_id = getattr(request.state, "user_id", "unknown")
-    # In-memory history (no DB required for dev)
-    return {"sessions": [], "total": 0, "user_id": user_id}
+    history = list(_user_history.get(user_id, []))[:limit]
+    return {"sessions": history, "total": len(_user_history.get(user_id, [])), "user_id": user_id}
 
 
 @router.post("/feedback")
@@ -156,4 +195,4 @@ async def submit_feedback(
 ):
     """Submit thumbs up/down feedback on a QA response."""
     logger.info("feedback_received", rating=body.rating, message_id=body.message_id)
-    return {"status": "received", "rating": body.rating}
+    return {"status": "received", "rating": body.rating, "message_id": body.message_id}

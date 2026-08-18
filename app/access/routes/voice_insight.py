@@ -39,7 +39,7 @@ async def start_analysis(
     user_id = getattr(request.state, "user_id", "unknown")
 
     # Use inline content if provided, otherwise use document_ids
-    if body.content and len(body.content) > 50:
+    if body.content and len(body.content) >= 50:
         docs = [{"id": "inline-001", "content": body.content}]
     elif body.document_ids:
         # Mock: convert IDs to document objects (replace with DB query in prod)
