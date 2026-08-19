@@ -22,6 +22,7 @@ from app.data.database import get_db, tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.knowledge_base import KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
+from app.scenarios.policy_qa.schemas import CitationSource, QAResponse, SSEEvent
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 
@@ -61,11 +62,6 @@ async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb
 
 
 async def _get_or_create_chat_session(session: AsyncSession, tenant_id: str, user_id: str) -> ChatSession:
-    """Create a fresh chat session for each policy QA turn.
-
-    History is rendered as question + answer pairs, so reusing the latest
-    session would mix the first question with the last answer across turns.
-    """
     chat_session = ChatSession(tenant_id=tenant_id, user_id=user_id, scenario_id="policy_qa")
     session.add(chat_session)
     await session.flush()
@@ -103,6 +99,7 @@ async def ask_question(
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
+    await session.close()
 
     if body.stream:
         question_text = body.question
@@ -165,12 +162,12 @@ async def ask_question(
                     "guardrail_flags": done_payload.get("guardrail_flags", {}) if done_payload else {},
                 }
                 yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(final_payload, ensure_ascii=False)})}\n\n"
-            except Exception as e:
-                logger.error("policy_qa_sse_error", error=str(e))
+            except Exception:
+                logger.exception("policy_qa_sse_error")
                 error_event = json.dumps(
                     {
                         "event": "error",
-                        "data": json.dumps({"message": f"服务异常: {e!s}"}),
+                        "data": json.dumps({"message": "服务异常，请稍后重试"}),
                     }
                 )
                 yield f"data: {error_event}\n\n"

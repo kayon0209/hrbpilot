@@ -14,7 +14,6 @@ from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Paths that don't require authentication
 PUBLIC_PATHS = [
     "/api/health",
     "/api/ready",
@@ -23,7 +22,6 @@ PUBLIC_PATHS = [
     "/openapi.json",
     "/api/auth/login",
     "/api/auth/refresh",
-    "/api/auth/dev-users",
 ]
 
 
@@ -31,7 +29,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """JWT authentication — verify access token, set user context in request state."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # Skip auth for public paths
         path = request.url.path
         if path in PUBLIC_PATHS or path.startswith("/docs"):
             return await call_next(request)
@@ -43,12 +40,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content={"code": "AUTH_ERROR", "status": 401, "message": "Missing or invalid Authorization header"},
             )
 
-        token = auth_header[7:]  # Strip "Bearer "
+        token = auth_header[7:]
         try:
             payload = jwt.decode(
                 token,
                 settings.jwt_secret,
                 algorithms=[settings.jwt_algorithm],
+                audience=settings.jwt_audience,
+                issuer=settings.jwt_issuer,
             )
         except JWTError as e:
             logger.warning("jwt_decode_failed", error=str(e))
@@ -57,10 +56,34 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content={"code": "AUTH_ERROR", "status": 401, "message": "Invalid or expired token"},
             )
 
-        # Set user context in request state
-        request.state.user_id = payload.get("sub", "")
-        request.state.user_role = payload.get("role", "employee")
-        request.state.tenant_id = payload.get("tenant_id", "default")
+        if payload.get("type") != "access":
+            return JSONResponse(
+                status_code=401,
+                content={"code": "AUTH_ERROR", "status": 401, "message": "Not an access token"},
+            )
+
+        user_id = payload.get("sub")
+        role = payload.get("role")
+        tenant_id = payload.get("tenant_id")
+        if not isinstance(user_id, str) or not user_id:
+            return JSONResponse(
+                status_code=401,
+                content={"code": "AUTH_ERROR", "status": 401, "message": "Invalid token subject"},
+            )
+        if not isinstance(role, str) or not role:
+            return JSONResponse(
+                status_code=401,
+                content={"code": "AUTH_ERROR", "status": 401, "message": "Invalid token role"},
+            )
+        if not isinstance(tenant_id, str) or not tenant_id:
+            return JSONResponse(
+                status_code=401,
+                content={"code": "AUTH_ERROR", "status": 401, "message": "Invalid token tenant"},
+            )
+
+        request.state.user_id = user_id
+        request.state.user_role = role
+        request.state.tenant_id = tenant_id
         request.state.email = payload.get("email", "")
 
         return await call_next(request)

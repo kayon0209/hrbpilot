@@ -4,13 +4,8 @@ All config via environment variables, validated at startup (fail fast).
 Uses Pydantic BaseSettings for type casting and validation.
 """
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-def _required_env(name: str) -> str:
-    """Helper for docs — Pydantic Settings handles validation automatically."""
-    return name
 
 
 class Settings(BaseSettings):
@@ -37,10 +32,12 @@ class Settings(BaseSettings):
     redis_session_ttl: int = 900  # seconds (15 min)
 
     # --- Auth (JWT) ---
-    jwt_secret: str = "change-me-in-production"  # MUST override in production
+    jwt_secret: str = "change-me-in-production"
     jwt_access_expires_minutes: int = 15
     jwt_refresh_expires_days: int = 7
     jwt_algorithm: str = "HS256"
+    jwt_issuer: str = "hrbp-ai-workbench"
+    jwt_audience: str = "hrbp-ai-workbench"
 
     # --- LLM (Primary) ---
     llm_provider: str = "deepseek"  # zhipu | deepseek | openai | anthropic
@@ -61,14 +58,12 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
 
     # --- Embedding (cloud-only, OpenAI-compatible) ---
-    # Works with SiliconFlow / DashScope / Jina / OpenAI — set EMBEDDING_BASE_URL,
-    # EMBEDDING_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION to match the provider.
     embedding_provider: str = "openai_compatible"
     embedding_model: str = "BAAI/bge-m3"
-    embedding_api_key: str = ""  # defaults to llm_api_key if empty
-    embedding_base_url: str = ""  # e.g. https://api.siliconflow.cn/v1
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
     embedding_dimension: int = 1024
-    embedding_device: str = "cpu"  # retained for compatibility; unused for cloud
+    embedding_device: str = "cpu"
 
     # --- Vector Database (Milvus) ---
     vector_db_host: str = "localhost"
@@ -85,9 +80,9 @@ class Settings(BaseSettings):
     minio_secure: bool = False
 
     # --- Retrieval (hybrid RAG) ---
-    rrf_k: int = 60  # RRF constant: score += 1 / (rrf_k + rank)
-    dense_top_k: int = 20  # candidate count fetched from Milvus before fusion
-    sparse_top_k: int = 20  # candidate count fetched from PostgreSQL before fusion
+    rrf_k: int = 60
+    dense_top_k: int = 20
+    sparse_top_k: int = 20
 
     # --- CORS ---
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000"
@@ -95,9 +90,6 @@ class Settings(BaseSettings):
     # --- Guardrails ---
     guardrail_pii_detection_enabled: bool = True
     guardrail_prompt_injection_enabled: bool = True
-    # Factuality verification is currently a conservative heuristic rather than
-    # a dedicated NLI/LLM verifier, so keep the flag explicit instead of claiming
-    # deep factual validation.
     guardrail_factuality_check_enabled: bool = False
     guardrail_toxicity_detection_enabled: bool = True
     guardrail_confidence_threshold: float = 0.65
@@ -106,23 +98,32 @@ class Settings(BaseSettings):
     rate_limit_tenant_per_minute: int = 60
     rate_limit_user_per_minute: int = 30
 
+    # --- Dev users ---
+    enable_dev_users: bool = False
+
     # --- Celery ---
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend_url: str = "redis://localhost:6379/2"
 
     # --- Logging ---
-    log_level: str = "info"  # debug | info | warn | error
-    log_format: str = "json"  # json | text
+    log_level: str = "info"
+    log_format: str = "json"
 
     @model_validator(mode="after")
-    def validate_production_secrets(self) -> "Settings":
-        if self.app_env in {"production", "staging"}:
+    def validate_environment(self) -> "Settings":
+        if self.app_env not in {"development", "staging", "production"}:
+            raise ValueError("APP_ENV must be one of development, staging, production")
+
+        if self.app_env in {"staging", "production"}:
             if self.jwt_secret == "change-me-in-production" or len(self.jwt_secret) < 32:
                 raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production or staging")
             if not self.llm_api_key or self.llm_api_key == "change-me":
                 raise ValueError("LLM_API_KEY must be configured in production or staging")
             if not self.effective_embedding_api_key or not self.embedding_base_url:
                 raise ValueError("EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be configured in production or staging")
+            if self.enable_dev_users:
+                raise ValueError("ENABLE_DEV_USERS must be false outside development")
+
         return self
 
     # --- Computed helpers ---

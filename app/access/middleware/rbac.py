@@ -15,21 +15,13 @@ from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# RBAC scene visibility matrix
-# Note: hr_manager and admin share the same 5-scenario visibility by design.
-# The difference is in MANAGEMENT_VISIBILITY: only admin can access settings,
-# while hr_manager gets kb_management + evaluation.  This mirrors a real HR
-# org where the HR manager needs full scenario access but system-level
-# configuration (LLM provider, API keys) is reserved for IT/admin.
 SCENE_VISIBILITY = {
     "employee": {"policy_qa"},
     "hrbp": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
-    # hr_manager and admin intentionally share the same scene set.
     "hr_manager": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
     "admin": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
 }
 
-# Management page visibility
 MANAGEMENT_VISIBILITY = {
     "employee": set(),
     "hrbp": set(),
@@ -37,7 +29,6 @@ MANAGEMENT_VISIBILITY = {
     "admin": {"kb_management", "evaluation", "settings"},
 }
 
-# Route prefix to scene mapping
 SCENE_ROUTE_MAP = {
     "/api/policy-qa": "policy_qa",
     "/api/interview-digest": "interview_digest",
@@ -60,7 +51,6 @@ PUBLIC_PATHS = [
     "/openapi.json",
     "/api/auth/login",
     "/api/auth/refresh",
-    "/api/auth/dev-users",
 ]
 
 
@@ -70,26 +60,21 @@ class RBACMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        # Skip public paths
         if path in PUBLIC_PATHS or path.startswith("/docs"):
             return await call_next(request)
 
-        # Skip if no auth context (AuthMiddleware should have set this)
         role = getattr(request.state, "user_role", None)
-        if not role:
-            return await call_next(request)
+        if not isinstance(role, str) or not role:
+            return JSONResponse(
+                status_code=403,
+                content={"code": "FORBIDDEN", "status": 403, "message": "Missing user role"},
+            )
 
-        # Check scene routes
         for route_prefix, scene_id in SCENE_ROUTE_MAP.items():
             if path.startswith(route_prefix):
                 allowed_scenes = SCENE_VISIBILITY.get(role, set())
                 if scene_id not in allowed_scenes:
-                    logger.warning(
-                        "rbac_forbidden",
-                        role=role,
-                        scene=scene_id,
-                        path=path,
-                    )
+                    logger.warning("rbac_forbidden", role=role, scene=scene_id, path=path)
                     return JSONResponse(
                         status_code=403,
                         content={
@@ -101,17 +86,11 @@ class RBACMiddleware(BaseHTTPMiddleware):
                     )
                 break
 
-        # Check management routes
         for route_prefix, mgmt_id in MANAGEMENT_ROUTE_MAP.items():
             if path.startswith(route_prefix):
                 allowed_mgmt = MANAGEMENT_VISIBILITY.get(role, set())
                 if mgmt_id not in allowed_mgmt:
-                    logger.warning(
-                        "rbac_forbidden_mgmt",
-                        role=role,
-                        mgmt=mgmt_id,
-                        path=path,
-                    )
+                    logger.warning("rbac_forbidden_mgmt", role=role, mgmt=mgmt_id, path=path)
                     return JSONResponse(
                         status_code=403,
                         content={

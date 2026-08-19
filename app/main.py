@@ -48,11 +48,13 @@ async def _ensure_infrastructure() -> None:
     """
     try:
         from app.rag.storage.milvus import MilvusStore
+
         await MilvusStore().ensure_collection_async()
     except Exception as e:
         logger.warning("milvus_not_ready_at_startup", error=str(e))
     try:
         from app.rag.storage.object_store import ObjectStore
+
         await ObjectStore().ensure_bucket_async()
     except Exception as e:
         logger.warning("minio_not_ready_at_startup", error=str(e))
@@ -74,21 +76,18 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.app_debug else None,
     )
 
-    # --- Middleware (order: SecurityHeaders → RequestID → CORS → Tenant → Auth → RBAC → Handler) ---
-    app.add_middleware(RBACMiddleware)       # innermost
+    app.add_middleware(RBACMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(TenantContextMiddleware)
     add_cors_middleware(app)
     app.add_middleware(RequestIDMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)  # outermost
+    app.add_middleware(SecurityHeadersMiddleware)
 
-    # --- Exception handlers ---
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_error_handler)
 
-    # --- Routes ---
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router)
     app.include_router(policy_qa_router)
@@ -128,5 +127,4 @@ async def _validation_error_handler(request, exc: RequestValidationError) -> JSO
     )
 
 
-# Application instance
 app = create_app()
