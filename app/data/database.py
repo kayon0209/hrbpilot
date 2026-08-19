@@ -6,6 +6,7 @@ Engine is created lazily to avoid import-time failures when DB is unavailable.
 """
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Request
 from sqlalchemy import event, text
@@ -83,6 +84,22 @@ async def make_tenant_session(tenant_id: str) -> AsyncSession:
     session.info["tenant_id"] = tenant_id
     await session.execute(text("SELECT 1"))
     return session
+
+
+@asynccontextmanager
+async def tenant_session(tenant_id: str) -> AsyncIterator[AsyncSession]:
+    """Async context manager for short-lived tenant-scoped DB work."""
+    session = _get_factory()()
+    session.info["tenant_id"] = tenant_id
+    try:
+        await session.execute(text("SELECT 1"))
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:

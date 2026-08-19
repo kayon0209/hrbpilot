@@ -143,7 +143,9 @@ class Settings(BaseSettings):
     @property
     def milvus_endpoint(self) -> str:
         """Resolve the Milvus connection URI (explicit override wins)."""
-        return self.milvus_uri or f"http://{self.vector_db_host}:{self.vector_db_port}"
+        if self.milvus_uri:
+            return self.milvus_uri
+        return "http://" + self.vector_db_host + ":" + str(self.vector_db_port)
 
 
 settings = Settings()  # Fails fast if required vars are missing

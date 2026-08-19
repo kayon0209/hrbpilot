@@ -21,7 +21,7 @@ from app.shared.dev_mock_users import (
     get_mock_user_by_id,
     verify_mock_password,
 )
-from app.shared.errors import AuthError, DatabaseError, ExternalServiceError, NotFoundError
+from app.shared.errors import AuthError, DatabaseError, ExternalServiceError, NotFoundError, RateLimitError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -131,7 +131,7 @@ def _check_login_rate_limit(request: Request, email: str) -> None:
     _LOGIN_ATTEMPTS[key] = attempts
     if len(attempts) >= _LOGIN_LIMIT:
         logger.warning("login_rate_limited", client_ip=getattr(request.client, "host", "unknown") if request.client else "unknown", email=email)
-        raise AuthError("登录过于频繁，请稍后再试")
+        raise RateLimitError("登录过于频繁，请稍后再试")
     attempts.append(now)
 
 

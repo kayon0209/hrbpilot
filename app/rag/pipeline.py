@@ -175,6 +175,7 @@ class CapabilityPipeline:
                     sources=context_chunks,
                     metrics=config.eval_metrics,
                     tenant_id=tenant_id,
+                    scenario_id=config.scenario_id,
                 ),
                 name="pipeline-evaluation",
             )

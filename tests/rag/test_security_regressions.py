@@ -7,7 +7,7 @@ from starlette.requests import Request
 from app.access.middleware.tenant import require_tenant_id
 from app.access.routes import auth
 from app.config.settings import Settings
-from app.shared.errors import AuthError
+from app.shared.errors import AuthError, RateLimitError
 
 
 async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -> None:
@@ -29,12 +29,21 @@ async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -
     async def fake_session():
         yield SimpleNamespace()
 
+    auth._LOGIN_ATTEMPTS.clear()
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/auth/login",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+    })
+
     monkeypatch.setattr(auth, "_check_db_available", db_available)
     monkeypatch.setattr("app.data.database.get_db_session", fake_session)
     monkeypatch.setattr("app.data.repositories.user_repo.UserRepository.get_by_email", get_user)
     monkeypatch.setattr("passlib.context.CryptContext.verify", lambda *_args: True)
 
-    result = await auth.login(auth.LoginBody(email=user.email, password="secret"))
+    result = await auth.login(auth.LoginBody(email=user.email, password="secret"), request)
 
     assert result.access_token
     assert result.refresh_token

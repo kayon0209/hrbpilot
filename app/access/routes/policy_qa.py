@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
-from app.data.database import get_db, make_tenant_session
+from app.data.database import get_db, tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.knowledge_base import KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
@@ -142,7 +142,7 @@ async def ask_question(
                     yield f"data: {sse_data}\n\n"
 
                 if full_answer.strip():
-                    async with make_tenant_session(tenant_id) as db:
+                    async with tenant_session(tenant_id) as db:
                         chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
                         await _add_message(db, chat_session.id, "user", question_text)
                         assistant_message = await _add_message(
@@ -191,7 +191,7 @@ async def ask_question(
         user_id=user_id,
         kb_id=kb.id,
     )
-    async with make_tenant_session(tenant_id) as db:
+    async with tenant_session(tenant_id) as db:
         chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
         await _add_message(db, chat_session.id, "user", body.question)
         assistant_message = await _add_message(
