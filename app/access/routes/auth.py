@@ -8,6 +8,8 @@ In development mode (when PostgreSQL is unreachable), falls back to mock users.
 """
 
 import datetime
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, Request
 from jose import jwt
@@ -30,6 +32,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 _db_available: bool | None = None
 _db_checked_at: float = 0.0
 _DB_RECHECK_INTERVAL: float = 10.0  # seconds before re-pinging a previously-unreachable DB
+_LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_LOGIN_LIMIT = 8
+_LOGIN_WINDOW_SECONDS = 60.0
 
 
 async def _check_db_available() -> bool:
@@ -113,9 +118,27 @@ def _create_refresh_token(user_id: str, tenant_id: str) -> str:
     return str(jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
+def _login_rate_limit_key(request: Request, email: str) -> str:
+    client_ip = getattr(request.client, "host", "unknown") if request.client else "unknown"
+    normalized_email = email.strip().lower()
+    return f"{client_ip}:{normalized_email}"
+
+
+def _check_login_rate_limit(request: Request, email: str) -> None:
+    now = time.monotonic()
+    key = _login_rate_limit_key(request, email)
+    attempts = [ts for ts in _LOGIN_ATTEMPTS[key] if now - ts < _LOGIN_WINDOW_SECONDS]
+    _LOGIN_ATTEMPTS[key] = attempts
+    if len(attempts) >= _LOGIN_LIMIT:
+        logger.warning("login_rate_limited", client_ip=getattr(request.client, "host", "unknown") if request.client else "unknown", email=email)
+        raise AuthError("登录过于频繁，请稍后再试")
+    attempts.append(now)
+
+
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginBody):
+async def login(body: LoginBody, request: Request):
     """Authenticate user with email + password, return JWT tokens."""
+    _check_login_rate_limit(request, body.email)
     db_ok = await _check_db_available()
 
     if db_ok:

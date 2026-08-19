@@ -50,8 +50,6 @@ async def generate_report(
             "report": {
                 "period": body.period,
                 "summary": "未收到任何多源数据，无法生成周报。请先上传面谈纪要或员工声音数据。",
-                "has_evidence": False,
-                "confidence": 0.0,
             },
             "is_draft": body.draft_mode,
         }

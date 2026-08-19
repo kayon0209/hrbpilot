@@ -11,7 +11,6 @@ class CultureContentResponse(BaseModel):
     event_copy: str = Field("", description="活动文案 200-400字")
     keywords_used: list[str] = Field(default_factory=list, description="实际使用的关键词")
     tone: str = Field("", description="整体基调")
-    confidence: float = Field(0.0, ge=0.0, le=1.0)
 
 
 class GenerateContentRequest(BaseModel):
