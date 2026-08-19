@@ -6,7 +6,7 @@ export type PolicyStreamEvent =
   | { type: 'delta'; data: { text: string } }
   | { type: 'citation'; data: PolicySource[] }
   | { type: 'correction'; data: { full_text: string } }
-  | { type: 'complete'; data: { confidence?: number; has_evidence?: boolean; latency_ms?: number } }
+  | { type: 'complete'; data: { message_id?: string; confidence?: number; has_evidence?: boolean; latency_ms?: number } }
   | { type: 'error'; data: { message: string } }
 
 export async function listPolicyKnowledgeBases() {

@@ -15,6 +15,6 @@ function SessionBootstrap({ children }: { children: ReactNode }) {
   const restore = useSessionStore(state => state.restore)
   const [ready, setReady] = useState(false)
   useEffect(() => { restore().finally(() => setReady(true)) }, [restore])
-  if (!ready) return <main className="center-state" aria-busy="true"><strong>HRBPilot</strong><span>正在准备工作台…</span></main>
+  if (!ready) return <main className="center-state" aria-busy="true"><strong className="boot-brand">HRBPilot</strong><span>正在准备工作台…</span></main>
   return children
 }
