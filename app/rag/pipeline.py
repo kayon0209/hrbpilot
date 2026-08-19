@@ -198,9 +198,12 @@ class CapabilityPipeline:
             name="pipeline-audit-log",
         )
 
-        # 9. Token budget tracking (sync, fast)
+        # 9. Token budget tracking (async, non-blocking)
         if tokens_used:
-            _record_token_budget(tenant_id, tokens_used)
+            _schedule_background_task(
+                _record_token_budget_async(tenant_id, tokens_used),
+                name="pipeline-token-budget",
+            )
 
         return PipelineResult(
             output=final_output,
@@ -244,9 +247,18 @@ async def _write_audit_async(
 
 
 def _record_token_budget(tenant_id: str, tokens: int) -> None:
-    """Record token usage for budget tracking."""
+    """Record token usage for budget tracking (kept for compatibility)."""
     try:
         from app.shared.token_budget import record_token_usage
-        record_token_usage(tenant_id, tokens)
+        asyncio.run(record_token_usage(tenant_id, tokens))
+    except Exception as exc:
+        logger.error("token_budget_record_failed", tenant_id=tenant_id, error=str(exc))
+
+
+async def _record_token_budget_async(tenant_id: str, tokens: int) -> None:
+    """Record token usage for budget tracking (fire-and-forget)."""
+    try:
+        from app.shared.token_budget import record_token_usage
+        await record_token_usage(tenant_id, tokens)
     except Exception as exc:
         logger.error("token_budget_record_failed", tenant_id=tenant_id, error=str(exc))

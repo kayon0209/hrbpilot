@@ -7,17 +7,24 @@ GET  /api/interview-digest/result/{task_id} → Get completed result
 GET  /api/interview-digest/history → Recent digest history
 """
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth, require_role
 from app.access.middleware.tenant import require_tenant_id
+from app.data.database import get_db
+from app.data.models.infra import AsyncTask
 from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
+from app.scenarios.interview_digest.schemas import InterviewDigestResponse
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/interview-digest", tags=["interview-digest"])
+
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB — same limit as the KB upload route
 
 orchestrator = InterviewDigestOrchestrator()
 
@@ -43,8 +50,14 @@ async def upload_document(
     if content_type not in allowed_types:
         raise ValidationError(f"不支持的文件类型: {content_type}")
 
-    # Read file content
+    # Read file content — enforce a size cap so oversized uploads fail fast
+    # instead of exhausting memory.
     content = await file.read()
+    if len(content) == 0:
+        raise ValidationError("文件内容为空")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValidationError(f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+
     raw_text = ""
 
     if content_type == "text/plain":
@@ -116,7 +129,7 @@ async def get_progress(
     request: Request,
 ):
     """Poll async task progress."""
-    status = orchestrator.get_task_status(task_id)
+    status = await orchestrator.get_task_status(task_id)
     if not status:
         raise NotFoundError("Task", task_id)
 
@@ -136,7 +149,7 @@ async def get_result(
     request: Request,
 ):
     """Get completed interview digest result."""
-    status = orchestrator.get_task_status(task_id)
+    status = await orchestrator.get_task_status(task_id)
     if not status:
         raise NotFoundError("Task", task_id)
 
@@ -152,7 +165,48 @@ async def get_result(
 async def get_history(
     request: Request,
     limit: int = 20,
+    session: AsyncSession = Depends(get_db),
 ):
-    """Get recent interview digest history."""
-    # TODO: Query interview_digests table
-    return {"digests": [], "total": 0}
+    """Get recent interview digest history from async task records.
+
+    Interview digests are generated asynchronously and persisted in
+    ``async_tasks``; this endpoint returns the most recent completed results.
+    """
+    tenant_id = require_tenant_id(request)
+    rows = (
+        (
+            await session.execute(
+                select(AsyncTask)
+                .where(
+                    AsyncTask.tenant_id == tenant_id,
+                    AsyncTask.type == "interview_digest",
+                    AsyncTask.status == "completed",
+                    AsyncTask.result_json.is_not(None),
+                )
+                .order_by(AsyncTask.completed_at.desc().nullslast(), AsyncTask.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    digests = []
+    for row in rows:
+        result = None
+        try:
+            result = InterviewDigestResponse.model_validate_json(row.result_json or "")
+        except Exception:
+            result = None
+        digests.append(
+            {
+                "task_id": row.id,
+                "status": row.status,
+                "progress": row.progress / 100.0 if row.progress else 0.0,
+                "result": result.model_dump() if result else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+
+    return {"digests": digests, "total": len(digests)}

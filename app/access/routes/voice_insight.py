@@ -6,12 +6,17 @@ GET  /api/voice-insight/report/{task_id} → Get completed report
 GET  /api/voice-insight/history → Recent analysis history
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth, require_role
 from app.access.middleware.tenant import require_tenant_id
+from app.data.database import get_db
+from app.data.models.infra import AsyncTask
 from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
+from app.scenarios.voice_insight.schemas import InsightReportResponse
 from app.shared.errors import NotFoundError, ValidationError
 from app.shared.logger import get_logger
 
@@ -56,7 +61,7 @@ async def start_analysis(
 @require_role("hrbp")
 async def get_progress(task_id: str, request: Request):
     """Poll async task progress."""
-    status = orchestrator.get_task_status(task_id)
+    status = await orchestrator.get_task_status(task_id)
     if not status:
         raise NotFoundError("Task", task_id)
     return {"task_id": task_id, "status": status.status, "progress": status.progress}
@@ -67,7 +72,7 @@ async def get_progress(task_id: str, request: Request):
 @require_role("hrbp")
 async def get_report(task_id: str, request: Request):
     """Get completed insight report."""
-    status = orchestrator.get_task_status(task_id)
+    status = await orchestrator.get_task_status(task_id)
     if not status:
         raise NotFoundError("Task", task_id)
     if status.status != "completed":
@@ -78,6 +83,47 @@ async def get_report(task_id: str, request: Request):
 @router.get("/history")
 @require_auth
 @require_role("hrbp")
-async def get_history(request: Request, limit: int = 20):
-    """Get recent voice insight analysis history."""
-    return {"reports": [], "total": 0}
+async def get_history(
+    request: Request,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_db),
+):
+    """Get recent voice insight analysis history from async task records."""
+    tenant_id = require_tenant_id(request)
+    rows = (
+        (
+            await session.execute(
+                select(AsyncTask)
+                .where(
+                    AsyncTask.tenant_id == tenant_id,
+                    AsyncTask.type == "voice_insight",
+                    AsyncTask.status == "completed",
+                    AsyncTask.result_json.is_not(None),
+                )
+                .order_by(AsyncTask.completed_at.desc().nullslast(), AsyncTask.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    reports = []
+    for row in rows:
+        result = None
+        try:
+            result = InsightReportResponse.model_validate_json(row.result_json or "")
+        except Exception:
+            result = None
+        reports.append(
+            {
+                "task_id": row.id,
+                "status": row.status,
+                "progress": row.progress / 100.0 if row.progress else 0.0,
+                "result": result.model_dump() if result else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+
+    return {"reports": reports, "total": len(reports)}

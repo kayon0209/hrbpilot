@@ -39,3 +39,6 @@ Thumbs.db
 # --- Local data artifacts (keep kb_docs / interview_samples as project assets) ---
 *.log
 data/local_db*
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/

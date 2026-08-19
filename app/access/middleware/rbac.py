@@ -16,9 +16,15 @@ from app.shared.logger import get_logger
 logger = get_logger(__name__)
 
 # RBAC scene visibility matrix
+# Note: hr_manager and admin share the same 5-scenario visibility by design.
+# The difference is in MANAGEMENT_VISIBILITY: only admin can access settings,
+# while hr_manager gets kb_management + evaluation.  This mirrors a real HR
+# org where the HR manager needs full scenario access but system-level
+# configuration (LLM provider, API keys) is reserved for IT/admin.
 SCENE_VISIBILITY = {
     "employee": {"policy_qa"},
     "hrbp": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
+    # hr_manager and admin intentionally share the same scene set.
     "hr_manager": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
     "admin": {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"},
 }

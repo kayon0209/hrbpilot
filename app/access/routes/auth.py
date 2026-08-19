@@ -26,15 +26,27 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# Track whether DB is available (set on first attempt)
+# DB availability cache with TTL so the system auto-recovers after DB restart.
 _db_available: bool | None = None
+_db_checked_at: float = 0.0
+_DB_RECHECK_INTERVAL: float = 10.0  # seconds before re-pinging a previously-unreachable DB
 
 
 async def _check_db_available() -> bool:
-    """Check if the database is reachable."""
-    global _db_available
-    if _db_available is not None:
-        return _db_available
+    """Check if the database is reachable.
+
+    Once confirmed available, stays cached for the process lifetime. If the
+    check fails, it will be retried after ``_DB_RECHECK_INTERVAL`` seconds so
+    that a recovered database is picked up automatically.
+    """
+    import time
+
+    global _db_available, _db_checked_at
+    if _db_available is True:
+        return True
+    if _db_available is False and (time.monotonic() - _db_checked_at) < _DB_RECHECK_INTERVAL:
+        return False
+
     try:
         from sqlalchemy import text
 
@@ -46,6 +58,7 @@ async def _check_db_available() -> bool:
         _db_available = True
     except Exception:
         _db_available = False
+        _db_checked_at = time.monotonic()
         logger.warning("database_unavailable_dev_mode", msg="Using mock users for dev mode")
     return _db_available
 
@@ -250,8 +263,11 @@ async def list_dev_users():
 
     from app.shared.dev_mock_users import _MOCK_USERS
 
+    # Passwords are never returned — even in dev mode. The frontend login form
+    # requires a real password (default dev password documented in README only).
     return {
         "users": [
-            {"email": u.email, "name": u.name, "role": u.role, "password": "123456"} for u in _MOCK_USERS.values()
+            {"email": u.email, "name": u.name, "role": u.role, "password_required": True}
+            for u in _MOCK_USERS.values()
         ],
     }

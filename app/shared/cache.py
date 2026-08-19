@@ -5,8 +5,8 @@ Phase 15 spec:
   - User context cache: 5-minute TTL
   - Knowledge base metadata: 30-minute TTL
 
-Provides a typed cache interface that falls back gracefully
-when Redis is unavailable.
+Provides a typed cache interface backed by Redis when available, falling
+back gracefully to an in-memory store when Redis is unreachable.
 """
 
 import functools
@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.shared.logger import get_logger
+from app.shared.redis_client import get_redis
 
 logger = get_logger(__name__)
 
@@ -35,11 +36,27 @@ def _cache_key(prefix: str, *args: Any) -> str:
     return f"{prefix}:{digest}"
 
 
+def _json_serialize(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 class CacheClient:
-    """Async cache interface with in-memory fallback."""
+    """Async cache interface backed by Redis, with in-memory fallback."""
 
     async def get(self, key: str) -> Any | None:
         """Get a cached value. Returns None on miss."""
+        redis = await get_redis()
+        if redis is not None:
+            raw = await redis.get(f"cache:{key}")
+            if raw is None:
+                return None
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("cache_deserialize_failed", key=key)
+                await redis.delete(f"cache:{key}")
+                return None
+
         entry = _in_memory_cache.get(key)
         if entry is None:
             return None
@@ -52,6 +69,11 @@ class CacheClient:
 
     async def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """Set a cached value with TTL (seconds)."""
+        redis = await get_redis()
+        if redis is not None:
+            await redis.set(f"cache:{key}", _json_serialize(value), ex=ttl)
+            return
+
         import time
         _in_memory_cache[key] = {
             "value": value,
@@ -59,17 +81,19 @@ class CacheClient:
         }
 
     async def delete(self, key: str) -> None:
+        redis = await get_redis()
+        if redis is not None:
+            await redis.delete(f"cache:{key}")
         _in_memory_cache.pop(key, None)
 
     async def clear_prefix(self, prefix: str) -> None:
+        redis = await get_redis()
+        if redis is not None:
+            async for k in redis.scan_iter(match=f"cache:{prefix}:*"):
+                await redis.delete(k)
         keys_to_delete = [k for k in _in_memory_cache if k.startswith(prefix)]
         for k in keys_to_delete:
             del _in_memory_cache[k]
-
-    # TODO: When Redis is connected, swap to:
-    # import redis.asyncio as aioredis
-    # self._redis = aioredis.from_url(settings.redis_url)
-    # Use redis.get/set with TTL for real persistence
 
 
 # Singleton

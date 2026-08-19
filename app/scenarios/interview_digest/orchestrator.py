@@ -3,13 +3,16 @@
 Orchestrates the full Interview Digest flow:
   File Upload → Document Parsing → PII Desensitization → LLM Structured Extraction → Risk Assessment → Result Storage
 
-Uses async task pattern: POST returns task_id, client polls for progress.
+Async tasks are persisted to the ``async_tasks`` PostgreSQL table and
+dispatched to Celery workers.  ``get_task_status`` reads from the table so
+results survive process restarts.
 """
 
-import asyncio
 import json
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
@@ -24,36 +27,16 @@ from app.scenarios.interview_digest.schemas import (
     Urgency,
 )
 from app.shared.logger import get_logger
+from app.shared.llm_utils import extract_json_from_llm_output
 
 logger = get_logger(__name__)
 
 
-# In-memory task store (replace with Redis/DB later)
-_task_store: dict[str, DigestStatus] = {}
-
-
 def _parse_document_content(raw_text: str) -> str:
     """Parse raw document text — clean up formatting artifacts."""
-    # Remove excessive whitespace
     text = re.sub(r"\n{3,}", "\n\n", raw_text)
-    # Remove common docx artifacts
     text = re.sub(r"\t+", " ", text)
-    # Trim
-    text = text.strip()
-    return text
-
-
-def _extract_json_from_llm_output(output: str) -> dict:
-    """Extract JSON object from LLM output (may have surrounding text)."""
-    # Try to find JSON block
-    json_match = re.search(r"\{[\s\S]*\}", output)
-    if json_match:
-        try:
-            return dict(json.loads(json_match.group()))
-        except json.JSONDecodeError:
-            logger.warning("json_parse_failed", output=output[:200])
-    # Fallback: return empty dict
-    return {}
+    return text.strip()
 
 
 class InterviewDigestOrchestrator:
@@ -69,23 +52,24 @@ class InterviewDigestOrchestrator:
         """Process a single interview document — returns structured extraction."""
         start_time = time.time()
 
-        # 1. Parse document content
         cleaned_content = _parse_document_content(document_content)
         if not cleaned_content or len(cleaned_content) < 50:
             return InterviewDigestResponse(
-                employee_demands=[], risk_level=RiskLevel.LOW,
-                risk_signals=[], action_items=[], suggested_owner="",
+                employee_demands=[],
+                risk_level=RiskLevel.LOW,
+                risk_signals=[],
+                action_items=[],
+                suggested_owner="",
                 summary="访谈记录内容过短，无法进行有效分析",
-                confidence=0.0, has_evidence=False,
+                confidence=0.0,
+                has_evidence=False,
             )
 
-        # 2. PII desensitization (input guardrail)
         if self.config.guardrail_rules.input:
-            _guarded_content, _input_flags = await self.input_guard.check(
+            cleaned_content, _input_flags = await self.input_guard.check(
                 cleaned_content, self.config.guardrail_rules.input
             )
 
-        # 3. LLM structured extraction
         raw_output, tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
             context=[{"source": "访谈记录", "section": "全文", "content": cleaned_content}],
@@ -94,27 +78,30 @@ class InterviewDigestOrchestrator:
             temperature=self.config.temperature,
         )
 
-        # 4. Parse LLM output into structured response
-        parsed = _extract_json_from_llm_output(raw_output)
+        parsed = extract_json_from_llm_output(raw_output)
 
         demands = []
         for d in parsed.get("employee_demands", []):
             try:
-                demands.append(Demand(
-                    demand=d.get("demand", ""),
-                    category=d.get("category", "其他"),
-                    urgency=Urgency(d.get("urgency", "中")),
-                ))
+                demands.append(
+                    Demand(
+                        demand=d.get("demand", ""),
+                        category=d.get("category", "其他"),
+                        urgency=Urgency(d.get("urgency", "中")),
+                    )
+                )
             except (ValueError, KeyError):
                 demands.append(Demand(demand=str(d), category="其他", urgency=Urgency.MEDIUM))
 
         action_items = []
         for a in parsed.get("action_items", []):
-            action_items.append(ActionItem(
-                action=a.get("action", ""),
-                owner=a.get("owner", ""),
-                deadline=a.get("deadline", ""),
-            ))
+            action_items.append(
+                ActionItem(
+                    action=a.get("action", ""),
+                    owner=a.get("owner", ""),
+                    deadline=a.get("deadline", ""),
+                )
+            )
 
         risk_level = RiskLevel.LOW
         try:
@@ -125,7 +112,6 @@ class InterviewDigestOrchestrator:
         confidence = 0.8 if parsed else 0.3
         latency_ms = int((time.time() - start_time) * 1000)
 
-        # 5. Output guardrail (toxicity check)
         guarded_summary = parsed.get("summary", "")
         if self.config.guardrail_rules.output:
             guarded_summary, _ = await self.output_guard.check(
@@ -153,32 +139,114 @@ class InterviewDigestOrchestrator:
 
         return result
 
+    async def _store_result(
+        self,
+        tenant_id: str,
+        user_id: str,
+        result: InterviewDigestResponse,
+        source_text: str,
+        tokens_used: int | None,
+    ) -> None:
+        """Persist the digest result to PostgreSQL for durable history."""
+        try:
+            from app.data.database import get_session_factory
+            from app.data.models.infra import AsyncTask
+            from app.data.models.scenarios import InterviewDigest
+
+            factory = get_session_factory()
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                record = InterviewDigest(
+                    tenant_id=tenant_id,
+                    document_id=str(uuid.uuid4()),
+                    demands_json=json.dumps([item.model_dump() for item in result.employee_demands], ensure_ascii=False),
+                    risk_level=result.risk_level.value,
+                    risk_signals_json=json.dumps(result.risk_signals, ensure_ascii=False),
+                    action_items_json=json.dumps([item.model_dump() for item in result.action_items], ensure_ascii=False),
+                    suggested_owner=result.suggested_owner,
+                    summary=result.summary,
+                )
+                db.add(record)
+                task = AsyncTask(
+                    tenant_id=tenant_id,
+                    type="interview_digest",
+                    status="completed",
+                    progress=100,
+                    result_json=result.model_dump_json(),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                db.add(task)
+                await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "interview_digest_persist_failed",
+                error=str(exc),
+                user_id=user_id,
+                tokens_used=tokens_used,
+            )
+
     async def start_async_task(self, document_content: str, tenant_id: str, user_id: str) -> str:
-        """Start an async digest task — returns task_id for polling."""
-        import uuid
+        """Start an async digest task — persists to AsyncTask table, dispatches Celery.
+
+        Returns the task_id so the client can poll the database for progress.
+        """
+        from app.data.database import get_session_factory
+        from app.data.models.infra import AsyncTask
+
         task_id = str(uuid.uuid4())
+        factory = get_session_factory()
+        async with factory() as db:
+            db.info["tenant_id"] = tenant_id
+            task = AsyncTask(
+                id=task_id,
+                tenant_id=tenant_id,
+                type="interview_digest",
+                status="pending",
+                progress=0,
+            )
+            db.add(task)
+            await db.commit()
 
-        _task_store[task_id] = DigestStatus(
-            task_id=task_id, status="pending", progress=0.0,
-        )
+        try:
+            from app.shared.celery_app import celery_app
 
-        # Run in background
-        async def _run():
-            _task_store[task_id].status = "processing"
-            _task_store[task_id].progress = 0.3
-            try:
-                result = await self.digest(document_content, tenant_id, user_id)
-                _task_store[task_id].status = "completed"
-                _task_store[task_id].progress = 1.0
-                _task_store[task_id].result = result
-            except Exception as e:
-                _task_store[task_id].status = "failed"
-                _task_store[task_id].error = str(e)
-                logger.error("interview_digest_task_failed", task_id=task_id, error=str(e))
+            celery_app.send_task(
+                "scenario.interview_digest",
+                args=[task_id, document_content, tenant_id, user_id],
+            )
+        except Exception as exc:
+            logger.error("interview_digest_dispatch_failed", task_id=task_id, error=str(exc))
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                row = await db.get(AsyncTask, task_id)
+                if row:
+                    row.status = "failed"
+                    row.error_message = str(exc)[:2000]
+                    await db.commit()
+            raise
 
-        asyncio.create_task(_run())  # noqa: RUF006
         return task_id
 
-    def get_task_status(self, task_id: str) -> DigestStatus | None:
-        """Get the status of an async digest task."""
-        return _task_store.get(task_id)
+    async def get_task_status(self, task_id: str) -> DigestStatus | None:
+        """Get the status of an async digest task from the database."""
+        from app.data.database import get_session_factory
+        from app.data.models.infra import AsyncTask
+
+        factory = get_session_factory()
+        async with factory() as db:
+            row = await db.get(AsyncTask, task_id)
+            if not row:
+                return None
+            result = None
+            if row.result_json:
+                try:
+                    result = InterviewDigestResponse.model_validate_json(row.result_json)
+                except Exception:
+                    result = None
+            return DigestStatus(
+                task_id=row.id,
+                status=row.status,
+                progress=row.progress / 100.0 if row.progress else 0.0,
+                result=result,
+                error=row.error_message,
+            )

@@ -2,6 +2,10 @@
 
 When PostgreSQL is unavailable (dev mode), the auth system falls back to
 these mock users so the frontend can still test all features.
+
+Emails use the ``hrbpilot.local`` domain so they match the convention
+documented in the audit guide.  The default dev password (``Hainan.8848``)
+is documented in the README only and is never returned by any API endpoint.
 """
 
 import hashlib
@@ -23,39 +27,39 @@ def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-# Pre-configured dev users for each role
+# Pre-configured dev users for each role (emails aligned with audit guide)
 _MOCK_USERS: dict[str, MockUser] = {
-    "employee@hrbp.com": MockUser(
+    "employee@hrbpilot.local": MockUser(
         id="usr-emp-001",
-        email="employee@hrbp.com",
+        email="employee@hrbpilot.local",
         name="张三（员工）",
         role="employee",
         tenant_id="tenant-001",
-        hashed_password=_hash_password("123456"),
+        hashed_password=_hash_password("Hainan.8848"),
     ),
-    "hrbp@hrbp.com": MockUser(
+    "hrbp@hrbpilot.local": MockUser(
         id="usr-hrbp-001",
-        email="hrbp@hrbp.com",
+        email="hrbp@hrbpilot.local",
         name="李四（HRBP）",
         role="hrbp",
         tenant_id="tenant-001",
-        hashed_password=_hash_password("123456"),
+        hashed_password=_hash_password("Hainan.8848"),
     ),
-    "manager@hrbp.com": MockUser(
+    "manager@hrbpilot.local": MockUser(
         id="usr-mgr-001",
-        email="manager@hrbp.com",
+        email="manager@hrbpilot.local",
         name="王五（HR经理）",
         role="hr_manager",
         tenant_id="tenant-001",
-        hashed_password=_hash_password("123456"),
+        hashed_password=_hash_password("Hainan.8848"),
     ),
-    "admin@hrbp.com": MockUser(
+    "admin@hrbpilot.local": MockUser(
         id="usr-adm-001",
-        email="admin@hrbp.com",
+        email="admin@hrbpilot.local",
         name="赵六（管理员）",
         role="admin",
         tenant_id="tenant-001",
-        hashed_password=_hash_password("123456"),
+        hashed_password=_hash_password("Hainan.8848"),
     ),
 }
 

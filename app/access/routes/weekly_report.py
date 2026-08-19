@@ -8,12 +8,16 @@ GET  /api/weekly-report/history → Recent report history
 
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth, require_role
 from app.access.middleware.tenant import require_tenant_id
+from app.data.database import get_db
+from app.data.models.infra import AsyncTask
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
-from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest
+from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest, WeeklyReportResponse
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 
@@ -61,6 +65,7 @@ async def generate_report(
 
     report_id = str(uuid.uuid4())
     orchestrator.save_report(report_id, result)
+    await orchestrator._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
 
     return {"report_id": report_id, "report": result, "is_draft": body.draft_mode}
 
@@ -96,6 +101,47 @@ async def get_report(report_id: str, request: Request):
 @router.get("/history")
 @require_auth
 @require_role("hrbp")
-async def get_history(request: Request, limit: int = 20):
-    """Get recent weekly report history."""
-    return {"reports": [], "total": 0}
+async def get_history(
+    request: Request,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_db),
+):
+    """Get recent weekly report history from async task records."""
+    tenant_id = require_tenant_id(request)
+    rows = (
+        (
+            await session.execute(
+                select(AsyncTask)
+                .where(
+                    AsyncTask.tenant_id == tenant_id,
+                    AsyncTask.type == "weekly_report",
+                    AsyncTask.status == "completed",
+                    AsyncTask.result_json.is_not(None),
+                )
+                .order_by(AsyncTask.completed_at.desc().nullslast(), AsyncTask.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    reports = []
+    for row in rows:
+        result = None
+        try:
+            result = WeeklyReportResponse.model_validate_json(row.result_json or "")
+        except Exception:
+            result = None
+        reports.append(
+            {
+                "task_id": row.id,
+                "status": row.status,
+                "progress": row.progress / 100.0 if row.progress else 0.0,
+                "result": result.model_dump() if result else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+
+    return {"reports": reports, "total": len(reports)}

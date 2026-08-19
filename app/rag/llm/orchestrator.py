@@ -58,8 +58,51 @@ def _build_provider_registry() -> dict[str, dict]:
 
 _PROVIDER_REGISTRY: dict[str, dict] = {}
 _ACTIVE_PROVIDER: str = ""
+_REDIS_PROVIDER_KEY = "llm:active_provider"
+_SYNC_REDIS = None
+_SYNC_REDIS_TRIED = False
 # Per-provider client cache (lazy init)
 _CLIENTS: dict[str, AsyncOpenAI] = {}
+
+
+def _get_sync_redis():
+    """Return a synchronous Redis client, or None if Redis is unavailable."""
+    global _SYNC_REDIS, _SYNC_REDIS_TRIED
+    if _SYNC_REDIS_TRIED:
+        return _SYNC_REDIS
+    _SYNC_REDIS_TRIED = True
+    try:
+        import redis as sync_redis
+
+        _SYNC_REDIS = sync_redis.from_url(settings.redis_url, decode_responses=True)
+        _SYNC_REDIS.ping()
+        logger.info("sync_redis_connected_for_llm_provider")
+    except Exception:
+        _SYNC_REDIS = None
+        logger.warning("sync_redis_unavailable_provider_falls_back_to_module_var")
+    return _SYNC_REDIS
+
+
+def _persist_active_provider(provider: str) -> None:
+    """Persist the active provider to Redis so other workers can pick it up."""
+    r = _get_sync_redis()
+    if r is not None:
+        try:
+            r.set(_REDIS_PROVIDER_KEY, provider)
+        except Exception as e:
+            logger.warning("redis_provider_persist_failed", error=str(e))
+
+
+def _load_active_provider() -> str | None:
+    """Load the active provider from Redis; returns None if not set/unavailable."""
+    r = _get_sync_redis()
+    if r is None:
+        return None
+    try:
+        return r.get(_REDIS_PROVIDER_KEY)
+    except Exception as e:
+        logger.warning("redis_provider_load_failed", error=str(e))
+        return None
 
 
 def _init_providers():
@@ -67,9 +110,16 @@ def _init_providers():
     global _PROVIDER_REGISTRY, _ACTIVE_PROVIDER
     if not _PROVIDER_REGISTRY:
         _PROVIDER_REGISTRY = _build_provider_registry()
-        _ACTIVE_PROVIDER = settings.llm_provider if settings.llm_provider in _PROVIDER_REGISTRY else (
-            next(iter(_PROVIDER_REGISTRY)) if _PROVIDER_REGISTRY else "zhipu"
+        default = (
+            settings.llm_provider
+            if settings.llm_provider in _PROVIDER_REGISTRY
+            else (next(iter(_PROVIDER_REGISTRY)) if _PROVIDER_REGISTRY else "zhipu")
         )
+        cached = _load_active_provider()
+        if cached is not None and cached in _PROVIDER_REGISTRY:
+            _ACTIVE_PROVIDER = cached
+        else:
+            _ACTIVE_PROVIDER = default
         logger.info(
             "llm_providers_initialized",
             providers=list(_PROVIDER_REGISTRY.keys()),
@@ -99,12 +149,16 @@ def get_active_provider() -> str:
 
 
 def set_active_provider(provider_id: str) -> bool:
-    """Switch the active LLM provider at runtime. Returns True if successful."""
+    """Switch the active LLM provider at runtime. Returns True if successful.
+
+    Persists to Redis so all worker processes see the same active provider.
+    """
     global _ACTIVE_PROVIDER
     _init_providers()
     if provider_id in _PROVIDER_REGISTRY:
         old = _ACTIVE_PROVIDER
         _ACTIVE_PROVIDER = provider_id
+        _persist_active_provider(provider_id)
         logger.info("llm_provider_switched", old=old, new=provider_id)
         return True
     return False
@@ -128,6 +182,9 @@ def get_llm_client() -> AsyncOpenAI:
         _CLIENTS[provider] = AsyncOpenAI(
             api_key=config["api_key"],
             base_url=config["base_url"],
+            # Fail fast instead of hanging the request when the LLM is slow or down.
+            timeout=60.0,
+            max_retries=2,
         )
     return _CLIENTS[provider]
 
@@ -153,16 +210,17 @@ def _build_system_prompt(prompt_template: str, context: list[dict]) -> str:
 
     context_block = "\n".join(context_lines) if context_lines else "（无相关制度文档片段）"
 
-    system_prompt = prompt_template
+    try:
+        from jinja2 import Template
 
-    # Replace Jinja2 for-loop block with actual context
-    for_pattern = r'\{%\s*for\s+\w+\s+in\s+\w+\s*%\}.*?\{%\s*endfor\s*%\}'
-    system_prompt = re.sub(for_pattern, context_block, system_prompt, flags=re.DOTALL)
-
-    # Remove remaining {{ }} placeholders
-    system_prompt = re.sub(r'\{\{.*?\}\}', '', system_prompt)
-
-    return system_prompt.strip()
+        rendered = Template(prompt_template).render(context=context, query="", content=context_block)
+        return rendered.strip()
+    except Exception:
+        system_prompt = prompt_template
+        for_pattern = r'\{%\s*for\s+\w+\s+in\s+\w+\s*%\}.*?\{%\s*endfor\s*%\}'
+        system_prompt = re.sub(for_pattern, context_block, system_prompt, flags=re.DOTALL)
+        system_prompt = re.sub(r'\{\{.*?\}\}', '', system_prompt)
+        return system_prompt.strip()
 
 
 # ---- LLM Orchestrator ----
@@ -272,35 +330,4 @@ class LLMOrchestrator:
         except Exception as e:
             logger.error("llm_stream_failed", error=str(e), model=model,
                          provider=get_active_provider())
-            raise
-
-
-class ZhipuEmbeddingClient:
-    """Embedding client — uses Zhipu's API (always zhipu, not switchable)."""
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a list of texts."""
-        api_key = settings.effective_embedding_api_key
-
-        embed_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=settings.llm_base_url,
-        )
-
-        logger.info(
-            "embedding_call_starting",
-            model=settings.embedding_model,
-            texts_count=len(texts),
-        )
-
-        try:
-            response = await embed_client.embeddings.create(
-                model=settings.embedding_model,
-                input=texts,
-            )
-            embeddings = [item.embedding for item in response.data]
-            logger.info("embedding_call_completed", embeddings_count=len(embeddings))
-            return embeddings
-        except Exception as e:
-            logger.error("embedding_call_failed", error=str(e))
             raise

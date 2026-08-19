@@ -21,13 +21,13 @@ router = APIRouter(prefix="/api/eval", tags=["evaluation"])
 @router.get("/metrics")
 async def get_all_metrics():
     """Return aggregated metrics for all scenarios."""
-    return {"scenarios": metrics_aggregator.get_all_scenarios_summary()}
+    return {"scenarios": await metrics_aggregator.get_all_scenarios_summary_async()}
 
 
 @router.get("/metrics/{scenario_id}")
 async def get_scenario_metrics(scenario_id: str):
     """Return detailed metrics for a single scenario."""
-    metrics = metrics_aggregator.get_scenario_metrics(scenario_id)
+    metrics = await metrics_aggregator.get_scenario_metrics_async(scenario_id)
     if not metrics:
         return {"scenario_id": scenario_id, "metrics": {}, "message": "No data yet"}
     return {"scenario_id": scenario_id, "metrics": metrics}
@@ -40,7 +40,7 @@ async def get_metric_trend(
     days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
 ):
     """Return trend data for a specific metric over the last N days."""
-    trend = metrics_aggregator.get_trend(scenario_id, metric, window_days=days)
+    trend = await metrics_aggregator.get_trend_async(scenario_id, metric, window_days=days)
     return {"scenario_id": scenario_id, "metric": metric, "days": days, "data": trend}
 
 

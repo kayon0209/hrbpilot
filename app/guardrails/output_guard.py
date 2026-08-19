@@ -52,7 +52,7 @@ class OutputGuardrail:
 
         # 1. Toxicity detection — block and replace (highest priority)
         if "toxicity_detection" in rules:
-            if self._detect_toxicity(processed):
+            if await self._detect_toxicity_async(processed):
                 flags["toxicity_detected"] = True
                 flags["blocked"] = True
                 flags["warnings"].append("toxic_content_replaced")
@@ -77,17 +77,56 @@ class OutputGuardrail:
         return processed, flags
 
     def _detect_toxicity(self, text: str) -> bool:
-        """Simple heuristic toxicity detection.
+        """Toxicity detection using heuristic keyword patterns.
 
-        Production should use a dedicated toxicity classifier model.
+        A lightweight check runs synchronously; callers that want deeper
+        LLM-based detection should use :meth:`_detect_toxicity_async`.
         """
-        # Heuristic: check for common toxic patterns
         toxic_patterns = [
             "fuck", "shit", "kill yourself", "hate speech",
             "discriminate", "harassment",
         ]
         text_lower = text.lower()
         return any(pattern in text_lower for pattern in toxic_patterns)
+
+    async def _detect_toxicity_async(self, text: str) -> bool:
+        """LLM-assisted toxicity detection with keyword pre-filter.
+
+        The LLM step is intentionally conservative: if it cannot clearly mark
+        the text as unsafe, we fall back to the lightweight keyword filter.
+        """
+        if self._detect_toxicity(text):
+            return True
+        if not text.strip():
+            return False
+        try:
+            from app.rag.llm.orchestrator import get_active_model, get_llm_client
+
+            client = get_llm_client()
+            model = get_active_model()
+            truncated = text[:1500]
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是一个内容安全审核助手。请判断给定文本是否包含"
+                            "仇恨言论、人身攻击、暴力煽动、歧视、骚扰或其他明显有害内容。"
+                            "只回答'是'或'否'。"
+                        ),
+                    },
+                    {"role": "user", "content": truncated},
+                ],
+                max_tokens=10,
+                temperature=0.0,
+                stream=False,
+            )
+            answer = (response.choices[0].message.content or "").strip()
+            return answer.startswith("是")
+        except Exception as e:
+            logger.warning("llm_toxicity_check_failed", error=str(e))
+            return self._detect_toxicity(text)
 
     def _verify_citations(self, output: str, sources: list[dict]) -> bool:
         """Check if output claims are backed by source content.

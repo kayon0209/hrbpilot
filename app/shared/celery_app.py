@@ -8,7 +8,7 @@ celery_app = Celery(
     "hrbpilot",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend_url,
-    include=["app.rag.ingestion.tasks"],
+    include=["app.rag.ingestion.tasks", "app.scenarios.tasks"],
 )
 celery_app.conf.update(
     task_acks_late=True,

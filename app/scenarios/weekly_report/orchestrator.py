@@ -4,9 +4,8 @@ Orchestrates the weekly report generation flow:
   Multi-source Data Aggregation → LLM Generation → Format Adaptation → Draft Save/Publish
 """
 
-import json
-import re
 import time
+from datetime import datetime, timezone
 
 from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.orchestrator import LLMOrchestrator
@@ -21,21 +20,9 @@ from app.scenarios.weekly_report.schemas import (
     WeeklyReportResponse,
 )
 from app.shared.logger import get_logger
+from app.shared.llm_utils import extract_json_from_llm_output
 
 logger = get_logger(__name__)
-
-# In-memory report store (replace with DB later)
-_report_store: dict[str, WeeklyReportResponse] = {}
-
-
-def _extract_json_from_llm_output(output: str) -> dict:
-    json_match = re.search(r"\{[\s\S]*\}", output)
-    if json_match:
-        try:
-            return dict(json.loads(json_match.group()))
-        except json.JSONDecodeError:
-            pass
-    return {}
 
 
 class WeeklyReportOrchestrator:
@@ -49,14 +36,13 @@ class WeeklyReportOrchestrator:
     async def generate(
         self,
         period: str,
-        source_data: list[dict],  # [{"type": "interview_digest", "content": "..."}]
+        source_data: list[dict],
         tenant_id: str,
         user_id: str,
     ) -> WeeklyReportResponse:
         """Generate a weekly report from multi-source data."""
         start_time = time.time()
 
-        # 1. Aggregate source data
         aggregated = ""
         for source in source_data:
             aggregated += f"\n--- [来源: {source.get('type', 'unknown')} | ID: {source.get('id', '')}] ---\n{source.get('content', '')}\n"
@@ -69,7 +55,6 @@ class WeeklyReportOrchestrator:
                 has_evidence=False,
             )
 
-        # 2. RAG retrieval (optional: supplement with KB context)
         kb_context = []
         if self.config.knowledge_base_id:
             kb_context = await self.retriever.retrieve(
@@ -80,7 +65,6 @@ class WeeklyReportOrchestrator:
                 tenant_id=tenant_id,
             )
 
-        # 3. LLM generation
         raw_output, _tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
             context=[{"source": "多源数据", "section": "聚合", "content": aggregated}, *kb_context],
@@ -89,33 +73,38 @@ class WeeklyReportOrchestrator:
             temperature=self.config.temperature,
         )
 
-        # 4. Parse response
-        parsed = _extract_json_from_llm_output(raw_output)
+        parsed = extract_json_from_llm_output(raw_output)
 
         progress = []
         for p in parsed.get("progress", []):
-            progress.append(ProgressItem(
-                item=p.get("item", ""),
-                source=p.get("source", ""),
-                status=TaskStatus(p.get("status", "进行中")),
-            ))
+            progress.append(
+                ProgressItem(
+                    item=p.get("item", ""),
+                    source=p.get("source", ""),
+                    status=TaskStatus(p.get("status", "进行中")),
+                )
+            )
 
         risks = []
         for r in parsed.get("risks", []):
-            risks.append(RiskItem(
-                risk=r.get("risk", ""),
-                severity=Severity(r.get("severity", "MEDIUM")),
-                owner=r.get("owner", ""),
-                action=r.get("action", ""),
-            ))
+            risks.append(
+                RiskItem(
+                    risk=r.get("risk", ""),
+                    severity=Severity(r.get("severity", "MEDIUM")),
+                    owner=r.get("owner", ""),
+                    action=r.get("action", ""),
+                )
+            )
 
         plan = []
         for pl in parsed.get("plan", []):
-            plan.append(PlanItem(
-                task=pl.get("task", ""),
-                priority=Priority(pl.get("priority", "中")),
-                deadline=pl.get("deadline", ""),
-            ))
+            plan.append(
+                PlanItem(
+                    task=pl.get("task", ""),
+                    priority=Priority(pl.get("priority", "中")),
+                    deadline=pl.get("deadline", ""),
+                )
+            )
 
         latency_ms = int((time.time() - start_time) * 1000)
 
@@ -131,8 +120,46 @@ class WeeklyReportOrchestrator:
         )
 
         logger.info("weekly_report_generated", period=period, latency_ms=latency_ms)
-
         return result
+
+    async def _store_report(
+        self,
+        tenant_id: str,
+        user_id: str,
+        report: WeeklyReportResponse,
+        source_data: list[dict],
+    ) -> None:
+        """Persist the weekly report to PostgreSQL."""
+        try:
+            from app.data.database import get_session_factory
+            from app.data.models.infra import AsyncTask
+            from app.data.models.scenarios import WeeklyReport
+
+            factory = get_session_factory()
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                record = WeeklyReport(
+                    tenant_id=tenant_id,
+                    period=report.period,
+                    summary=report.summary,
+                    progress_json=report.model_dump_json(include={"progress"}),
+                    risks_json=report.model_dump_json(include={"risks"}),
+                    plan_json=report.model_dump_json(include={"plan"}),
+                    data_sources_json=report.model_dump_json(include={"data_sources"}),
+                )
+                db.add(record)
+                task = AsyncTask(
+                    tenant_id=tenant_id,
+                    type="weekly_report",
+                    status="completed",
+                    progress=100,
+                    result_json=report.model_dump_json(),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                db.add(task)
+                await db.commit()
+        except Exception as exc:
+            logger.warning("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
 
     def save_report(self, report_id: str, report: WeeklyReportResponse):
         """Save a report to in-memory store."""
