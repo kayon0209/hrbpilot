@@ -25,7 +25,14 @@ async def get_redis() -> Redis | None:
     """Return the shared Redis client, or None if Redis is unavailable."""
     global _client, _client_unavailable
     if _client is not None:
-        return _client
+        try:
+            await _client.ping()
+            return _client
+        except Exception as e:
+            logger.warning("redis_cached_client_unavailable", error=str(e), msg="falling back to in-memory")
+            _client = None
+            _client_unavailable = True
+            return None
     if _client_unavailable:
         return None
     try:

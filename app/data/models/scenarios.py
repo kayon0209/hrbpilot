@@ -13,7 +13,7 @@ from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryK
 class InterviewDigest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "interview_digests"
 
-    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), nullable=False, index=True)
+    document_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("documents.id"), nullable=True, index=True)
     demands_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list of Demand objects
     risk_level: Mapped[str] = mapped_column(String(10), nullable=False)  # HIGH | MEDIUM | LOW
     risk_signals_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list of risk signal strings

@@ -31,7 +31,7 @@ class MetricsAggregator:
     def __init__(self) -> None:
         self._entries: list[MetricEntry] = []
 
-    async def record(self, scenario_id: str, metric: str, score: float) -> None:
+    async def record(self, tenant_id: str, scenario_id: str, metric: str, score: float) -> None:
         """Record a metric — persists to PostgreSQL, falls back to memory."""
         self._entries.append(
             MetricEntry(scenario_id=scenario_id, metric=metric, score=score)
@@ -40,14 +40,16 @@ class MetricsAggregator:
             from app.data.database import get_db_session
             from app.data.models.infra import EvalResult
 
-            async for db in get_db_session():
+            async for db in get_db_session(tenant_id):
                 db.add(
                     EvalResult(
+                        tenant_id=tenant_id,
                         scenario_id=scenario_id,
                         metric=metric,
                         score=score,
                     )
                 )
+                await db.commit()
         except Exception as e:
             logger.debug("metrics_db_unavailable_using_memory", error=str(e))
 

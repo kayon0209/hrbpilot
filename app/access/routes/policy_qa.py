@@ -30,7 +30,6 @@ router = APIRouter(prefix="/api/policy-qa", tags=["policy-qa"])
 orchestrator = PolicyQAOrchestrator()
 
 # In-memory QA history per user (process-scoped; not persisted across restarts).
-# Capped to bound memory; production persistence should move to PostgreSQL.
 _HISTORY_MAX = 200
 _user_history: dict[str, deque] = {}
 

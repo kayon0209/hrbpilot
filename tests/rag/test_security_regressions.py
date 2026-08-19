@@ -54,6 +54,7 @@ def test_production_accepts_strong_jwt_secret() -> None:
         embedding_base_url="https://embedding.example/v1",
     )
     assert configured.is_production
+    assert configured.milvus_endpoint == "http://localhost:19530"
 
 
 def test_production_rejects_missing_llm_or_embedding_configuration() -> None:

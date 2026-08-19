@@ -129,6 +129,14 @@ class InterviewDigestOrchestrator:
             has_evidence=True,
         )
 
+        await self._store_result(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            result=result,
+            source_text=cleaned_content,
+            tokens_used=tokens_used,
+        )
+
         logger.info(
             "interview_digest_completed",
             risk_level=risk_level.value,
@@ -158,7 +166,7 @@ class InterviewDigestOrchestrator:
                 db.info["tenant_id"] = tenant_id
                 record = InterviewDigest(
                     tenant_id=tenant_id,
-                    document_id=str(uuid.uuid4()),
+                    document_id=None,
                     demands_json=json.dumps([item.model_dump() for item in result.employee_demands], ensure_ascii=False),
                     risk_level=result.risk_level.value,
                     risk_signals_json=json.dumps(result.risk_signals, ensure_ascii=False),

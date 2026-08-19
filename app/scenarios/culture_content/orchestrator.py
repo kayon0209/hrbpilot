@@ -120,6 +120,37 @@ class CultureContentOrchestrator:
 
         return result
 
+    async def _store_content(
+        self,
+        tenant_id: str,
+        user_id: str,
+        content: CultureContentResponse,
+    ) -> str:
+        """Persist the culture content to PostgreSQL and return the database ID."""
+        try:
+            from app.data.database import get_session_factory
+            from app.data.models.scenarios import CultureContent
+
+            factory = get_session_factory()
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                record = CultureContent(
+                    tenant_id=tenant_id,
+                    keywords_json=json.dumps(content.keywords_used, ensure_ascii=False),
+                    news_article=content.news_article,
+                    group_notice=content.group_notice,
+                    employee_story=content.employee_story,
+                    event_copy=content.event_copy,
+                    tone=content.tone,
+                )
+                db.add(record)
+                await db.commit()
+                await db.refresh(record)
+                return record.id
+        except Exception as exc:
+            logger.warning("culture_content_persist_failed", error=str(exc), user_id=user_id)
+            return ""
+
     def save_content(self, content_id: str, content: CultureContentResponse):
         """Save content to in-memory store."""
         _content_store[content_id] = content
