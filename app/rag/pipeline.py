@@ -14,9 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.rag.config_loader import ScenarioConfig
-from app.shared.errors import AppError, ExternalServiceError, RateLimitError
+from app.shared.errors import AppError, ExternalServiceError
 from app.shared.logger import get_logger
-from app.shared.token_budget import DEFAULT_MONTHLY_BUDGET, get_monthly_usage
 
 logger = get_logger(__name__)
 
@@ -24,6 +23,7 @@ _background_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _schedule_background_task(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+    """Keep non-blocking work alive and surface unexpected failures."""
     task: asyncio.Task[Any] = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)
 
@@ -45,10 +45,9 @@ def _schedule_background_task(coro: Coroutine[Any, Any, Any], *, name: str) -> N
 class PipelineResult:
     """Output from a pipeline execution."""
     output: str
-    sources: list[dict]
+    sources: list[dict]  # Retrieved document chunks with metadata
     confidence: float
-    retrieval_score: float
-    guardrail_flags: dict
+    guardrail_flags: dict  # Which guardrails triggered
     latency_ms: int
     tokens_used: int | None = None
 
@@ -72,12 +71,6 @@ class CapabilityPipeline:
         self.citation_binder = citation_binder
         self.evaluator = evaluator
 
-    async def _check_token_budget(self, tenant_id: str, estimated_tokens: int) -> None:
-        usage = await get_monthly_usage(tenant_id)
-        consumed = int(usage.get("total_tokens", 0))
-        if consumed + estimated_tokens > DEFAULT_MONTHLY_BUDGET:
-            raise RateLimitError("Token budget exceeded")
-
     async def execute(
         self,
         input: str,
@@ -87,28 +80,32 @@ class CapabilityPipeline:
         preprocessor=None,
         postprocessor=None,
     ) -> PipelineResult:
+        """Execute the full pipeline for one request."""
         start_time = time.time()
         guardrail_flags = {}
 
+        # 0. Preprocessor (optional, per-scenario)
         processed_input = input
         if preprocessor:
             processed_input = await preprocessor(input, config)
 
+        # 1. Input guardrail
         if self.input_guard and config.guardrail_rules.input:
-            guarded_input, input_flags = await self.input_guard.check(processed_input, config.guardrail_rules.input)
+            guarded_input, input_flags = await self.input_guard.check(
+                processed_input, config.guardrail_rules.input
+            )
             guardrail_flags["input"] = input_flags
             if input_flags.get("blocked"):
                 return PipelineResult(
                     output=input_flags.get("block_message", "输入被护栏拦截"),
-                    sources=[],
-                    confidence=0.0,
-                    retrieval_score=0.0,
+                    sources=[], confidence=0.0,
                     guardrail_flags=guardrail_flags,
                     latency_ms=int((time.time() - start_time) * 1000),
                 )
         else:
             guarded_input = processed_input
 
+        # 2. RAG retrieval (optional — some scenarios may skip)
         context_chunks = []
         if self.retriever and config.knowledge_base_id:
             try:
@@ -126,13 +123,13 @@ class CapabilityPipeline:
                 logger.error("retrieval_failed", error=str(e))
                 raise ExternalServiceError("retrieval", str(e)) from e
 
-        retrieval_score = 0.0
+        # ``score`` is strategy-specific ranking data (RRF, cosine, or FTS),
+        # while ``confidence`` is calibrated to the 0..1 guardrail scale.
+        confidence = 0.0
         if context_chunks:
-            retrieval_score = max(chunk.get("confidence", 0.0) for chunk in context_chunks)
+            confidence = max(chunk.get("confidence", 0.0) for chunk in context_chunks)
 
-        estimated_tokens = max(256, len(guarded_input) // 2 + config.max_tokens)
-        await self._check_token_budget(tenant_id, estimated_tokens)
-
+        # 3. LLM generation
         if self.llm_generator:
             raw_output, tokens_used = await self.llm_generator.generate(
                 prompt_template=config.prompt_template,
@@ -145,21 +142,31 @@ class CapabilityPipeline:
             raw_output = "(LLM 未配置)"
             tokens_used = None
 
+        # 4. Output guardrail
         if self.output_guard and config.guardrail_rules.output:
-            guarded_output, output_flags = await self.output_guard.check(raw_output, config.guardrail_rules.output, sources=context_chunks)
+            guarded_output, output_flags = await self.output_guard.check(
+                raw_output, config.guardrail_rules.output, sources=context_chunks
+            )
             guardrail_flags["output"] = output_flags
         else:
             guarded_output = raw_output
 
+        # 5. Citation binding
         if self.citation_binder and context_chunks:
-            result_with_citations = self.citation_binder.bind(guarded_output, context_chunks)
+            result_with_citations = self.citation_binder.bind(
+                guarded_output, context_chunks
+            )
         else:
             result_with_citations = guarded_output
 
+        # 6. Postprocessor (optional, per-scenario)
         final_output = result_with_citations
         if postprocessor:
-            final_output = await postprocessor(result_with_citations, config, context_chunks)
+            final_output = await postprocessor(
+                result_with_citations, config, context_chunks
+            )
 
+        # 7. Evaluation (async, non-blocking)
         if self.evaluator and config.eval_metrics:
             _schedule_background_task(
                 self.evaluator.evaluate(
@@ -168,12 +175,13 @@ class CapabilityPipeline:
                     sources=context_chunks,
                     metrics=config.eval_metrics,
                     tenant_id=tenant_id,
-                    scenario_id=config.scenario_id,
                 ),
                 name="pipeline-evaluation",
             )
 
         latency_ms = int((time.time() - start_time) * 1000)
+
+        # 8. Audit log (async, non-blocking)
         _schedule_background_task(
             _write_audit_async(
                 tenant_id=tenant_id,
@@ -183,21 +191,24 @@ class CapabilityPipeline:
                 output_summary=final_output,
                 latency_ms=latency_ms,
                 tokens_used=tokens_used,
-                retrieval_score=retrieval_score,
+                confidence=confidence,
                 guardrail_flags=guardrail_flags,
                 sources=context_chunks,
             ),
             name="pipeline-audit-log",
         )
 
+        # 9. Token budget tracking (async, non-blocking)
         if tokens_used:
-            _schedule_background_task(_record_token_budget_async(tenant_id, tokens_used), name="pipeline-token-budget")
+            _schedule_background_task(
+                _record_token_budget_async(tenant_id, tokens_used),
+                name="pipeline-token-budget",
+            )
 
         return PipelineResult(
             output=final_output,
             sources=context_chunks,
-            confidence=retrieval_score,
-            retrieval_score=retrieval_score,
+            confidence=confidence,
             guardrail_flags=guardrail_flags,
             latency_ms=latency_ms,
             tokens_used=tokens_used,
@@ -212,13 +223,13 @@ async def _write_audit_async(
     output_summary: str,
     latency_ms: int,
     tokens_used: int | None,
-    retrieval_score: float,
+    confidence: float,
     guardrail_flags: dict,
     sources: list[dict],
 ) -> None:
+    """Write audit log entry (fire-and-forget)."""
     try:
         from app.shared.audit import write_audit_log
-
         await write_audit_log(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -227,7 +238,7 @@ async def _write_audit_async(
             output_summary=output_summary,
             latency_ms=latency_ms,
             tokens_used=tokens_used,
-            confidence=retrieval_score,
+            confidence=confidence,
             guardrail_flags=guardrail_flags,
             sources=sources,
         )
@@ -235,7 +246,17 @@ async def _write_audit_async(
         logger.error("audit_write_failed", error=str(exc))
 
 
+def _record_token_budget(tenant_id: str, tokens: int) -> None:
+    """Record token usage for budget tracking (kept for compatibility)."""
+    try:
+        from app.shared.token_budget import record_token_usage
+        asyncio.run(record_token_usage(tenant_id, tokens))
+    except Exception as exc:
+        logger.error("token_budget_record_failed", tenant_id=tenant_id, error=str(exc))
+
+
 async def _record_token_budget_async(tenant_id: str, tokens: int) -> None:
+    """Record token usage for budget tracking (fire-and-forget)."""
     try:
         from app.shared.token_budget import record_token_usage
         await record_token_usage(tenant_id, tokens)

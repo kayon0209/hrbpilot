@@ -8,9 +8,11 @@ dispatched to Celery workers.  ``get_task_status`` reads from the table so
 results survive process restarts.
 """
 
+import json
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
@@ -137,6 +139,52 @@ class InterviewDigestOrchestrator:
 
         return result
 
+    async def _store_result(
+        self,
+        tenant_id: str,
+        user_id: str,
+        result: InterviewDigestResponse,
+        source_text: str,
+        tokens_used: int | None,
+    ) -> None:
+        """Persist the digest result to PostgreSQL for durable history."""
+        try:
+            from app.data.database import get_session_factory
+            from app.data.models.infra import AsyncTask
+            from app.data.models.scenarios import InterviewDigest
+
+            factory = get_session_factory()
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                record = InterviewDigest(
+                    tenant_id=tenant_id,
+                    document_id=str(uuid.uuid4()),
+                    demands_json=json.dumps([item.model_dump() for item in result.employee_demands], ensure_ascii=False),
+                    risk_level=result.risk_level.value,
+                    risk_signals_json=json.dumps(result.risk_signals, ensure_ascii=False),
+                    action_items_json=json.dumps([item.model_dump() for item in result.action_items], ensure_ascii=False),
+                    suggested_owner=result.suggested_owner,
+                    summary=result.summary,
+                )
+                db.add(record)
+                task = AsyncTask(
+                    tenant_id=tenant_id,
+                    type="interview_digest",
+                    status="completed",
+                    progress=100,
+                    result_json=result.model_dump_json(),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                db.add(task)
+                await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "interview_digest_persist_failed",
+                error=str(exc),
+                user_id=user_id,
+                tokens_used=tokens_used,
+            )
+
     async def start_async_task(self, document_content: str, tenant_id: str, user_id: str) -> str:
         """Start an async digest task — persists to AsyncTask table, dispatches Celery.
 
@@ -179,25 +227,14 @@ class InterviewDigestOrchestrator:
 
         return task_id
 
-    async def get_task_status(self, task_id: str, tenant_id: str) -> DigestStatus | None:
+    async def get_task_status(self, task_id: str) -> DigestStatus | None:
         """Get the status of an async digest task from the database."""
-        from sqlalchemy import select
-
         from app.data.database import get_session_factory
         from app.data.models.infra import AsyncTask
 
         factory = get_session_factory()
         async with factory() as db:
-            db.info["tenant_id"] = tenant_id
-            row = (
-                (
-                    await db.execute(
-                        select(AsyncTask).where(AsyncTask.id == task_id, AsyncTask.tenant_id == tenant_id)
-                    )
-                )
-                .scalars()
-                .first()
-            )
+            row = await db.get(AsyncTask, task_id)
             if not row:
                 return None
             result = None

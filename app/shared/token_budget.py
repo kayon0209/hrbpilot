@@ -40,14 +40,6 @@ def _usage_key(tenant_id: str, month_key: str) -> str:
     return f"{tenant_id}:{month_key}"
 
 
-def _record_in_memory(tenant_id: str, month_key: str, tokens: int, model: str) -> int:
-    with _lock:
-        entry = _monthly_usage[_usage_key(tenant_id, month_key)]
-        entry["total"] += tokens
-        entry["by_model"][model] += tokens
-        return entry["total"]
-
-
 async def record_token_usage(
     tenant_id: str,
     tokens: int,
@@ -63,19 +55,20 @@ async def record_token_usage(
 
     redis = await get_redis()
     if redis is not None:
-        try:
-            pipe = redis.pipeline()
-            pipe.hincrby(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total", tokens)
-            pipe.hincrby(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model", model, tokens)
-            pipe.expire(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", 90 * 24 * 3600)
-            pipe.expire(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model", 90 * 24 * 3600)
-            results = await pipe.execute()
-            total = int(results[0])
-        except Exception as exc:
-            logger.warning("token_budget_redis_fallback", error=str(exc), tenant_id=tenant_id)
-            total = _record_in_memory(tenant_id, month_key, tokens, model)
+        pipe = redis.pipeline()
+        pipe.hincrby(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total", tokens)
+        pipe.hincrby(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model", model, tokens)
+        # Auto-expire after 90 days so stale months don't accumulate forever.
+        pipe.expire(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", 90 * 24 * 3600)
+        pipe.expire(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model", 90 * 24 * 3600)
+        results = await pipe.execute()
+        total = int(results[0])
     else:
-        total = _record_in_memory(tenant_id, month_key, tokens, model)
+        with _lock:
+            entry = _monthly_usage[_usage_key(tenant_id, month_key)]
+            entry["total"] += tokens
+            entry["by_model"][model] += tokens
+            total = entry["total"]
 
     usage_pct = total / budget
     alert_level = "ok"
@@ -119,28 +112,27 @@ async def get_monthly_usage(tenant_id: str | None = None) -> dict:
 
     redis = await get_redis()
     if redis is not None:
-        try:
-            if tenant_id is None:
-                total = 0
-                by_model: dict[str, int] = {}
-                async for meta_key in redis.scan_iter(match=f"token_usage:*:{month_key}:meta"):
-                    scan_total = await redis.hget(meta_key, "total")
-                    total += int(scan_total or 0)
-                    model_key = meta_key.replace(":meta", ":by_model")
-                    model_counts = await redis.hgetall(model_key)
-                    for m, c in model_counts.items():
-                        by_model[m] = by_model.get(m, 0) + int(c)
-                return {"month": month_key, "total_tokens": total, "by_model": by_model}
-            total = await redis.hget(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total")
-            model_counts = await redis.hgetall(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model")
-            return {
-                "month": month_key,
-                "total_tokens": int(total or 0),
-                "by_model": {m: int(c) for m, c in model_counts.items()},
-            }
-        except Exception as exc:
-            logger.warning("token_budget_redis_read_fallback", error=str(exc), tenant_id=tenant_id)
+        if tenant_id is None:
+            # Aggregate across all tenants for the current month.
+            total = 0
+            by_model: dict[str, int] = {}
+            async for meta_key in redis.scan_iter(match=f"token_usage:*:{month_key}:meta"):
+                scan_total = await redis.hget(meta_key, "total")
+                total += int(scan_total or 0)
+                model_key = meta_key.replace(":meta", ":by_model")
+                model_counts = await redis.hgetall(model_key)
+                for m, c in model_counts.items():
+                    by_model[m] = by_model.get(m, 0) + int(c)
+            return {"month": month_key, "total_tokens": total, "by_model": by_model}
+        total = await redis.hget(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total")
+        model_counts = await redis.hgetall(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model")
+        return {
+            "month": month_key,
+            "total_tokens": int(total or 0),
+            "by_model": {m: int(c) for m, c in model_counts.items()},
+        }
 
+    # In-memory fallback
     if tenant_id is None:
         totals: dict[str, Any] = {"total": 0, "by_model": defaultdict(int)}
         for key, entry in _monthly_usage.items():

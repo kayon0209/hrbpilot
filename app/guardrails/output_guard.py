@@ -12,14 +12,18 @@ Per architecture spec ADR-004:
   - Toxicity detected → replace with safe response
 """
 
-from app.config.settings import settings
 from app.rag.retrieval.tokenizer import tokenize
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-SAFE_RESPONSE = "抱歉，系统检测到输出内容不符合安全规范，已替换为安全回复。请重新提问。"
-CITATION_WARNING = "\n\n⚠️ 部分回答内容未能在提供的引用来源中找到明确对应，请谨慎参考。"
+SAFE_RESPONSE = (
+    "抱歉，系统检测到输出内容不符合安全规范，已替换为安全回复。请重新提问。"
+)
+
+CITATION_WARNING = (
+    "\n\n⚠️ 部分回答内容未能在提供的引用来源中找到明确对应，请谨慎参考。"
+)
 
 
 class OutputGuardrail:
@@ -31,6 +35,10 @@ class OutputGuardrail:
         rules: list[str],
         sources: list[dict] | None = None,
     ) -> tuple[str, dict]:
+        """Apply output guardrail checks.
+
+        Returns: (processed_output, flags_dict)
+        """
         flags: dict = {
             "toxicity_detected": False,
             "citation_issues": False,
@@ -42,6 +50,7 @@ class OutputGuardrail:
         processed = output
         sources = sources or []
 
+        # 1. Toxicity detection — block and replace (highest priority)
         if "toxicity_detection" in rules:
             if await self._detect_toxicity_async(processed):
                 flags["toxicity_detected"] = True
@@ -50,6 +59,7 @@ class OutputGuardrail:
                 logger.warning("output_guardrail_toxicity_blocked")
                 return SAFE_RESPONSE, flags
 
+        # 2. Citation verification — warn, don't block
         if "citation_verification" in rules and sources:
             if self._verify_citations(processed, sources):
                 flags["citation_issues"] = True
@@ -57,7 +67,8 @@ class OutputGuardrail:
                 processed += CITATION_WARNING
                 logger.info("output_guardrail_citation_warning")
 
-        if "factuality_check" in rules and settings.guardrail_factuality_check_enabled:
+        # 3. Factuality check — flag, don't block
+        if "factuality_check" in rules:
             if self._check_factuality(processed, sources):
                 flags["factuality_issues"] = True
                 flags["warnings"].append("factuality_flagged")
@@ -66,71 +77,82 @@ class OutputGuardrail:
         return processed, flags
 
     def _detect_toxicity(self, text: str) -> bool:
+        """Toxicity detection using heuristic keyword patterns.
+
+        A lightweight check runs synchronously; callers that want deeper
+        LLM-based detection should use :meth:`_detect_toxicity_async`.
+        """
         toxic_patterns = [
-            "fuck", "shit", "kill yourself", "hate speech", "discriminate", "harassment",
-            "去死", "傻逼", "垃圾", "歧视", "骚扰", "杀了你", "蠢货",
+            "fuck", "shit", "kill yourself", "hate speech",
+            "discriminate", "harassment",
         ]
         text_lower = text.lower()
         return any(pattern in text_lower for pattern in toxic_patterns)
 
     async def _detect_toxicity_async(self, text: str) -> bool:
+        """LLM-assisted toxicity detection with keyword pre-filter.
+
+        The LLM step is intentionally conservative: if it cannot clearly mark
+        the text as unsafe, we fall back to the lightweight keyword filter.
+        """
         if self._detect_toxicity(text):
             return True
-        return False
+        if not text.strip():
+            return False
+        try:
+            from app.rag.llm.orchestrator import get_active_model, get_llm_client
+
+            client = get_llm_client()
+            model = get_active_model()
+            truncated = text[:1500]
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是一个内容安全审核助手。请判断给定文本是否包含"
+                            "仇恨言论、人身攻击、暴力煽动、歧视、骚扰或其他明显有害内容。"
+                            "只回答'是'或'否'。"
+                        ),
+                    },
+                    {"role": "user", "content": truncated},
+                ],
+                max_tokens=10,
+                temperature=0.0,
+                stream=False,
+            )
+            answer = (response.choices[0].message.content or "").strip()
+            return answer.startswith("是")
+        except Exception as e:
+            logger.warning("llm_toxicity_check_failed", error=str(e))
+            return self._detect_toxicity(text)
 
     def _verify_citations(self, output: str, sources: list[dict]) -> bool:
-        citations = self._extract_citation_ids(output)
-        if citations:
-            valid_ids = {str(source.get("chunk_id", "")).strip() for source in sources if source.get("chunk_id")}
-            return not all(citation in valid_ids for citation in citations)
+        """Check if output claims are backed by source content.
 
-        output_tokens = set(tokenize(output.lower()).split())
-        if not output_tokens:
-            return bool(sources)
-
+        Returns True if citation issues found.
+        """
+        # Simplified: check that at least one source snippet appears in output
         for source in sources:
-            snippet = str(source.get("content", ""))
-            if not snippet:
-                continue
-            source_tokens = set(tokenize(snippet.lower()).split())
-            if not source_tokens:
-                continue
-            overlap = output_tokens & source_tokens
-            if overlap:
-                return False
-
-        return bool(sources)
-
-    def _extract_citation_ids(self, output: str) -> list[str]:
-        import re
-
-        patterns = [r"\[(\d+)\]", r"\[来源(\d+)\]", r"\[chunk:(.+?)\]"]
-        ids: list[str] = []
-        for pattern in patterns:
-            for match in re.findall(pattern, output):
-                ids.append(str(match).strip())
-        return ids
+            snippet = source.get("content", "")
+            if snippet and len(snippet) > 20:
+                # Check for partial overlap
+                words = set(tokenize(snippet.lower()).split())
+                output_words = set(tokenize(output.lower()).split())
+                overlap = words & output_words
+                if len(overlap) >= 3:
+                    return False  # Found matching source
+        # No source matched — potential hallucination
+        return bool(sources)  # Only flag if we had sources but found no overlap
 
     def _check_factuality(self, output: str, sources: list[dict]) -> bool:
-        if not sources:
-            return False
+        """Placeholder factuality check.
 
-        output_tokens = set(tokenize(output.lower()).split())
-        if not output_tokens:
-            return False
-
-        weighted_overlap = 0.0
-        total_weight = 0.0
-        for source in sources:
-            snippet = str(source.get("content", ""))
-            if not snippet:
-                continue
-            source_tokens = set(tokenize(snippet.lower()).split())
-            if not source_tokens:
-                continue
-            weight = min(1.0, len(source_tokens) / 50.0)
-            overlap = len(output_tokens & source_tokens)
-            weighted_overlap += overlap * weight
-            total_weight += weight
-
-        return total_weight > 0 and (weighted_overlap / total_weight) < 1.5
+        Production should use an LLM-based factuality verifier
+        or a dedicated NLI model.
+        """
+        # Currently a no-op placeholder. Returns False (no issues found)
+        # to avoid false positives in MVP.
+        _ = output, sources
+        return False

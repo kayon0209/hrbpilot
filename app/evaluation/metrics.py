@@ -2,8 +2,7 @@
 
 Primary store is the ``eval_results`` PostgreSQL table (survives restarts,
 shared across workers). Falls back to in-memory tracking when the DB is
-unavailable so dev mode keeps working. Every entry is tagged with the tenant
-so fallback queries never mix tenants.
+unavailable so dev mode keeps working.
 """
 
 from dataclasses import dataclass, field
@@ -16,7 +15,6 @@ logger = get_logger(__name__)
 
 @dataclass
 class MetricEntry:
-    tenant_id: str
     scenario_id: str
     metric: str
     score: float
@@ -33,37 +31,29 @@ class MetricsAggregator:
     def __init__(self) -> None:
         self._entries: list[MetricEntry] = []
 
-    async def record(self, tenant_id: str, scenario_id: str, metric: str, score: float) -> None:
+    async def record(self, scenario_id: str, metric: str, score: float) -> None:
         """Record a metric — persists to PostgreSQL, falls back to memory."""
         self._entries.append(
-            MetricEntry(tenant_id=tenant_id, scenario_id=scenario_id, metric=metric, score=score)
+            MetricEntry(scenario_id=scenario_id, metric=metric, score=score)
         )
         try:
             from app.data.database import get_db_session
             from app.data.models.infra import EvalResult
 
-            async for db in get_db_session(tenant_id):
+            async for db in get_db_session():
                 db.add(
                     EvalResult(
-                        tenant_id=tenant_id,
                         scenario_id=scenario_id,
                         metric=metric,
                         score=score,
                     )
                 )
-                await db.commit()
-        except Exception as exc:
-            logger.warning(
-                "metrics_db_fallback_to_memory",
-                error=str(exc),
-                tenant_id=tenant_id,
-                scenario_id=scenario_id,
-                metric=metric,
-            )
+        except Exception as e:
+            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
 
-    def get_scenario_metrics(self, tenant_id: str, scenario_id: str) -> dict:
+    def get_scenario_metrics(self, scenario_id: str) -> dict:
         """Return aggregated metrics for a single scenario (in-memory)."""
-        scenario_entries = [e for e in self._entries if e.tenant_id == tenant_id and e.scenario_id == scenario_id]
+        scenario_entries = [e for e in self._entries if e.scenario_id == scenario_id]
         if not scenario_entries:
             return {}
 
@@ -82,7 +72,7 @@ class MetricsAggregator:
             }
         return result
 
-    async def get_scenario_metrics_async(self, tenant_id: str, scenario_id: str) -> dict:
+    async def get_scenario_metrics_async(self, scenario_id: str) -> dict:
         """Return aggregated metrics from PostgreSQL, falling back to memory."""
         try:
             from sqlalchemy import func, select
@@ -90,7 +80,7 @@ class MetricsAggregator:
             from app.data.database import get_db_session
             from app.data.models.infra import EvalResult
 
-            async for db in get_db_session(tenant_id):
+            async for db in get_db_session():
                 rows = (
                     (
                         await db.execute(
@@ -101,33 +91,21 @@ class MetricsAggregator:
                                 func.max(EvalResult.score).label("max"),
                                 func.count(EvalResult.id).label("count"),
                             )
-                            .where(
-                                EvalResult.tenant_id == tenant_id,
-                                EvalResult.scenario_id == scenario_id,
-                            )
+                            .where(EvalResult.scenario_id == scenario_id)
                             .group_by(EvalResult.metric)
                         )
                     )
                     .all()
                 )
                 if not rows:
-                    logger.info(
-                        "metrics_db_empty_fallback_to_memory",
-                        tenant_id=tenant_id,
-                        scenario_id=scenario_id,
-                        source="async_query",
-                    )
-                    return self.get_scenario_metrics(tenant_id, scenario_id)
+                    return self.get_scenario_metrics(scenario_id)
 
                 # Fetch latest scores per metric
                 latest_rows = (
                     (
                         await db.execute(
                             select(EvalResult.metric, EvalResult.score)
-                            .where(
-                                EvalResult.tenant_id == tenant_id,
-                                EvalResult.scenario_id == scenario_id,
-                            )
+                            .where(EvalResult.scenario_id == scenario_id)
                             .order_by(EvalResult.created_at.desc())
                         )
                     )
@@ -148,17 +126,11 @@ class MetricsAggregator:
                         "latest": round(latest_map.get(row[0], float(row[1])), 4),
                     }
                 return result
-        except Exception as exc:
-            logger.warning(
-                "metrics_db_fallback_to_memory",
-                error=str(exc),
-                tenant_id=tenant_id,
-                scenario_id=scenario_id,
-                source="async_query",
-            )
-            return self.get_scenario_metrics(tenant_id, scenario_id)
+        except Exception as e:
+            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+            return self.get_scenario_metrics(scenario_id)
 
-    async def get_all_scenarios_summary_async(self, tenant_id: str) -> list[dict]:
+    async def get_all_scenarios_summary_async(self) -> list[dict]:
         """Return summary for all scenarios from PostgreSQL."""
         try:
             from sqlalchemy import func, select
@@ -166,13 +138,11 @@ class MetricsAggregator:
             from app.data.database import get_db_session
             from app.data.models.infra import EvalResult
 
-            async for db in get_db_session(tenant_id):
+            async for db in get_db_session():
                 scenario_ids = (
                     (
                         await db.execute(
-                            select(EvalResult.scenario_id)
-                            .where(EvalResult.tenant_id == tenant_id)
-                            .distinct()
+                            select(EvalResult.scenario_id).distinct()
                         )
                     )
                     .scalars()
@@ -180,13 +150,12 @@ class MetricsAggregator:
                 )
                 results = []
                 for sid in sorted(scenario_ids):
-                    metrics = await self.get_scenario_metrics_async(tenant_id, sid)
+                    metrics = await self.get_scenario_metrics_async(sid)
                     count_rows = (
                         (
                             await db.execute(
                                 select(func.count(EvalResult.id)).where(
-                                    EvalResult.tenant_id == tenant_id,
-                                    EvalResult.scenario_id == sid,
+                                    EvalResult.scenario_id == sid
                                 )
                             )
                         )
@@ -198,31 +167,26 @@ class MetricsAggregator:
                         "total_entries": int(count_rows or 0),
                     })
                 return results
-        except Exception as exc:
-            logger.warning(
-                "metrics_db_fallback_to_memory",
-                error=str(exc),
-                tenant_id=tenant_id,
-                source="async_summary",
-            )
-            return self.get_all_scenarios_summary(tenant_id)
+        except Exception as e:
+            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+            return self.get_all_scenarios_summary()
 
-    def get_all_scenarios_summary(self, tenant_id: str) -> list[dict]:
+    def get_all_scenarios_summary(self) -> list[dict]:
         """Return summary for all scenarios (in-memory)."""
-        scenarios = {e.scenario_id for e in self._entries if e.tenant_id == tenant_id}
+        scenarios = {e.scenario_id for e in self._entries}
         return [
             {
                 "scenario_id": sid,
-                "metrics": self.get_scenario_metrics(tenant_id, sid),
+                "metrics": self.get_scenario_metrics(sid),
                 "total_entries": len(
-                    [e for e in self._entries if e.tenant_id == tenant_id and e.scenario_id == sid]
+                    [e for e in self._entries if e.scenario_id == sid]
                 ),
             }
             for sid in sorted(scenarios)
         ]
 
     async def get_trend_async(
-        self, tenant_id: str, scenario_id: str, metric: str, window_days: int = 7
+        self, scenario_id: str, metric: str, window_days: int = 7
     ) -> list[dict]:
         """Return metric trend over the last N days from PostgreSQL."""
         try:
@@ -232,13 +196,12 @@ class MetricsAggregator:
             from app.data.models.infra import EvalResult
 
             cutoff = datetime.now() - timedelta(days=window_days)
-            async for db in get_db_session(tenant_id):
+            async for db in get_db_session():
                 rows = (
                     (
                         await db.execute(
                             select(EvalResult.created_at, EvalResult.score)
                             .where(
-                                EvalResult.tenant_id == tenant_id,
                                 EvalResult.scenario_id == scenario_id,
                                 EvalResult.metric == metric,
                                 EvalResult.created_at >= cutoff,
@@ -252,27 +215,19 @@ class MetricsAggregator:
                     {"timestamp": row[0].isoformat() if row[0] else None, "score": round(float(row[1]), 4)}
                     for row in rows
                 ]
-        except Exception as exc:
-            logger.warning(
-                "metrics_db_fallback_to_memory",
-                error=str(exc),
-                tenant_id=tenant_id,
-                scenario_id=scenario_id,
-                metric=metric,
-                source="async_trend",
-            )
-            return self.get_trend(tenant_id, scenario_id, metric, window_days)
+        except Exception as e:
+            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+            return self.get_trend(scenario_id, metric, window_days)
 
     def get_trend(
-        self, tenant_id: str, scenario_id: str, metric: str, window_days: int = 7
+        self, scenario_id: str, metric: str, window_days: int = 7
     ) -> list[dict]:
         """Return metric trend over the last N days (in-memory)."""
         cutoff = datetime.now() - timedelta(days=window_days)
         relevant = [
             e
             for e in self._entries
-            if e.tenant_id == tenant_id
-            and e.scenario_id == scenario_id
+            if e.scenario_id == scenario_id
             and e.metric == metric
             and datetime.fromisoformat(e.timestamp) >= cutoff
         ]

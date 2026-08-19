@@ -6,9 +6,7 @@ GET  /api/weekly-report/{report_id} → Get saved report
 GET  /api/weekly-report/history → Recent report history
 """
 
-import json
-
-from datetime import UTC, datetime
+import uuid
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -17,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access.middleware.decorators import require_auth, require_role
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
-from app.data.models.scenarios import WeeklyReport
+from app.data.models.infra import AsyncTask
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
-from app.scenarios.weekly_report.schemas import GenerateRequest, PlanItem, Priority, ProgressItem, RiskItem, SaveRequest, Severity, TaskStatus, WeeklyReportResponse
+from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest, WeeklyReportResponse
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 
@@ -42,16 +40,18 @@ async def generate_report(
     user_id = getattr(request.state, "user_id", "unknown")
 
     source_data = [
-        {"type": "interview_digest", "id": sid}
+        {"type": "interview_digest", "id": sid, "content": f"[访谈结果 {sid} 内容待加载]"}
         for sid in body.source_ids
     ]
 
     if not source_data:
         return {
-            "report_id": "",
+            "report_id": str(uuid.uuid4()),
             "report": {
                 "period": body.period,
                 "summary": "未收到任何多源数据，无法生成周报。请先上传面谈纪要或员工声音数据。",
+                "has_evidence": False,
+                "confidence": 0.0,
             },
             "is_draft": body.draft_mode,
         }
@@ -63,7 +63,9 @@ async def generate_report(
         user_id=user_id,
     )
 
-    report_id = await orchestrator._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
+    report_id = str(uuid.uuid4())
+    orchestrator.save_report(report_id, result)
+    await orchestrator._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
 
     return {"report_id": report_id, "report": result, "is_draft": body.draft_mode}
 
@@ -71,42 +73,29 @@ async def generate_report(
 @router.post("/save")
 @require_auth
 @require_role("hrbp")
-async def save_report(body: SaveRequest, request: Request, session: AsyncSession = Depends(get_db)):
+async def save_report(body: SaveRequest, request: Request):
     """Save or publish a weekly report."""
-    tenant_id = require_tenant_id(request)
-    row = (
-        (
-            await session.execute(
-                select(WeeklyReport)
-                .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == body.report_id)
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if not row:
+    report = orchestrator.get_report(body.report_id)
+    if not report:
         raise NotFoundError("Report", body.report_id)
 
-    if body.edits:
-        if "summary" in body.edits:
-            row.summary = str(body.edits["summary"])
-        if "progress" in body.edits:
-            row.progress_json = json.dumps(body.edits["progress"], ensure_ascii=False)
-        if "risks" in body.edits:
-            row.risks_json = json.dumps(body.edits["risks"], ensure_ascii=False)
-        if "plan" in body.edits:
-            row.plan_json = json.dumps(body.edits["plan"], ensure_ascii=False)
-        if "data_sources" in body.edits:
-            row.data_sources_json = json.dumps(body.edits["data_sources"], ensure_ascii=False)
-
     if body.action == "publish":
-        row.published_at = datetime.now(UTC)
         logger.info("weekly_report_published", report_id=body.report_id)
     else:
         logger.info("weekly_report_saved", report_id=body.report_id)
 
-    await session.commit()
     return {"report_id": body.report_id, "action": body.action, "status": "saved"}
+
+
+@router.get("/{report_id}")
+@require_auth
+@require_role("hrbp")
+async def get_report(report_id: str, request: Request):
+    """Get a saved weekly report."""
+    report = orchestrator.get_report(report_id)
+    if not report:
+        raise NotFoundError("Report", report_id)
+    return report
 
 
 @router.get("/history")
@@ -117,14 +106,19 @@ async def get_history(
     limit: int = 20,
     session: AsyncSession = Depends(get_db),
 ):
-    """Get recent weekly report history from database records."""
+    """Get recent weekly report history from async task records."""
     tenant_id = require_tenant_id(request)
     rows = (
         (
             await session.execute(
-                select(WeeklyReport)
-                .where(WeeklyReport.tenant_id == tenant_id)
-                .order_by(WeeklyReport.created_at.desc())
+                select(AsyncTask)
+                .where(
+                    AsyncTask.tenant_id == tenant_id,
+                    AsyncTask.type == "weekly_report",
+                    AsyncTask.status == "completed",
+                    AsyncTask.result_json.is_not(None),
+                )
+                .order_by(AsyncTask.completed_at.desc().nullslast(), AsyncTask.created_at.desc())
                 .limit(limit)
             )
         )
@@ -134,55 +128,20 @@ async def get_history(
 
     reports = []
     for row in rows:
+        result = None
+        try:
+            result = WeeklyReportResponse.model_validate_json(row.result_json or "")
+        except Exception:
+            result = None
         reports.append(
             {
-                "report_id": row.id,
-                "period": row.period,
-                "summary": row.summary,
+                "task_id": row.id,
+                "status": row.status,
+                "progress": row.progress / 100.0 if row.progress else 0.0,
+                "result": result.model_dump() if result else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             }
         )
 
     return {"reports": reports, "total": len(reports)}
-
-
-@router.get("/{report_id}")
-@require_auth
-@require_role("hrbp")
-async def get_report(report_id: str, request: Request, session: AsyncSession = Depends(get_db)):
-    """Get a saved weekly report by ID."""
-    tenant_id = require_tenant_id(request)
-    row = (
-        (
-            await session.execute(
-                select(WeeklyReport)
-                .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == report_id)
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if not row:
-        raise NotFoundError("Report", report_id)
-
-    def _loads(text: str):
-        try:
-            return json.loads(text or "[]")
-        except Exception:
-            return []
-
-    progress_items = [ProgressItem.model_validate(item) for item in _loads(row.progress_json)]
-    risk_items = [RiskItem.model_validate(item) for item in _loads(row.risks_json)]
-    plan_items = [PlanItem.model_validate(item) for item in _loads(row.plan_json)]
-
-    # Historical records do not persist calibrated confidence or evidence flags.
-    # Return the factual shape instead of fabricating certainty.
-    return WeeklyReportResponse(
-        period=row.period,
-        summary=row.summary,
-        progress=progress_items,
-        risks=risk_items,
-        plan=plan_items,
-        data_sources=_loads(row.data_sources_json),
-    )
