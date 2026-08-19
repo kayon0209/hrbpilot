@@ -47,8 +47,7 @@ async def start_analysis(
     if body.content and len(body.content) >= 50:
         docs = [{"id": "inline-001", "content": body.content}]
     elif body.document_ids:
-        # Mock: convert IDs to document objects (replace with DB query in prod)
-        docs = [{"id": did, "content": f"[文档 {did} 内容待加载]"} for did in body.document_ids]
+        docs = [{"id": did} for did in body.document_ids]
     else:
         raise ValidationError("请提供待分析的文档内容或文档ID列表")
 

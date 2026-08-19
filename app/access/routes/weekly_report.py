@@ -40,7 +40,7 @@ async def generate_report(
     user_id = getattr(request.state, "user_id", "unknown")
 
     source_data = [
-        {"type": "interview_digest", "id": sid, "content": f"[访谈结果 {sid} 内容待加载]"}
+        {"type": "interview_digest", "id": sid}
         for sid in body.source_ids
     ]
 
