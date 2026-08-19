@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
-from app.data.database import get_db
+from app.data.database import get_db, make_tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.knowledge_base import KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
@@ -61,20 +61,11 @@ async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb
 
 
 async def _get_or_create_chat_session(session: AsyncSession, tenant_id: str, user_id: str) -> ChatSession:
-    stmt = (
-        select(ChatSession)
-        .where(
-            ChatSession.tenant_id == tenant_id,
-            ChatSession.user_id == user_id,
-            ChatSession.scenario_id == "policy_qa",
-        )
-        .order_by(ChatSession.created_at.desc())
-        .limit(1)
-    )
-    chat_session = (await session.execute(stmt)).scalars().first()
-    if chat_session is not None:
-        return chat_session
+    """Create a fresh chat session for each policy QA turn.
 
+    History is rendered as question + answer pairs, so reusing the latest
+    session would mix the first question with the last answer across turns.
+    """
     chat_session = ChatSession(tenant_id=tenant_id, user_id=user_id, scenario_id="policy_qa")
     session.add(chat_session)
     await session.flush()
@@ -150,19 +141,24 @@ async def ask_question(
 
                     yield f"data: {sse_data}\n\n"
 
-                chat_session = await _get_or_create_chat_session(session, tenant_id, user_id)
-                await _add_message(session, chat_session.id, "user", question_text)
-                assistant_message = await _add_message(
-                    session,
-                    chat_session.id,
-                    "assistant",
-                    full_answer,
-                    confidence=float(done_payload.get("confidence", 0.0)) if done_payload else None,
-                )
-                await session.commit()
+                if full_answer.strip():
+                    async with make_tenant_session(tenant_id) as db:
+                        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
+                        await _add_message(db, chat_session.id, "user", question_text)
+                        assistant_message = await _add_message(
+                            db,
+                            chat_session.id,
+                            "assistant",
+                            full_answer,
+                            confidence=float(done_payload.get("confidence", 0.0)) if done_payload else None,
+                        )
+                        await db.commit()
+                        message_id = assistant_message.id
+                else:
+                    message_id = None
 
                 final_payload = {
-                    "message_id": assistant_message.id,
+                    "message_id": message_id,
                     "confidence": done_payload.get("confidence", 0.0) if done_payload else 0.0,
                     "has_evidence": done_payload.get("has_evidence", False) if done_payload else False,
                     "latency_ms": done_payload.get("latency_ms", 0) if done_payload else 0,
@@ -171,10 +167,6 @@ async def ask_question(
                 yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(final_payload, ensure_ascii=False)})}\n\n"
             except Exception as e:
                 logger.error("policy_qa_sse_error", error=str(e))
-                try:
-                    await session.rollback()
-                except Exception:
-                    pass
                 error_event = json.dumps(
                     {
                         "event": "error",
@@ -199,19 +191,21 @@ async def ask_question(
         user_id=user_id,
         kb_id=kb.id,
     )
-    chat_session = await _get_or_create_chat_session(session, tenant_id, user_id)
-    await _add_message(session, chat_session.id, "user", body.question)
-    assistant_message = await _add_message(
-        session,
-        chat_session.id,
-        "assistant",
-        result.answer,
-        confidence=result.confidence,
-    )
-    await session.commit()
+    async with make_tenant_session(tenant_id) as db:
+        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
+        await _add_message(db, chat_session.id, "user", body.question)
+        assistant_message = await _add_message(
+            db,
+            chat_session.id,
+            "assistant",
+            result.answer,
+            confidence=result.confidence,
+        )
+        await db.commit()
+        message_id = assistant_message.id
 
     response = result.model_dump()
-    response["message_id"] = assistant_message.id
+    response["message_id"] = message_id
     return response
 
 
@@ -328,6 +322,7 @@ async def submit_feedback(
                 .join(ChatSession, ChatMessage.session_id == ChatSession.id)
                 .where(
                     ChatMessage.id == body.message_id,
+                    ChatMessage.role == "assistant",
                     ChatSession.tenant_id == tenant_id,
                     ChatSession.user_id == user_id,
                     ChatSession.scenario_id == "policy_qa",

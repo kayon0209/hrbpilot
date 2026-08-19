@@ -49,8 +49,35 @@ class VoiceInsightOrchestrator:
         start_time = time.time()
 
         all_content = ""
+        from sqlalchemy import select
+
+        from app.data.database import get_session_factory
+        from app.data.models.infra import AsyncTask
+
+        factory = get_session_factory()
+        resolved_documents: list[dict] = []
         for doc in documents:
-            all_content += f"\n--- [来源: {doc.get('id', 'unknown')}] ---\n{doc.get('content', '')}\n"
+            content = doc.get('content', '')
+            doc_id = doc.get('id', 'unknown')
+            if doc_id and (not content or content.startswith("[")):
+                async with factory() as db:
+                    db.info["tenant_id"] = tenant_id
+                    row = (
+                        (
+                            await db.execute(
+                                select(AsyncTask).where(
+                                    AsyncTask.tenant_id == tenant_id,
+                                    AsyncTask.id == doc_id,
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if row and row.result_json:
+                        content = row.result_json
+            resolved_documents.append({**doc, "content": content})
+            all_content += f"\n--- [来源: {doc_id}] ---\n{content}\n"
 
         if not all_content.strip() or len(all_content) < 100:
             return InsightReportResponse(

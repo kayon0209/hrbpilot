@@ -45,8 +45,34 @@ class WeeklyReportOrchestrator:
         start_time = time.time()
 
         aggregated = ""
+        from app.data.models.infra import AsyncTask
+        from app.data.database import get_session_factory
+        from sqlalchemy import select
+
+        factory = get_session_factory()
+        resolved_sources: list[dict] = []
         for source in source_data:
-            aggregated += f"\n--- [来源: {source.get('type', 'unknown')} | ID: {source.get('id', '')}] ---\n{source.get('content', '')}\n"
+            content = source.get('content', '')
+            source_id = source.get('id', '')
+            if source_id and (not content or content.startswith("[")):
+                async with factory() as db:
+                    db.info["tenant_id"] = tenant_id
+                    row = (
+                        (
+                            await db.execute(
+                                select(AsyncTask).where(
+                                    AsyncTask.tenant_id == tenant_id,
+                                    AsyncTask.id == source_id,
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if row and row.result_json:
+                        content = row.result_json
+            resolved_sources.append({**source, "content": content})
+            aggregated += f"\n--- [来源: {source.get('type', 'unknown')} | ID: {source_id}] ---\n{content}\n"
 
         if not aggregated.strip():
             return WeeklyReportResponse(

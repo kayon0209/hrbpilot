@@ -144,6 +144,7 @@ class PolicyQAOrchestrator:
                     sources=context_chunks,
                     metrics=self.config.eval_metrics,
                     tenant_id=tenant_id,
+                    scenario_id="policy_qa",
                 )
             )
             eval_task.add_done_callback(

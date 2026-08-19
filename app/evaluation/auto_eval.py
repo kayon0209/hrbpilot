@@ -68,40 +68,46 @@ class AutoEvaluator:
         sources: list[dict],
         metrics: list[str],
         tenant_id: str,
+        scenario_id: str,
     ) -> dict:
         """Run evaluation metrics on a pipeline result."""
         scores: dict = {}
 
         for metric in metrics:
+            score: float | None = None
             if metric == "citation_accuracy":
-                scores[metric] = await self._citation_accuracy(output, sources)
+                score = await self._citation_accuracy(output, sources)
             elif metric == "answer_relevance":
-                scores[metric] = await self._answer_relevance(output, query)
+                score = await self._answer_relevance(output, query)
             elif metric == "faithfulness":
-                scores[metric] = await self._faithfulness(output, sources)
+                score = await self._faithfulness(output, sources)
             elif metric in (
                 "extraction_completeness",
                 "topic_coverage",
                 "information_completeness",
                 "content_diversity",
             ):
-                scores[metric] = await self._generic_completeness(metric, output, sources, query)
+                score = await self._generic_completeness(metric, output, sources, query)
             else:
                 logger.warning("unknown_metric", metric=metric)
 
+            if score is None:
+                continue
+            scores[metric] = score
+
         for metric_name, score in scores.items():
             try:
-                await metrics_aggregator.record(tenant_id, "rag_pipeline", metric_name, score)
+                await metrics_aggregator.record(tenant_id, scenario_id, metric_name, score)
             except Exception as e:
                 logger.warning("metric_record_failed", metric=metric_name, error=str(e))
 
-        logger.info("evaluation_complete", scores=scores, tenant_id=tenant_id)
+        logger.info("evaluation_complete", scores=scores, tenant_id=tenant_id, scenario_id=scenario_id)
         return scores
 
-    async def _citation_accuracy(self, output: str, sources: list[dict]) -> float:
+    async def _citation_accuracy(self, output: str, sources: list[dict]) -> float | None:
         """Check if citations in output match actual sources via LLM judge."""
         if not sources:
-            return 0.0
+            return None
         source_text = "\n---\n".join(
             f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1)
         )
@@ -115,10 +121,10 @@ class AutoEvaluator:
         raw = await _llm_judge(prompt)
         if raw is None:
             logger.warning("citation_accuracy_eval_skipped")
-            return 0.0
-        return _parse_score(raw) or 0.0
+            return None
+        return _parse_score(raw)
 
-    async def _answer_relevance(self, output: str, query: str) -> float:
+    async def _answer_relevance(self, output: str, query: str) -> float | None:
         """Check if answer is relevant to the query via LLM judge."""
         prompt = (
             "评估以下回答与问题的相关性。\n\n"
@@ -130,13 +136,13 @@ class AutoEvaluator:
         raw = await _llm_judge(prompt)
         if raw is None:
             logger.warning("answer_relevance_eval_skipped")
-            return 0.0
-        return _parse_score(raw) or 0.0
+            return None
+        return _parse_score(raw)
 
-    async def _faithfulness(self, output: str, sources: list[dict]) -> float:
+    async def _faithfulness(self, output: str, sources: list[dict]) -> float | None:
         """Check if answer is faithful to sources (no hallucination) via LLM judge."""
         if not sources:
-            return 0.0
+            return None
         source_text = "\n---\n".join(
             f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1)
         )
@@ -150,12 +156,12 @@ class AutoEvaluator:
         raw = await _llm_judge(prompt)
         if raw is None:
             logger.warning("faithfulness_eval_skipped")
-            return 0.0
-        return _parse_score(raw) or 0.0
+            return None
+        return _parse_score(raw)
 
     async def _generic_completeness(
         self, metric_name: str, output: str, sources: list[dict], query: str
-    ) -> float:
+    ) -> float | None:
         """Generic completeness/diversity metric via LLM judge."""
         prompt = (
             f"评估以下回答在 '{metric_name}' 维度的质量。\n\n"
@@ -167,5 +173,5 @@ class AutoEvaluator:
         raw = await _llm_judge(prompt)
         if raw is None:
             logger.warning(f"{metric_name}_eval_skipped")
-            return 0.0
-        return _parse_score(raw) or 0.0
+            return None
+        return _parse_score(raw)

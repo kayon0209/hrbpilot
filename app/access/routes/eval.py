@@ -3,12 +3,13 @@
 GET  /api/eval/metrics           — all scenarios summary
 GET  /api/eval/metrics/{id}      — single scenario detail
 GET  /api/eval/metrics/{id}/trend — metric trend over N days
-POST /api/eval/feedback           — legacy alias removed; feedback lives under /api/policy-qa/feedback
 GET  /api/eval/golden/{id}        — golden dataset for scenario
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
+from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.tenant import require_tenant_id
 from app.evaluation.golden_dataset import GOLDEN_DATASETS
 from app.evaluation.metrics import metrics_aggregator
 from app.shared.logger import get_logger
@@ -19,34 +20,47 @@ router = APIRouter(prefix="/api/eval", tags=["evaluation"])
 
 
 @router.get("/metrics")
-async def get_all_metrics():
+@require_auth
+@require_role("hr_manager")
+async def get_all_metrics(request: Request):
     """Return aggregated metrics for all scenarios."""
-    return {"scenarios": await metrics_aggregator.get_all_scenarios_summary_async()}
+    tenant_id = require_tenant_id(request)
+    return {"scenarios": await metrics_aggregator.get_all_scenarios_summary_async(tenant_id)}
 
 
 @router.get("/metrics/{scenario_id}")
-async def get_scenario_metrics(scenario_id: str):
+@require_auth
+@require_role("hr_manager")
+async def get_scenario_metrics(scenario_id: str, request: Request):
     """Return detailed metrics for a single scenario."""
-    metrics = await metrics_aggregator.get_scenario_metrics_async(scenario_id)
+    tenant_id = require_tenant_id(request)
+    metrics = await metrics_aggregator.get_scenario_metrics_async(tenant_id, scenario_id)
     if not metrics:
         return {"scenario_id": scenario_id, "metrics": {}, "message": "No data yet"}
     return {"scenario_id": scenario_id, "metrics": metrics}
 
 
 @router.get("/metrics/{scenario_id}/trend")
+@require_auth
+@require_role("hr_manager")
 async def get_metric_trend(
     scenario_id: str,
+    request: Request,
     metric: str = Query(..., description="Metric name, e.g. citation_accuracy"),
     days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
 ):
     """Return trend data for a specific metric over the last N days."""
-    trend = await metrics_aggregator.get_trend_async(scenario_id, metric, window_days=days)
+    tenant_id = require_tenant_id(request)
+    trend = await metrics_aggregator.get_trend_async(tenant_id, scenario_id, metric, window_days=days)
     return {"scenario_id": scenario_id, "metric": metric, "days": days, "data": trend}
 
 
 @router.get("/golden/{scenario_id}")
-async def get_golden_dataset(scenario_id: str):
+@require_auth
+@require_role("hr_manager")
+async def get_golden_dataset(scenario_id: str, request: Request):
     """Return golden dataset samples for a scenario."""
+    require_tenant_id(request)
     samples = GOLDEN_DATASETS.get(scenario_id, [])
     return {
         "scenario_id": scenario_id,
