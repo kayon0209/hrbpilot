@@ -111,7 +111,7 @@ RAG 依赖四个外部服务：PostgreSQL、Milvus、MinIO（对象存储）、R
 docker compose up --build
 ```
 
-启动前必须在 `env.docker` 中填写至少 32 位的 `JWT_SECRET`、`EMBEDDING_API_KEY` 和 `LLM_API_KEY`；生产模式会拒绝默认 JWT 密钥。
+启动前请先复制 `env.docker.example` 为 `env.docker`，再填写至少 32 位的 `JWT_SECRET`、`EMBEDDING_API_KEY`、`LLM_API_KEY`、`MINIO_ACCESS_KEY` 和 `MINIO_SECRET_KEY`；生产模式会拒绝默认 JWT 密钥。
 
 启动顺序（`docker compose` 已用 healthcheck 编排）：PostgreSQL → 应用执行 `alembic upgrade head` 迁移 → Milvus / MinIO / Redis 就绪 → uvicorn + Celery ingestion worker。PostgreSQL 应用账号为非超级用户，确保 RLS 不会被连接账号绕过。
 

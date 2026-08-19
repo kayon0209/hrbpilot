@@ -15,11 +15,12 @@ logger = get_logger(__name__)
 
 # Common PII patterns (Chinese context)
 PII_PATTERNS = {
-    "phone": r"(?:手机|电话|tel)[:\s]*(\d{11})",
-    "id_card": r"身份证号[:\s]*\d{17}[\dXx]",
     "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-    "bank_card": r"\d{16,19}",  # Simplified
+    "phone": r"(?<!\d)1[3-9]\d{9}(?!\d)",
+    "id_card": r"(?<!\d)\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[0-9]|[12]\d|3[01])\d{3}[\dXx](?!\d)",
 }
+
+BANK_CARD_PATTERN = r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)"
 
 # Prompt injection patterns (English + Chinese)
 # Keep the set narrow to avoid blocking legitimate HR prompts that mention
@@ -94,7 +95,28 @@ class InputGuardrail:
                 detected_types.append(pii_type)
                 text = re.sub(pattern, f"[{pii_type}_已脱敏]", text, flags=re.IGNORECASE)
 
+        bank_matches = re.findall(BANK_CARD_PATTERN, text)
+        for match in bank_matches:
+            compact = re.sub(r"[ -]", "", match)
+            if self._luhn_valid(compact):
+                detected_types.append("bank_card")
+                text = text.replace(match, "[bank_card_已脱敏]")
+
         return text, detected_types
+
+    def _luhn_valid(self, digits: str) -> bool:
+        if not digits.isdigit() or len(digits) < 13 or len(digits) > 19:
+            return False
+        checksum = 0
+        reverse_digits = digits[::-1]
+        for idx, ch in enumerate(reverse_digits):
+            n = int(ch)
+            if idx % 2 == 1:
+                n *= 2
+                if n > 9:
+                    n -= 9
+            checksum += n
+        return checksum % 10 == 0
 
     def _detect_prompt_injection(self, text: str) -> bool:
         """Check for common prompt injection patterns."""
