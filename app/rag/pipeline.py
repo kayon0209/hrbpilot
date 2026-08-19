@@ -230,6 +230,7 @@ async def _write_audit_async(
     """Write audit log entry (fire-and-forget)."""
     try:
         from app.shared.audit import write_audit_log
+
         await write_audit_log(
             tenant_id=tenant_id,
             user_id=user_id,

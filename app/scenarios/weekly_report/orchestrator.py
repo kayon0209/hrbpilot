@@ -4,6 +4,7 @@ Orchestrates the weekly report generation flow:
   Multi-source Data Aggregation → LLM Generation → Format Adaptation → Draft Save/Publish
 """
 
+import json
 import time
 from datetime import datetime, timezone
 
@@ -119,6 +120,8 @@ class WeeklyReportOrchestrator:
             has_evidence=True,
         )
 
+        await self._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
+
         logger.info("weekly_report_generated", period=period, latency_ms=latency_ms)
         return result
 
@@ -128,11 +131,10 @@ class WeeklyReportOrchestrator:
         user_id: str,
         report: WeeklyReportResponse,
         source_data: list[dict],
-    ) -> None:
-        """Persist the weekly report to PostgreSQL."""
+    ) -> str:
+        """Persist the weekly report to PostgreSQL and return the database ID."""
         try:
             from app.data.database import get_session_factory
-            from app.data.models.infra import AsyncTask
             from app.data.models.scenarios import WeeklyReport
 
             factory = get_session_factory()
@@ -142,28 +144,15 @@ class WeeklyReportOrchestrator:
                     tenant_id=tenant_id,
                     period=report.period,
                     summary=report.summary,
-                    progress_json=report.model_dump_json(include={"progress"}),
-                    risks_json=report.model_dump_json(include={"risks"}),
-                    plan_json=report.model_dump_json(include={"plan"}),
-                    data_sources_json=report.model_dump_json(include={"data_sources"}),
+                    progress_json=json.dumps([item.model_dump() for item in report.progress], ensure_ascii=False),
+                    risks_json=json.dumps([item.model_dump() for item in report.risks], ensure_ascii=False),
+                    plan_json=json.dumps([item.model_dump() for item in report.plan], ensure_ascii=False),
+                    data_sources_json=json.dumps(source_data, ensure_ascii=False),
                 )
                 db.add(record)
-                task = AsyncTask(
-                    tenant_id=tenant_id,
-                    type="weekly_report",
-                    status="completed",
-                    progress=100,
-                    result_json=report.model_dump_json(),
-                    completed_at=datetime.now(timezone.utc),
-                )
-                db.add(task)
                 await db.commit()
+                await db.refresh(record)
+                return record.id
         except Exception as exc:
             logger.warning("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
-
-    def save_report(self, report_id: str, report: WeeklyReportResponse):
-        """Save a report to in-memory store."""
-        _report_store[report_id] = report
-
-    def get_report(self, report_id: str) -> WeeklyReportResponse | None:
-        return _report_store.get(report_id)
+            return ""

@@ -5,10 +5,9 @@ GET  /api/policy-qa/history → recent QA history
 POST /api/policy-qa/feedback → thumbs up/down feedback on a response
 """
 
-from __future__ import annotations
-
 import json
 import time
+from collections import deque
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -18,11 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
-from app.data.database import get_db, tenant_session
-from app.data.models.chat import ChatMessage, ChatSession
+from app.data.database import get_db
 from app.data.models.knowledge_base import KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
-from app.scenarios.policy_qa.schemas import CitationSource, QAResponse, SSEEvent
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 
@@ -32,6 +29,22 @@ router = APIRouter(prefix="/api/policy-qa", tags=["policy-qa"])
 
 orchestrator = PolicyQAOrchestrator()
 
+# In-memory QA history per user (process-scoped; not persisted across restarts).
+_HISTORY_MAX = 200
+_user_history: dict[str, deque] = {}
+
+
+def _record_history(user_id: str, question: str, answer: str, message_id: str) -> None:
+    history = _user_history.setdefault(user_id, deque(maxlen=_HISTORY_MAX))
+    history.appendleft(
+        {
+            "message_id": message_id,
+            "question": question,
+            "answer": answer,
+            "created_at": time.time(),
+        }
+    )
+
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
@@ -40,7 +53,7 @@ class AskRequest(BaseModel):
 
 
 class FeedbackBody(BaseModel):
-    message_id: str = Field(..., min_length=1, description="对应回答的数据库 message_id")
+    message_id: str = Field(..., min_length=1, description="对应回答的事件标识（done 事件返回的 message_id）")
     rating: str = Field(..., pattern="^(up|down)$")
     correction: str = ""
 
@@ -61,33 +74,6 @@ async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb
     return kb
 
 
-async def _get_or_create_chat_session(session: AsyncSession, tenant_id: str, user_id: str) -> ChatSession:
-    chat_session = ChatSession(tenant_id=tenant_id, user_id=user_id, scenario_id="policy_qa")
-    session.add(chat_session)
-    await session.flush()
-    return chat_session
-
-
-async def _add_message(
-    session: AsyncSession,
-    session_id: str,
-    role: str,
-    content: str,
-    confidence: float | None = None,
-    citations_json: str | None = None,
-) -> ChatMessage:
-    message = ChatMessage(
-        session_id=session_id,
-        role=role,
-        content=content,
-        confidence=confidence,
-        citations_json=citations_json,
-    )
-    session.add(message)
-    await session.flush()
-    return message
-
-
 @router.post("/ask")
 @require_auth
 async def ask_question(
@@ -99,14 +85,13 @@ async def ask_question(
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
-    await session.close()
 
     if body.stream:
         question_text = body.question
 
         async def event_stream():
             full_answer = ""
-            done_payload: dict[str, object] | None = None
+            message_id = ""
             try:
                 async for sse_data in orchestrator.execute_stream(
                     question=question_text,
@@ -114,63 +99,31 @@ async def ask_question(
                     user_id=user_id,
                     kb_id=kb.id,
                 ):
-                    event = None
+                    yield f"data: {sse_data}\n\n"
                     try:
                         event = json.loads(sse_data)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                    if isinstance(event, dict) and event.get("event") == "chunk":
-                        try:
+                        if event.get("event") == "chunk":
                             payload = json.loads(event.get("data", "{}"))
                             full_answer += payload.get("text", "")
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                        yield f"data: {sse_data}\n\n"
-                        continue
-
-                    if isinstance(event, dict) and event.get("event") == "done":
-                        try:
-                            done_payload = json.loads(event.get("data", "{}"))
-                        except (json.JSONDecodeError, TypeError):
-                            done_payload = {}
-                        continue
-
-                    yield f"data: {sse_data}\n\n"
-
-                if full_answer.strip():
-                    async with tenant_session(tenant_id) as db:
-                        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
-                        await _add_message(db, chat_session.id, "user", question_text)
-                        assistant_message = await _add_message(
-                            db,
-                            chat_session.id,
-                            "assistant",
-                            full_answer,
-                            confidence=float(done_payload.get("confidence", 0.0)) if done_payload else None,
-                        )
-                        await db.commit()
-                        message_id = assistant_message.id
-                else:
-                    message_id = None
-
-                final_payload = {
-                    "message_id": message_id,
-                    "confidence": done_payload.get("confidence", 0.0) if done_payload else 0.0,
-                    "has_evidence": done_payload.get("has_evidence", False) if done_payload else False,
-                    "latency_ms": done_payload.get("latency_ms", 0) if done_payload else 0,
-                    "guardrail_flags": done_payload.get("guardrail_flags", {}) if done_payload else {},
-                }
-                yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(final_payload, ensure_ascii=False)})}\n\n"
-            except Exception:
-                logger.exception("policy_qa_sse_error")
+                        elif event.get("event") == "done":
+                            payload = json.loads(event.get("data", "{}"))
+                            message_id = payload.get("message_id", "")
+                            if not message_id:
+                                message_id = f"msg_{user_id}_{int(time.time() * 1000)}"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except Exception as e:
+                logger.error("policy_qa_sse_error", error=str(e))
                 error_event = json.dumps(
                     {
                         "event": "error",
-                        "data": json.dumps({"message": "服务异常，请稍后重试"}),
+                        "data": json.dumps({"message": f"服务异常: {e!s}"}),
                     }
                 )
                 yield f"data: {error_event}\n\n"
+            finally:
+                if full_answer or message_id:
+                    _record_history(user_id, question_text, full_answer, message_id)
 
         return StreamingResponse(
             event_stream(),
@@ -181,29 +134,16 @@ async def ask_question(
                 "X-Accel-Buffering": "no",
             },
         )
-
-    result = await orchestrator.execute(
-        question=body.question,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        kb_id=kb.id,
-    )
-    async with tenant_session(tenant_id) as db:
-        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id)
-        await _add_message(db, chat_session.id, "user", body.question)
-        assistant_message = await _add_message(
-            db,
-            chat_session.id,
-            "assistant",
-            result.answer,
-            confidence=result.confidence,
+    else:
+        result = await orchestrator.execute(
+            question=body.question,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            kb_id=kb.id,
         )
-        await db.commit()
-        message_id = assistant_message.id
-
-    response = result.model_dump()
-    response["message_id"] = message_id
-    return response
+        message_id = f"msg_{user_id}_{int(time.time() * 1000)}"
+        _record_history(user_id, body.question, result.answer, message_id)
+        return result
 
 
 @router.get("/knowledge-bases")
@@ -239,66 +179,11 @@ async def list_policy_knowledge_bases(
 async def get_history(
     request: Request,
     limit: int = 20,
-    session: AsyncSession = Depends(get_db),
 ):
     """Get recent policy QA history for the current user."""
-    tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
-
-    session_rows = (
-        (
-            await session.execute(
-                select(ChatSession)
-                .where(
-                    ChatSession.tenant_id == tenant_id,
-                    ChatSession.user_id == user_id,
-                    ChatSession.scenario_id == "policy_qa",
-                )
-                .order_by(ChatSession.created_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    session_ids = [chat_session.id for chat_session in session_rows]
-    message_rows = []
-    if session_ids:
-        message_rows = (
-            (
-                await session.execute(
-                    select(ChatMessage)
-                    .where(ChatMessage.session_id.in_(session_ids))
-                    .order_by(ChatMessage.session_id.asc(), ChatMessage.created_at.asc())
-                )
-            )
-            .scalars()
-            .all()
-        )
-
-    messages_by_session: dict[str, list[ChatMessage]] = {session_id: [] for session_id in session_ids}
-    for message in message_rows:
-        messages_by_session.setdefault(message.session_id, []).append(message)
-
-    sessions = []
-    for chat_session in session_rows:
-        messages = messages_by_session.get(chat_session.id, [])
-        question = next((m.content for m in messages if m.role == "user"), "")
-        assistant_message = next((m for m in reversed(messages) if m.role == "assistant"), None)
-        answer = assistant_message.content if assistant_message else ""
-        sessions.append(
-            {
-                "session_id": chat_session.id,
-                "message_id": assistant_message.id if assistant_message else None,
-                "question": question,
-                "answer": answer,
-                "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
-                "updated_at": chat_session.updated_at.isoformat() if chat_session.updated_at else None,
-            }
-        )
-
-    return {"sessions": sessions, "total": len(sessions), "user_id": user_id}
+    history = list(_user_history.get(user_id, []))[:limit]
+    return {"sessions": history, "total": len(_user_history.get(user_id, [])), "user_id": user_id}
 
 
 @router.post("/feedback")
@@ -306,41 +191,7 @@ async def get_history(
 async def submit_feedback(
     request: Request,
     body: FeedbackBody,
-    session: AsyncSession = Depends(get_db),
 ):
     """Submit thumbs up/down feedback on a QA response."""
-    tenant_id = require_tenant_id(request)
-    user_id = getattr(request.state, "user_id", "unknown")
-
-    message_row = (
-        (
-            await session.execute(
-                select(ChatMessage)
-                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                .where(
-                    ChatMessage.id == body.message_id,
-                    ChatMessage.role == "assistant",
-                    ChatSession.tenant_id == tenant_id,
-                    ChatSession.user_id == user_id,
-                    ChatSession.scenario_id == "policy_qa",
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if not message_row:
-        raise NotFoundError("Message", body.message_id)
-
-    message_row.feedback_rating = body.rating
-    message_row.feedback_correction = body.correction or None
-    message_row.feedback_at = time.time()
-    await session.commit()
-
-    logger.info(
-        "feedback_received",
-        rating=body.rating,
-        message_id=body.message_id,
-        has_correction=bool(body.correction.strip()),
-    )
+    logger.info("feedback_received", rating=body.rating, message_id=body.message_id)
     return {"status": "received", "rating": body.rating, "message_id": body.message_id}

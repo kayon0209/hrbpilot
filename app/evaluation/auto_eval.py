@@ -91,7 +91,7 @@ class AutoEvaluator:
 
         for metric_name, score in scores.items():
             try:
-                await metrics_aggregator.record("rag_pipeline", metric_name, score)
+                await metrics_aggregator.record(tenant_id, "rag_pipeline", metric_name, score)
             except Exception as e:
                 logger.warning("metric_record_failed", metric=metric_name, error=str(e))
 

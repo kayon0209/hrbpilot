@@ -119,6 +119,13 @@ class VoiceInsightOrchestrator:
             has_evidence=True,
         )
 
+        await self._store_result(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            result=result,
+            raw_documents=documents,
+        )
+
         logger.info(
             "voice_insight_completed",
             clusters=len(clusters),
