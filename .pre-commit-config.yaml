@@ -1,0 +1,40 @@
+# Local guardrail so formatting drift never reaches CI.
+#
+# One-time setup after cloning:
+#
+#     pip install -e ".[dev]"
+#     pre-commit install
+#
+# From then on every `git commit` runs these hooks on staged files.
+# Run against the whole repo at any time with:
+#
+#     pre-commit run --all-files
+#
+# Bump pinned versions with `pre-commit autoupdate`.
+
+default_language_version:
+  python: python3.12
+
+repos:
+  # Ruff mirrors the CI checks in .github/workflows/ci.yml.
+  # Order matters: lint --fix first, then format, so formatting always wins.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Blocks committing a PEM/SSH private key. Cheap insurance for a public repo.
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      # docker-compose.yml and the workflow files are parsed here.
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
