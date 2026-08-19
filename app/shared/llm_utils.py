@@ -18,9 +18,9 @@ def extract_json_from_llm_output(output: str) -> dict:
     Returns an empty dict on parse failure.
     """
     # Try markdown-fenced JSON first (most structured output)
-    for match in _JSON_BLOCK_RE.finditer(output):
+    for m in _JSON_BLOCK_RE.finditer(output):
         try:
-            return dict(json.loads(match.group(1)))
+            return dict(json.loads(m.group(1)))
         except json.JSONDecodeError:
             continue
 

@@ -73,7 +73,7 @@ async def generate_content(body: GenerateContentRequest, request: Request):
 async def get_content(content_id: str, request: Request):
     """Get saved culture content."""
     tenant_id = require_tenant_id(request)
-    async with get_db(request) as session:  # type: ignore[arg-type]
+    async for session in get_db(request):
         row = (
             (
                 await session.execute(
@@ -92,7 +92,6 @@ async def get_content(content_id: str, request: Request):
         event_copy=row.event_copy,
         keywords_used=[],
         tone=row.tone,
-        confidence=1.0,
     )
 
 

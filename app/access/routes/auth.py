@@ -125,7 +125,7 @@ def _create_refresh_token(user_id: str, tenant_id: str) -> str:
 
 def _decode_jwt(token: str, expected_type: str) -> dict:
     try:
-        payload = jwt.decode(
+        payload: dict = jwt.decode(
             token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_JWT_AUDIENCE, issuer=_JWT_ISSUER
         )
     except Exception as exc:

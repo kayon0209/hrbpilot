@@ -120,6 +120,8 @@ class MetricsAggregator:
                         "latest": round(latest_map.get(row[0], float(row[1])), 4),
                     }
                 return result
+            # No DB session available — fall back to in-memory metrics.
+            return self.get_scenario_metrics(scenario_id)
         except Exception as e:
             logger.debug("metrics_db_unavailable_using_memory", error=str(e))
             return self.get_scenario_metrics(scenario_id)
@@ -148,6 +150,8 @@ class MetricsAggregator:
                         }
                     )
                 return results
+            # No DB session available — fall back to in-memory summary.
+            return self.get_all_scenarios_summary()
         except Exception as e:
             logger.debug("metrics_db_unavailable_using_memory", error=str(e))
             return self.get_all_scenarios_summary()
@@ -189,6 +193,8 @@ class MetricsAggregator:
                     {"timestamp": row[0].isoformat() if row[0] else None, "score": round(float(row[1]), 4)}
                     for row in rows
                 ]
+            # No DB session available — fall back to in-memory trend.
+            return self.get_trend(scenario_id, metric, window_days)
         except Exception as e:
             logger.debug("metrics_db_unavailable_using_memory", error=str(e))
             return self.get_trend(scenario_id, metric, window_days)

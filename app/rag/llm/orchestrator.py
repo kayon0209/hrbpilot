@@ -100,7 +100,8 @@ def _load_active_provider() -> str | None:
     if r is None:
         return None
     try:
-        return r.get(_REDIS_PROVIDER_KEY)
+        value = r.get(_REDIS_PROVIDER_KEY)
+        return value if isinstance(value, str) else None
     except Exception as e:
         logger.warning("redis_provider_load_failed", error=str(e))
         return None
@@ -216,7 +217,7 @@ def _build_system_prompt(prompt_template: str, context: list[dict]) -> str:
         from jinja2 import Template
 
         rendered = Template(prompt_template).render(context=context, query="", content=context_block)
-        return rendered.strip()
+        return str(rendered).strip()
     except Exception:
         system_prompt = prompt_template
         for_pattern = r"\{%\s*for\s+\w+\s+in\s+\w+\s*%\}.*?\{%\s*endfor\s*%\}"

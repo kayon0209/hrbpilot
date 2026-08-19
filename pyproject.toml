@@ -75,6 +75,7 @@ markers = [
 
 [tool.mypy]
 python_version = "3.12"
+plugins = ["pydantic.mypy"]
 # NOT using strict=true — the codebase is partially annotated.  We enable the
 # checks that catch real type-level bugs and leave pure annotation-discipline
 # checks (disallow_untyped_defs, disallow_any_generics) off until the remaining

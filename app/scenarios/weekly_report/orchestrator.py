@@ -51,8 +51,6 @@ class WeeklyReportOrchestrator:
             return WeeklyReportResponse(
                 period=period,
                 summary="未收到任何多源数据，无法生成周报",
-                confidence=0.0,
-                has_evidence=False,
             )
 
         kb_context = []
@@ -115,8 +113,6 @@ class WeeklyReportOrchestrator:
             risks=risks,
             plan=plan,
             data_sources=parsed.get("data_sources", []),
-            confidence=0.75 if parsed else 0.3,
-            has_evidence=True,
         )
 
         await self._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)

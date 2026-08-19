@@ -73,7 +73,7 @@ async def generate_report(
 async def save_report(body: SaveRequest, request: Request):
     """Save or publish a weekly report."""
     tenant_id = require_tenant_id(request)
-    async with get_db(request) as session:  # type: ignore[arg-type]
+    async for session in get_db(request):
         row = (
             (
                 await session.execute(

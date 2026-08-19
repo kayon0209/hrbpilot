@@ -43,7 +43,7 @@ def _record_in_memory(tenant_id: str, month_key: str, tokens: int, model: str) -
         entry = _monthly_usage[_usage_key(tenant_id, month_key)]
         entry["total"] += tokens
         entry["by_model"][model] += tokens
-        return entry["total"]
+        return int(entry["total"])
 
 
 async def record_token_usage(
@@ -122,15 +122,15 @@ async def get_monthly_usage(tenant_id: str | None = None) -> dict:
                 total = 0
                 by_model: dict[str, int] = {}
                 async for meta_key in redis.scan_iter(match=f"token_usage:*:{month_key}:meta"):
-                    scan_total = await redis.hget(meta_key, "total")
+                    scan_total = await redis.hget(meta_key, "total")  # type: ignore[misc]
                     total += int(scan_total or 0)
                     model_key = meta_key.replace(":meta", ":by_model")
-                    model_counts = await redis.hgetall(model_key)
+                    model_counts = await redis.hgetall(model_key)  # type: ignore[misc]
                     for m, c in model_counts.items():
                         by_model[m] = by_model.get(m, 0) + int(c)
                 return {"month": month_key, "total_tokens": total, "by_model": by_model}
-            total = await redis.hget(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total")
-            model_counts = await redis.hgetall(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model")
+            total = await redis.hget(f"token_usage:{_usage_key(tenant_id, month_key)}:meta", "total")  # type: ignore[misc]
+            model_counts = await redis.hgetall(f"token_usage:{_usage_key(tenant_id, month_key)}:by_model")  # type: ignore[misc]
             return {
                 "month": month_key,
                 "total_tokens": int(total or 0),
