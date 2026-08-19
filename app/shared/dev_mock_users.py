@@ -19,7 +19,7 @@ class MockUser:
     name: str
     role: str
     tenant_id: str
-    hashed_password: str  # bcrypt-style hash
+    hashed_password: str  # dev-only unsalted SHA256 hash
 
 
 def _hash_password(password: str) -> str:

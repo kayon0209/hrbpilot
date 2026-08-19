@@ -112,7 +112,6 @@ class CultureContentOrchestrator:
             event_copy=parsed.get("event_copy", ""),
             keywords_used=parsed.get("keywords_used", keywords),
             tone=parsed.get("tone", tone),
-            confidence=0.8 if parsed else 0.3,
         )
 
         latency_ms = int((time.time() - start_time) * 1000)
@@ -148,8 +147,8 @@ class CultureContentOrchestrator:
                 await db.refresh(record)
                 return record.id
         except Exception as exc:
-            logger.warning("culture_content_persist_failed", error=str(exc), user_id=user_id)
-            return ""
+            logger.error("culture_content_persist_failed", error=str(exc), user_id=user_id)
+            raise
 
     def save_content(self, content_id: str, content: CultureContentResponse):
         """Save content to in-memory store."""

@@ -38,13 +38,6 @@ def _bounded_score(value: object) -> float:
 
 
 # Shared pipeline instance (DI-managed later)
-_pipeline = CapabilityPipeline(
-    input_guard=InputGuardrail(),
-    retriever=Retriever(),
-    llm_generator=LLMOrchestrator(),
-    output_guard=OutputGuardrail(),
-    evaluator=AutoEvaluator(),
-)
 
 
 class PolicyQAOrchestrator:
@@ -144,7 +137,7 @@ class PolicyQAOrchestrator:
         # 8. Async evaluation
         if self.config.eval_metrics:
             evaluator = AutoEvaluator()
-            asyncio.create_task(  # noqa: RUF006
+            eval_task = asyncio.create_task(
                 evaluator.evaluate(
                     output=final_output,
                     query=guarded_input,
@@ -152,6 +145,14 @@ class PolicyQAOrchestrator:
                     metrics=self.config.eval_metrics,
                     tenant_id=tenant_id,
                 )
+            )
+            eval_task.add_done_callback(
+                lambda task: logger.error(
+                    "policy_qa_eval_task_failed",
+                    error=str(task.exception()),
+                )
+                if not task.cancelled() and task.exception() is not None
+                else None
             )
 
         return QAResponse(

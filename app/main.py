@@ -14,6 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from app.access.middleware.auth import AuthMiddleware
 from app.access.middleware.cors import add_cors_middleware
 from app.access.middleware.rbac import RBACMiddleware
+from app.access.middleware.rate_limit import RateLimitMiddleware
 from app.access.middleware.request_id import RequestIDMiddleware
 from app.access.middleware.security_headers import SecurityHeadersMiddleware
 from app.access.middleware.tenant import TenantContextMiddleware
@@ -28,7 +29,6 @@ from app.access.routes.settings import router as settings_router
 from app.access.routes.voice_insight import router as voice_router
 from app.access.routes.weekly_report import router as weekly_router
 from app.config.settings import settings
-from app.evaluation.feedback import router as eval_router
 from app.shared.error_handler import app_error_handler, unhandled_error_handler
 from app.shared.errors import AppError
 from app.shared.logger import get_logger, setup_logging
@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
 
     # --- Middleware (order: SecurityHeaders → RequestID → CORS → Tenant → Auth → RBAC → Handler) ---
     app.add_middleware(RBACMiddleware)       # innermost
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(TenantContextMiddleware)
     add_cors_middleware(app)
@@ -96,7 +97,6 @@ def create_app() -> FastAPI:
     app.include_router(culture_router)
     app.include_router(kb_router)
     app.include_router(settings_router)
-    app.include_router(eval_router)
     app.include_router(eval_metrics_router)
 
     logger.info("app_created", app=settings.app_name, env=settings.app_env)

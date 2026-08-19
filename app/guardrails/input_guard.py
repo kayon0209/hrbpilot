@@ -22,25 +22,25 @@ PII_PATTERNS = {
 }
 
 # Prompt injection patterns (English + Chinese)
+# Keep the set narrow to avoid blocking legitimate HR prompts that mention
+# "提示词" or "角色扮演" in a harmless instructional context.
 INJECTION_PATTERNS = [
-    # English
-    r"ignore\s+(previous|above|all)\s+(instructions|rules|constraints)",
-    r"(forget|disregard)\s+(everything|all|what)",
-    r"you\s+are\s+(now|actually)\s+",
-    r"system\s*prompt",
-    r"output\s+your\s+(instructions|rules|system)",
-    r"pretend\s+(you\s+are|to\s+be)",
-    # 中文注入 / 角色扮演 / 系统提示词提取
-    r"假装\s*(你\s*是|成|扮演)",
-    r"扮演\s*(一个|一名|ceo|老板|管理员|超级|ai|助手|角色)",
-    r"角色扮演",
-    r"系统提示词|提示词",
-    r"忽略\s*(以上|上面|之前|所有|先前)?\s*(的)?\s*(指令|规则|要求|约束|设定)",
-    r"忘记\s*(以上|上面|之前|所有|先前)?\s*(的)?\s*(指令|规则|要求|约束)",
-    r"忘掉\s*(以上|上面|之前|所有|先前)?\s*(的)?\s*(指令|规则|要求|约束)",
-    r"不受\s*(任何)?\s*限制",
-    r"无限制\s*(的)?\s*ai|越狱|jailbreak",
-    r"作为\s*(一个)?\s*(不受约束|无限制)\s*的?\s*ai",
+    # English instruction hijacking
+    r"ignore\s+(?:all\s+)?(?:previous|above|earlier)\s+(?:instructions?|rules?|constraints?|prompts?)",
+    r"(forget|disregard|override|bypass)\s+(?:all\s+)?(?:previous|above|earlier|the)\s+(?:instructions?|rules?|constraints?|prompts?)",
+    r"you\s+are\s+now\s+(?:going\s+to\s+)?(?:act\s+as|behave\s+as|become)\s+",
+    r"system\s+message\s*[:：]",
+    r"system\s+prompt\s*[:：]",
+    r"developer\s+message\s*[:：]",
+    r"reveal\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)",
+    r"print\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)",
+    # Chinese instruction hijacking
+    r"忽略\s*(?:以上|上面|之前|前面|所有|全部)?\s*(?:的)?\s*(?:指令|规则|要求|约束|提示|提示词)",
+    r"无视\s*(?:以上|上面|之前|前面|所有|全部)?\s*(?:的)?\s*(?:指令|规则|要求|约束|提示|提示词)",
+    r"覆盖\s*(?:以上|上面|之前|前面|所有|全部)?\s*(?:的)?\s*(?:指令|规则|要求|约束)",
+    r"你现在是(?:一个)?\s*(?:不受限制|无限制)的?\s*(?:ai|助手|系统)",
+    r"作为(?:一个)?\s*(?:不受限制|无限制)的?\s*(?:ai|助手|系统)",
+    r"输出\s*(?:你的)?\s*(?:系统|开发者)?\s*(?:提示词|提示|规则|指令)",
 ]
 
 

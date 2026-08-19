@@ -158,13 +158,17 @@ async def get_report(report_id: str, request: Request, session: AsyncSession = D
         except Exception:
             return []
 
+    progress_items = [ProgressItem.model_validate(item) for item in _loads(row.progress_json)]
+    risk_items = [RiskItem.model_validate(item) for item in _loads(row.risks_json)]
+    plan_items = [PlanItem.model_validate(item) for item in _loads(row.plan_json)]
+
+    # Historical records do not persist calibrated confidence or evidence flags.
+    # Return the factual shape instead of fabricating certainty.
     return WeeklyReportResponse(
         period=row.period,
         summary=row.summary,
-        progress=[ProgressItem.model_validate(item) for item in _loads(row.progress_json)],
-        risks=[RiskItem.model_validate(item) for item in _loads(row.risks_json)],
-        plan=[PlanItem.model_validate(item) for item in _loads(row.plan_json)],
+        progress=progress_items,
+        risks=risk_items,
+        plan=plan_items,
         data_sources=_loads(row.data_sources_json),
-        confidence=1.0,
-        has_evidence=True,
     )

@@ -95,7 +95,10 @@ class Settings(BaseSettings):
     # --- Guardrails ---
     guardrail_pii_detection_enabled: bool = True
     guardrail_prompt_injection_enabled: bool = True
-    guardrail_factuality_check_enabled: bool = True
+    # Factuality verification is currently a conservative heuristic rather than
+    # a dedicated NLI/LLM verifier, so keep the flag explicit instead of claiming
+    # deep factual validation.
+    guardrail_factuality_check_enabled: bool = False
     guardrail_toxicity_detection_enabled: bool = True
     guardrail_confidence_threshold: float = 0.65
 

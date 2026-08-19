@@ -123,6 +123,8 @@ async def get_content(content_id: str, request: Request, session: AsyncSession =
     )
     if not row:
         raise NotFoundError("Content", content_id)
+    # Historical records do not persist calibrated confidence.
+    # Return the honest stored content shape rather than inventing certainty.
     return CultureContentResponse(
         news_article=row.news_article,
         group_notice=row.group_notice,
@@ -130,5 +132,4 @@ async def get_content(content_id: str, request: Request, session: AsyncSession =
         event_copy=row.event_copy,
         keywords_used=[],
         tone=row.tone,
-        confidence=1.0,
     )

@@ -8,6 +8,7 @@ POST /api/policy-qa/feedback → thumbs up/down feedback on a response
 from __future__ import annotations
 
 import json
+import time
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -270,22 +271,31 @@ async def get_history(
         .all()
     )
 
-    sessions = []
-    for chat_session in session_rows:
-        messages = (
+    session_ids = [chat_session.id for chat_session in session_rows]
+    message_rows = []
+    if session_ids:
+        message_rows = (
             (
                 await session.execute(
                     select(ChatMessage)
-                    .where(ChatMessage.session_id == chat_session.id)
-                    .order_by(ChatMessage.created_at.asc())
+                    .where(ChatMessage.session_id.in_(session_ids))
+                    .order_by(ChatMessage.session_id.asc(), ChatMessage.created_at.asc())
                 )
             )
             .scalars()
             .all()
         )
+
+    messages_by_session: dict[str, list[ChatMessage]] = {session_id: [] for session_id in session_ids}
+    for message in message_rows:
+        messages_by_session.setdefault(message.session_id, []).append(message)
+
+    sessions = []
+    for chat_session in session_rows:
+        messages = messages_by_session.get(chat_session.id, [])
         question = next((m.content for m in messages if m.role == "user"), "")
-        answer = next((m.content for m in reversed(messages) if m.role == "assistant"), "")
         assistant_message = next((m for m in reversed(messages) if m.role == "assistant"), None)
+        answer = assistant_message.content if assistant_message else ""
         sessions.append(
             {
                 "session_id": chat_session.id,
@@ -332,7 +342,13 @@ async def submit_feedback(
 
     message_row.feedback_rating = body.rating
     message_row.feedback_correction = body.correction or None
+    message_row.feedback_at = time.time()
     await session.commit()
 
-    logger.info("feedback_received", rating=body.rating, message_id=body.message_id)
+    logger.info(
+        "feedback_received",
+        rating=body.rating,
+        message_id=body.message_id,
+        has_correction=bool(body.correction.strip()),
+    )
     return {"status": "received", "rating": body.rating, "message_id": body.message_id}

@@ -50,8 +50,14 @@ class MetricsAggregator:
                     )
                 )
                 await db.commit()
-        except Exception as e:
-            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+        except Exception as exc:
+            logger.warning(
+                "metrics_db_fallback_to_memory",
+                error=str(exc),
+                tenant_id=tenant_id,
+                scenario_id=scenario_id,
+                metric=metric,
+            )
 
     def get_scenario_metrics(self, scenario_id: str) -> dict:
         """Return aggregated metrics for a single scenario (in-memory)."""
@@ -128,8 +134,13 @@ class MetricsAggregator:
                         "latest": round(latest_map.get(row[0], float(row[1])), 4),
                     }
                 return result
-        except Exception as e:
-            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+        except Exception as exc:
+            logger.warning(
+                "metrics_db_fallback_to_memory",
+                error=str(exc),
+                scenario_id=scenario_id,
+                source="async_query",
+            )
             return self.get_scenario_metrics(scenario_id)
 
     async def get_all_scenarios_summary_async(self) -> list[dict]:
@@ -169,8 +180,12 @@ class MetricsAggregator:
                         "total_entries": int(count_rows or 0),
                     })
                 return results
-        except Exception as e:
-            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+        except Exception as exc:
+            logger.warning(
+                "metrics_db_fallback_to_memory",
+                error=str(exc),
+                source="async_summary",
+            )
             return self.get_all_scenarios_summary()
 
     def get_all_scenarios_summary(self) -> list[dict]:
@@ -217,8 +232,14 @@ class MetricsAggregator:
                     {"timestamp": row[0].isoformat() if row[0] else None, "score": round(float(row[1]), 4)}
                     for row in rows
                 ]
-        except Exception as e:
-            logger.debug("metrics_db_unavailable_using_memory", error=str(e))
+        except Exception as exc:
+            logger.warning(
+                "metrics_db_fallback_to_memory",
+                error=str(exc),
+                scenario_id=scenario_id,
+                metric=metric,
+                source="async_trend",
+            )
             return self.get_trend(scenario_id, metric, window_days)
 
     def get_trend(

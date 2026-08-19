@@ -3,7 +3,7 @@
 GET  /api/eval/metrics           — all scenarios summary
 GET  /api/eval/metrics/{id}      — single scenario detail
 GET  /api/eval/metrics/{id}/trend — metric trend over N days
-POST /api/eval/feedback           — human feedback (handled by feedback.py)
+POST /api/eval/feedback           — legacy alias removed; feedback lives under /api/policy-qa/feedback
 GET  /api/eval/golden/{id}        — golden dataset for scenario
 """
 

@@ -116,8 +116,6 @@ class WeeklyReportOrchestrator:
             risks=risks,
             plan=plan,
             data_sources=parsed.get("data_sources", []),
-            confidence=0.75 if parsed else 0.3,
-            has_evidence=True,
         )
 
         logger.info("weekly_report_generated", period=period, latency_ms=latency_ms)
@@ -152,5 +150,5 @@ class WeeklyReportOrchestrator:
                 await db.refresh(record)
                 return record.id
         except Exception as exc:
-            logger.warning("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
-            return ""
+            logger.error("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
+            raise

@@ -147,12 +147,29 @@ class OutputGuardrail:
         return bool(sources)  # Only flag if we had sources but found no overlap
 
     def _check_factuality(self, output: str, sources: list[dict]) -> bool:
-        """Placeholder factuality check.
+        """Best-effort factuality check.
 
-        Production should use an LLM-based factuality verifier
-        or a dedicated NLI model.
+        The implementation stays conservative: it only flags when the output
+        directly repeats a claim that is not supported by any retrieved source.
+        This keeps the guardrail honest without pretending to do deep fact
+        verification that the stack does not yet provide.
         """
-        # Currently a no-op placeholder. Returns False (no issues found)
-        # to avoid false positives in MVP.
-        _ = output, sources
-        return False
+        if not sources:
+            return False
+
+        output_words = set(tokenize(output.lower()).split())
+        if not output_words:
+            return False
+
+        for source in sources:
+            snippet = source.get("content", "")
+            if not snippet:
+                continue
+            source_words = set(tokenize(snippet.lower()).split())
+            if not source_words:
+                continue
+            overlap = output_words & source_words
+            if len(overlap) >= 4:
+                return False
+
+        return True
