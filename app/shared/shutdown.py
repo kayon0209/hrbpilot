@@ -7,6 +7,7 @@ complete in-flight requests → close DB connections → exit.
 import asyncio
 import signal
 
+from app.rag.pipeline import get_background_tasks
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,39 +32,21 @@ async def shutdown(
     signal_name: str,
     timeout: float = 30.0,
 ) -> None:
-    """Handle graceful shutdown.
-
-    1. Signal shutdown mode → health check returns unhealthy
-    2. Wait for in-flight requests to complete (up to timeout)
-    3. Close database connections
-    4. Exit
-    """
+    """Handle graceful shutdown."""
     global _shutting_down
     _shutting_down = True
 
-    logger.info(
-        "graceful_shutdown_started",
-        signal=signal_name,
-        inflight_count=len(_inflight_requests),
-    )
+    logger.info("graceful_shutdown_started", signal=signal_name, inflight_count=len(_inflight_requests))
 
-    # Wait for in-flight requests
-    if _inflight_requests:
+    tasks = set(_inflight_requests) | set(get_background_tasks())
+    if tasks:
         try:
-            _done, pending = await asyncio.wait(
-                _inflight_requests,
-                timeout=timeout,
-            )
+            _done, pending = await asyncio.wait(tasks, timeout=timeout)
             if pending:
-                logger.warning(
-                    "shutdown_timeout",
-                    pending_count=len(pending),
-                    message="Some requests did not complete in time",
-                )
+                logger.warning("shutdown_timeout", pending_count=len(pending), message="Some requests did not complete in time")
         except Exception as e:
             logger.error("shutdown_wait_error", error=str(e))
 
-    # Close database connections
     try:
         from app.data.database import get_engine
         engine = get_engine()
@@ -72,24 +55,16 @@ async def shutdown(
     except Exception as e:
         logger.error("database_close_error", error=str(e))
 
-    logger.info("graceful_shutdown_complete", inflight_remaining=len(_inflight_requests))
+    logger.info("graceful_shutdown_complete", inflight_remaining=len(_inflight_requests), background_tasks=len(get_background_tasks()))
 
 
 def register_shutdown_handlers(timeout: float = 30.0) -> None:
-    """Register OS signal handlers for graceful shutdown.
-
-    Call this in the application startup (or use uvicorn's built-in
-    shutdown handler via the lifespan pattern).
-    """
+    """Register OS signal handlers for graceful shutdown."""
     loop = asyncio.get_event_loop()
 
     for sig_name in ("SIGTERM", "SIGINT"):
         try:
             sig = getattr(signal, sig_name)
-            loop.add_signal_handler(
-                sig,
-                lambda name=sig_name: asyncio.create_task(shutdown(name, timeout)),  # type: ignore[misc]
-            )
+            loop.add_signal_handler(sig, lambda name=sig_name: asyncio.create_task(shutdown(name, timeout)))  # type: ignore[misc]
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler
             logger.info("signal_handler_skipped", signal=sig_name, reason="not_supported_on_windows")

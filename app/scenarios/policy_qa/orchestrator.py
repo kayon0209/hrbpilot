@@ -8,7 +8,6 @@ This is the per-scenario entry point that coordinates the pipeline.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -29,15 +28,6 @@ from app.shared.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _bounded_score(value: object) -> float:
-    if not isinstance(value, (int, float, str)):
-        return 0.0
-    try:
-        return min(1.0, max(0.0, float(value)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
 class PolicyQAOrchestrator:
     def __init__(self, config: ScenarioConfig | None = None):
         self.config = config or load_scenario_config("policy_qa")
@@ -51,7 +41,7 @@ class PolicyQAOrchestrator:
         rewritten_query = await rewrite_query(question, self.config)
         logger.info("policy_qa_query_rewritten", original=question, rewritten=rewritten_query)
 
-        guarded_input: str = rewritten_query
+        guarded_input = rewritten_query
         input_flags: dict[str, object] = {}
         if self.config.guardrail_rules.input:
             guarded_input, input_flags = await self.input_guard.check(rewritten_query, self.config.guardrail_rules.input)
@@ -71,12 +61,8 @@ class PolicyQAOrchestrator:
             guarded_output, output_flags = await self.output_guard.check(raw_output, self.config.guardrail_rules.output, sources=context_chunks)
 
         final_output = await no_evidence_fallback(guarded_output, self.config, context_chunks)
-
-        confidence = 0.0
-        if context_chunks:
-            confidence = max(_bounded_score(chunk.get("confidence", 0.0)) for chunk in context_chunks)
-
-        citations = [CitationSource(document_name=s.get("source", "unknown"), section=s.get("section", "unknown"), content_snippet=s.get("content", "")[:200], confidence=_bounded_score(s.get("confidence", 0.0))) for s in context_chunks[:3]]
+        confidence = max((float(chunk.get("confidence", 0.0) or 0.0) for chunk in context_chunks), default=0.0)
+        citations = [CitationSource(document_name=s.get("source", "unknown"), section=s.get("section", "unknown"), content_snippet=s.get("content", "")[:200], confidence=min(1.0, max(0.0, float(s.get("confidence", 0.0) or 0.0)))) for s in context_chunks[:3]]
         latency_ms = int((time.time() - start_time) * 1000)
 
         if self.config.eval_metrics:
@@ -101,11 +87,11 @@ class PolicyQAOrchestrator:
         if target_kb_id:
             context_chunks = await self.retriever.retrieve(query=rewritten_query, kb_id=target_kb_id, strategy=self.config.retrieval_strategy, top_k=self.config.retrieval_top_k, rerank=self.config.rerank_enabled, tenant_id=tenant_id)
 
-        sources_data = [{"document_name": s.get("source", "unknown"), "section": s.get("section", "unknown"), "content_snippet": s.get("content", "")[:200], "confidence": _bounded_score(s.get("confidence", 0.0))} for s in context_chunks[:3]]
+        sources_data = [{"document_name": s.get("source", "unknown"), "section": s.get("section", "unknown"), "content_snippet": s.get("content", "")[:200], "confidence": min(1.0, max(0.0, float(s.get("confidence", 0.0) or 0.0)))} for s in context_chunks[:3]]
         yield json.dumps({"event": "sources", "data": json.dumps(sources_data)})
 
         full_output = ""
-        tokens_used: int | None = None
+        output_tokens: int | None = None
         output_flags: dict[str, object] = {}
         try:
             async for chunk_text in self.llm.generate_stream(prompt_template=self.config.prompt_template, context=context_chunks, query=rewritten_query, max_tokens=self.config.max_tokens, temperature=self.config.temperature):
@@ -113,13 +99,14 @@ class PolicyQAOrchestrator:
                 yield json.dumps({"event": "chunk", "data": json.dumps({"text": chunk_text})})
             if self.config.guardrail_rules.output:
                 full_output, output_flags = await self.output_guard.check(full_output, self.config.guardrail_rules.output, sources=context_chunks)
+            output_tokens = len(full_output.split())
         except Exception:
             logger.exception("policy_qa_stream_error")
             yield json.dumps({"event": "error", "data": json.dumps({"message": "服务异常，请稍后重试", "code": "INTERNAL_ERROR", "request_id": "unknown"})})
             return
 
         final_output = await no_evidence_fallback(full_output, self.config, context_chunks)
-        confidence = max((_bounded_score(chunk.get("confidence", 0.0)) for chunk in context_chunks), default=0.0)
+        confidence = max((float(chunk.get("confidence", 0.0) or 0.0) for chunk in context_chunks), default=0.0)
         latency_ms = int((time.time() - start_time) * 1000)
         message_id = f"msg_{user_id}_{int(start_time * 1000)}"
 
@@ -127,4 +114,4 @@ class PolicyQAOrchestrator:
             evaluator = AutoEvaluator()
             _schedule_background_task(evaluator.evaluate(output=final_output, query=rewritten_query, sources=context_chunks, metrics=self.config.eval_metrics, tenant_id=tenant_id, scenario_id="policy_qa"), name="policy_qa_stream_eval_task")
 
-        yield json.dumps({"event": "done", "data": json.dumps({"message_id": message_id, "confidence": confidence, "has_evidence": confidence >= settings.guardrail_confidence_threshold, "latency_ms": latency_ms, "guardrail_flags": {"output": output_flags}, "tokens_used": tokens_used})})
+        yield json.dumps({"event": "done", "data": json.dumps({"message_id": message_id, "confidence": confidence, "has_evidence": confidence >= settings.guardrail_confidence_threshold, "latency_ms": latency_ms, "guardrail_flags": {"input": {}, "output": output_flags}, "tokens_used": output_tokens})})

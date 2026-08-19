@@ -33,19 +33,14 @@ from app.config.settings import settings
 from app.shared.error_handler import app_error_handler, unhandled_error_handler
 from app.shared.errors import AppError
 from app.shared.logger import get_logger, setup_logging
+from app.shared.shutdown import shutdown
 
 logger = get_logger(__name__)
 
-# Initialize structured logging before anything else
 setup_logging()
 
 
 async def _ensure_infrastructure() -> None:
-    """Best-effort startup check: ensure Milvus collection + MinIO bucket exist.
-
-    Failures are logged, not fatal — the store layers lazily (re)ensure on first
-    use, so a briefly-unavailable Milvus/MinIO does not crash the app.
-    """
     try:
         from app.rag.storage.milvus import MilvusStore
 
@@ -63,7 +58,10 @@ async def _ensure_infrastructure() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _ensure_infrastructure()
-    yield
+    try:
+        yield
+    finally:
+        await shutdown("lifespan", timeout=30.0)
 
 
 def create_app() -> FastAPI:
@@ -76,13 +74,13 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.app_debug else None,
     )
 
-    app.add_middleware(RBACMiddleware)
-    app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(AuthMiddleware)
-    app.add_middleware(TenantContextMiddleware)
-    add_cors_middleware(app)
-    app.add_middleware(RequestIDMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestIDMiddleware)
+    add_cors_middleware(app)
+    app.add_middleware(TenantContextMiddleware)
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RBACMiddleware)
 
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
@@ -100,12 +98,10 @@ def create_app() -> FastAPI:
     app.include_router(eval_metrics_router)
 
     logger.info("app_created", app=settings.app_name, env=settings.app_env)
-
     return app
 
 
 async def _validation_error_handler(request, exc: RequestValidationError) -> JSONResponse:
-    """Map FastAPI's built-in validation errors to our AppError format."""
     request_id = getattr(request.state, "request_id", "unknown")
     errors = [
         {

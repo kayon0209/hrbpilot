@@ -16,6 +16,10 @@ logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[Any]] = set()
 
 
+def get_background_tasks() -> set[asyncio.Task[Any]]:
+    return _background_tasks
+
+
 def _schedule_background_task(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
     task: asyncio.Task[Any] = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)

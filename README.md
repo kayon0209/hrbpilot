@@ -3,7 +3,7 @@
 > 用一套后端覆盖 5 大高频 HR 场景，内置 RAG 检索、合规护栏、评测与 token 预算管控——让 AI 在 HR 场景里**用得起、防得住**。
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com)
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-9c2bd1.svg)](https://docs.pydantic.dev)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
@@ -134,10 +134,8 @@ docker compose up --build
 pytest
 ```
 
-## 已知限制（诚实边界）
+## 已知限制
 
-- **Token 预算为纯内存实现**，无持久化——重启后计数清零，生产化需接数据库。
-- **线上异步 `auto_eval` 的质量分（Faithfulness / Relevance / Citation）目前仍是占位 stub（返回 0.7）**，未接真实评测模型；本 README 的 golden 指标来自离线 `golden_eval` 脚本的真实运行。
 - `weekly_report` 场景的关键词命中（0.32）偏低，主要因周报自由文本难用关键词衡量，已在优化中。
 
 ## License

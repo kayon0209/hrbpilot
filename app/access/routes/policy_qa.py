@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 from fastapi import APIRouter, Depends, Request
@@ -76,6 +77,15 @@ async def _add_message(session: AsyncSession, session_id: str, role: str, conten
     return message
 
 
+async def _save_history_async(tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None) -> str | None:
+    async with tenant_session(tenant_id) as db:
+        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id, session_id)
+        await _add_message(db, chat_session.id, "user", question)
+        assistant_message = await _add_message(db, chat_session.id, "assistant", result.answer, confidence=result.confidence)
+        await db.commit()
+        return assistant_message.id
+
+
 @router.post("/ask")
 @require_auth
 async def ask_question(body: AskRequest, request: Request, session: AsyncSession = Depends(get_db)):
@@ -84,15 +94,51 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
     await session.close()
 
-    result = await orchestrator.execute(body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id)
-    chat_session_id = body.session_id
-    async with tenant_session(tenant_id) as db:
-        chat_session = await _get_or_create_chat_session(db, tenant_id, user_id, chat_session_id)
-        await _add_message(db, chat_session.id, "user", body.question)
-        assistant_message = await _add_message(db, chat_session.id, "assistant", result.answer, confidence=result.confidence)
-        await db.commit()
+    if body.stream:
+        async def event_stream():
+            try:
+                start = time.time()
+                async for raw_event in orchestrator.execute_stream(body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id):
+                    event = json.loads(raw_event)
+                    if event.get("event") == "done":
+                        try:
+                            done_payload = json.loads(event.get("data", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            done_payload = {}
+                        qa_result = QAResponse(
+                            answer="",
+                            citations=[],
+                            confidence=float(done_payload.get("confidence", 0.0) or 0.0),
+                            has_evidence=bool(done_payload.get("has_evidence", False)),
+                            guardrail_flags=done_payload.get("guardrail_flags", {}),
+                            latency_ms=int(done_payload.get("latency_ms", 0) or 0),
+                            tokens_used=done_payload.get("tokens_used"),
+                        )
+                        message_id = await _save_history_async(tenant_id, user_id, body.question, qa_result, body.session_id)
+                        done_payload["message_id"] = message_id
+                        done_payload["latency_ms"] = int((time.time() - start) * 1000)
+                        yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(done_payload, ensure_ascii=False)})}\n\n"
+                        continue
+                    if event.get("event") == "error":
+                        yield f"data: {raw_event}\n\n"
+                        continue
+                    yield f"data: {raw_event}\n\n"
+            except Exception:
+                logger.exception("policy_qa_sse_error")
+                yield f"data: {json.dumps({'event': 'error', 'data': json.dumps({'message': '服务异常，请稍后重试'})})}\n\n"
 
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    result = await orchestrator.execute(body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id)
+    message_id = await _save_history_async(tenant_id, user_id, body.question, result, body.session_id)
     response = result.model_dump()
-    response["message_id"] = assistant_message.id
-    response["session_id"] = chat_session.id
+    response["message_id"] = message_id
     return response
