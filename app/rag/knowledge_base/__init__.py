@@ -15,6 +15,7 @@ from uuid import uuid4
 @dataclass
 class KnowledgeBaseInfo:
     """Knowledge base metadata (returned by CRUD operations)."""
+
     id: str
     tenant_id: str
     scenario_id: str
@@ -67,14 +68,8 @@ class KnowledgeBaseService:
     async def list_by_tenant(self, tenant_id: str) -> list[KnowledgeBaseInfo]:
         return [kb for kb in self._store.values() if kb.tenant_id == tenant_id]
 
-    async def list_by_scenario(
-        self, tenant_id: str, scenario_id: str
-    ) -> list[KnowledgeBaseInfo]:
-        return [
-            kb
-            for kb in self._store.values()
-            if kb.tenant_id == tenant_id and kb.scenario_id == scenario_id
-        ]
+    async def list_by_scenario(self, tenant_id: str, scenario_id: str) -> list[KnowledgeBaseInfo]:
+        return [kb for kb in self._store.values() if kb.tenant_id == tenant_id and kb.scenario_id == scenario_id]
 
     async def update(
         self,

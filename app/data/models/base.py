@@ -12,11 +12,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
+
     pass
 
 
 class TimestampMixin:
     """Adds created_at and updated_at columns."""
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -32,6 +34,7 @@ class TimestampMixin:
 
 class TenantMixin:
     """Adds tenant_id column for RLS multi-tenant isolation."""
+
     tenant_id: Mapped[str] = mapped_column(
         String(36),
         nullable=False,
@@ -41,6 +44,7 @@ class TenantMixin:
 
 class UUIDPrimaryKey:
     """Uses UUID4 as primary key (String(36) for PostgreSQL compatibility)."""
+
     id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,

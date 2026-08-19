@@ -67,6 +67,7 @@ async def upload_document(
             import io
 
             from docx import Document
+
             doc = Document(io.BytesIO(content))
             raw_text = "\n".join(para.text for para in doc.paragraphs)
         except Exception as e:
@@ -78,6 +79,7 @@ async def upload_document(
             import io
 
             from pypdf import PdfReader
+
             reader = PdfReader(io.BytesIO(content))
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as e:

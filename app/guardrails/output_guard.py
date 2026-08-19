@@ -17,7 +17,14 @@ CITATION_WARNING = "\n\n⚠️ 部分回答内容未能在提供的引用来源�
 
 class OutputGuardrail:
     async def check(self, output: str, rules: list[str], sources: list[dict] | None = None) -> tuple[str, dict]:
-        flags: dict = {"toxicity_detected": False, "citation_issues": False, "factuality_issues": False, "pii_detected": False, "blocked": False, "warnings": []}
+        flags: dict = {
+            "toxicity_detected": False,
+            "citation_issues": False,
+            "factuality_issues": False,
+            "pii_detected": False,
+            "blocked": False,
+            "warnings": [],
+        }
         processed = output
         sources = sources or []
 
@@ -40,7 +47,11 @@ class OutputGuardrail:
             processed += CITATION_WARNING
             logger.info("output_guardrail_citation_warning")
 
-        if "factuality_check" in rules and settings.guardrail_factuality_check_enabled and self._check_factuality(processed, sources):
+        if (
+            "factuality_check" in rules
+            and settings.guardrail_factuality_check_enabled
+            and self._check_factuality(processed, sources)
+        ):
             flags["factuality_issues"] = True
             flags["warnings"].append("factuality_flagged")
             logger.info("output_guardrail_factuality_flag")
@@ -48,7 +59,20 @@ class OutputGuardrail:
         return processed, flags
 
     def _detect_toxicity(self, text: str) -> bool:
-        toxic_patterns = ["fuck", "shit", "kill yourself", "hate speech", "discriminate", "harassment", "去死", "傻逼", "歧视", "骚扰", "杀了你", "蠢货"]
+        toxic_patterns = [
+            "fuck",
+            "shit",
+            "kill yourself",
+            "hate speech",
+            "discriminate",
+            "harassment",
+            "去死",
+            "傻逼",
+            "歧视",
+            "骚扰",
+            "杀了你",
+            "蠢货",
+        ]
         text_lower = text.lower()
         return any(pattern in text_lower for pattern in toxic_patterns)
 
@@ -63,7 +87,10 @@ class OutputGuardrail:
             return not all(citation in valid_ids for citation in citations)
 
         output_tokens = set(tokenize(output.lower()).split())
-        return not any(len(output_tokens & set(tokenize(str(source.get("content", "")).lower()).split())) >= 2 for source in sources)
+        return not any(
+            len(output_tokens & set(tokenize(str(source.get("content", "")).lower()).split())) >= 2
+            for source in sources
+        )
 
     def _extract_citation_ids(self, output: str) -> list[str]:
         patterns = [r"\[(\d+)\]", r"\[来源(\d+)\]", r"\[chunk:(.+?)\]"]

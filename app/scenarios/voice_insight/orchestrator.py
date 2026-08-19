@@ -61,9 +61,7 @@ class VoiceInsightOrchestrator:
             )
 
         if self.config.guardrail_rules.input:
-            all_content, _input_flags = await self.input_guard.check(
-                all_content, self.config.guardrail_rules.input
-            )
+            all_content, _input_flags = await self.input_guard.check(all_content, self.config.guardrail_rules.input)
 
         raw_output, _tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
@@ -177,9 +175,7 @@ class VoiceInsightOrchestrator:
                 docs_count=len(raw_documents),
             )
 
-    async def start_async_task(
-        self, documents: list[dict], tenant_id: str, user_id: str
-    ) -> str:
+    async def start_async_task(self, documents: list[dict], tenant_id: str, user_id: str) -> str:
         """Start async analysis — persists to AsyncTask table, dispatches Celery."""
         from app.data.database import get_session_factory
         from app.data.models.infra import AsyncTask

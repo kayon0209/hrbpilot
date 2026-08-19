@@ -37,6 +37,7 @@ class FallbackStrategy(str, Enum):
 @dataclass
 class GuardrailRules:
     """Guardrail rules for a scenario — which checks to enable."""
+
     input: list[str] = field(default_factory=lambda: ["pii_detection", "prompt_injection"])
     output: list[str] = field(default_factory=lambda: ["citation_verification", "factuality_check"])
 
@@ -44,6 +45,7 @@ class GuardrailRules:
 @dataclass
 class ScenarioConfig:
     """Full configuration for one scenario — injected into the pipeline."""
+
     scenario_id: str
     knowledge_base_id: str
     retrieval_strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
@@ -100,9 +102,7 @@ def load_scenario_config(scenario_id: str) -> ScenarioConfig:
 
     # Resolve prompt template (file path → file content)
     scenario_dir = CONFIG_DIR / scenario_id
-    prompt_template = _resolve_prompt_template(
-        raw.get("prompt_template", ""), scenario_dir
-    )
+    prompt_template = _resolve_prompt_template(raw.get("prompt_template", ""), scenario_dir)
 
     config = ScenarioConfig(
         scenario_id=raw["scenario_id"],

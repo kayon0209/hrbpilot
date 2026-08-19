@@ -42,7 +42,9 @@ class FeedbackBody(BaseModel):
 
 
 async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb_id: str | None) -> KnowledgeBase:
-    stmt = select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.scenario_id == "policy_qa", KnowledgeBase.status == "active")
+    stmt = select(KnowledgeBase).where(
+        KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.scenario_id == "policy_qa", KnowledgeBase.status == "active"
+    )
     if requested_kb_id:
         stmt = stmt.where(KnowledgeBase.id == requested_kb_id)
     else:
@@ -53,11 +55,20 @@ async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb
     return kb
 
 
-async def _get_or_create_chat_session(session: AsyncSession, tenant_id: str, user_id: str, session_id: str | None) -> ChatSession:
+async def _get_or_create_chat_session(
+    session: AsyncSession, tenant_id: str, user_id: str, session_id: str | None
+) -> ChatSession:
     if session_id:
         existing = (
             (
-                await session.execute(select(ChatSession).where(ChatSession.id == session_id, ChatSession.tenant_id == tenant_id, ChatSession.user_id == user_id, ChatSession.scenario_id == "policy_qa"))
+                await session.execute(
+                    select(ChatSession).where(
+                        ChatSession.id == session_id,
+                        ChatSession.tenant_id == tenant_id,
+                        ChatSession.user_id == user_id,
+                        ChatSession.scenario_id == "policy_qa",
+                    )
+                )
             )
             .scalars()
             .first()
@@ -70,18 +81,31 @@ async def _get_or_create_chat_session(session: AsyncSession, tenant_id: str, use
     return chat_session
 
 
-async def _add_message(session: AsyncSession, session_id: str, role: str, content: str, confidence: float | None = None, citations_json: str | None = None) -> ChatMessage:
-    message = ChatMessage(session_id=session_id, role=role, content=content, confidence=confidence, citations_json=citations_json)
+async def _add_message(
+    session: AsyncSession,
+    session_id: str,
+    role: str,
+    content: str,
+    confidence: float | None = None,
+    citations_json: str | None = None,
+) -> ChatMessage:
+    message = ChatMessage(
+        session_id=session_id, role=role, content=content, confidence=confidence, citations_json=citations_json
+    )
     session.add(message)
     await session.flush()
     return message
 
 
-async def _save_history_async(tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None) -> str | None:
+async def _save_history_async(
+    tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None
+) -> str | None:
     async with tenant_session(tenant_id) as db:
         chat_session = await _get_or_create_chat_session(db, tenant_id, user_id, session_id)
         await _add_message(db, chat_session.id, "user", question)
-        assistant_message = await _add_message(db, chat_session.id, "assistant", result.answer, confidence=result.confidence)
+        assistant_message = await _add_message(
+            db, chat_session.id, "assistant", result.answer, confidence=result.confidence
+        )
         await db.commit()
         return assistant_message.id
 
@@ -95,10 +119,13 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
     await session.close()
 
     if body.stream:
+
         async def event_stream():
             try:
                 start = time.time()
-                async for raw_event in orchestrator.execute_stream(body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id):
+                async for raw_event in orchestrator.execute_stream(
+                    body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id
+                ):
                     event = json.loads(raw_event)
                     if event.get("event") == "done":
                         try:
@@ -114,7 +141,9 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                             latency_ms=int(done_payload.get("latency_ms", 0) or 0),
                             tokens_used=done_payload.get("tokens_used"),
                         )
-                        message_id = await _save_history_async(tenant_id, user_id, body.question, qa_result, body.session_id)
+                        message_id = await _save_history_async(
+                            tenant_id, user_id, body.question, qa_result, body.session_id
+                        )
                         done_payload["message_id"] = message_id
                         done_payload["latency_ms"] = int((time.time() - start) * 1000)
                         yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(done_payload, ensure_ascii=False)})}\n\n"

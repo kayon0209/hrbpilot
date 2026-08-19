@@ -45,7 +45,10 @@ async def _llm_judge(prompt: str) -> str | None:
         response = await client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个严谨的RAG系统评估助手。请根据评分标准给出0到1之间的分数，并简要说明理由。"},
+                {
+                    "role": "system",
+                    "content": "你是一个严谨的RAG系统评估助手。请根据评分标准给出0到1之间的分数，并简要说明理由。",
+                },
                 {"role": "user", "content": prompt},
             ],
             max_tokens=256,
@@ -103,9 +106,7 @@ class AutoEvaluator:
         """Check if citations in output match actual sources via LLM judge."""
         if not sources:
             return 0.0
-        source_text = "\n---\n".join(
-            f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1)
-        )
+        source_text = "\n---\n".join(f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1))
         prompt = (
             "评估以下回答中的引用准确性。\n\n"
             f"回答: {_truncate(output)}\n\n"
@@ -138,9 +139,7 @@ class AutoEvaluator:
         """Check if answer is faithful to sources (no hallucination) via LLM judge."""
         if not sources:
             return 0.0
-        source_text = "\n---\n".join(
-            f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1)
-        )
+        source_text = "\n---\n".join(f"来源{i}: {_truncate(s.get('content', ''))}" for i, s in enumerate(sources, 1))
         prompt = (
             "评估以下回答的忠实度（是否有幻觉）。\n\n"
             f"回答: {_truncate(output)}\n\n"
@@ -154,9 +153,7 @@ class AutoEvaluator:
             return 0.0
         return _parse_score(raw) or 0.0
 
-    async def _generic_completeness(
-        self, metric_name: str, output: str, sources: list[dict], query: str
-    ) -> float:
+    async def _generic_completeness(self, metric_name: str, output: str, sources: list[dict], query: str) -> float:
         """Generic completeness/diversity metric via LLM judge."""
         prompt = (
             f"评估以下回答在 '{metric_name}' 维度的质量。\n\n"

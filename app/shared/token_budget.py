@@ -21,13 +21,11 @@ logger = get_logger(__name__)
 DEFAULT_MONTHLY_BUDGET = 10_000_000  # 10M tokens
 
 # Alert thresholds (percentage of budget)
-WARNING_THRESHOLD = 0.75   # 75%
+WARNING_THRESHOLD = 0.75  # 75%
 CRITICAL_THRESHOLD = 0.90  # 90%
 
 # In-memory fallback (used only when Redis is unavailable)
-_monthly_usage: dict[str, dict] = defaultdict(
-    lambda: {"total": 0, "by_model": defaultdict(int)}
-)
+_monthly_usage: dict[str, dict] = defaultdict(lambda: {"total": 0, "by_model": defaultdict(int)})
 _lock = threading.Lock()
 
 

@@ -35,9 +35,7 @@ _SECURITY_HEADERS: dict[str, str] = {
     ),
     # HSTS: enforce HTTPS (set max-age=0 in dev to avoid browser lock-in)
     "Strict-Transport-Security": (
-        "max-age=0; includeSubDomains"
-        if not settings.is_production
-        else "max-age=31536000; includeSubDomains; preload"
+        "max-age=0; includeSubDomains" if not settings.is_production else "max-age=31536000; includeSubDomains; preload"
     ),
     # Prevent MIME-type sniffing
     "X-Content-Type-Options": "nosniff",
@@ -48,19 +46,14 @@ _SECURITY_HEADERS: dict[str, str] = {
     # Limit referrer information leakage
     "Referrer-Policy": "strict-origin-when-cross-origin",
     # Restrict browser features
-    "Permissions-Policy": (
-        "camera=(), microphone=(), geolocation=(), "
-        "interest-cohort=()"
-    ),
+    "Permissions-Policy": ("camera=(), microphone=(), geolocation=(), interest-cohort=()"),
 }
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Adds security headers to every HTTP response."""
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
 
         for header_name, header_value in _SECURITY_HEADERS.items():

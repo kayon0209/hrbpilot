@@ -14,13 +14,21 @@ logger = get_logger(__name__)
 
 # Keywords indicating potential compliance violations
 SALARY_CONFIDENTIAL_PATTERNS = [
-    "某人工资", "具体薪资", "同事的薪酬", "某某工资多少",
-    "salary of", "how much does X earn",
+    "某人工资",
+    "具体薪资",
+    "同事的薪酬",
+    "某某工资多少",
+    "salary of",
+    "how much does X earn",
 ]
 
 PRIVACY_PATTERNS = [
-    "身份证号", "家庭住址", "银行卡号", "体检结果",
-    "个人隐私", "电话号",
+    "身份证号",
+    "家庭住址",
+    "银行卡号",
+    "体检结果",
+    "个人隐私",
+    "电话号",
 ]
 
 

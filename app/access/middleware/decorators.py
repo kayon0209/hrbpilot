@@ -27,6 +27,7 @@ R = TypeVar("R")
 
 def require_auth(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     """Require a valid authenticated user (redundant with AuthMiddleware)."""
+
     @wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         request: Request | None = None
@@ -49,6 +50,7 @@ def require_role(
     min_role: str,
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Require a minimum role level (redundant with RBACMiddleware)."""
+
     def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         @wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:

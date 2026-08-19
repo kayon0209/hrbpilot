@@ -236,14 +236,11 @@ def upgrade() -> None:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         # Policy: users can only see rows from their own tenant
         op.execute(
-            f"CREATE POLICY tenant_isolation_{table} ON {table} "
-            f"USING (tenant_id = current_setting('app.tenant_id'))"
+            f"CREATE POLICY tenant_isolation_{table} ON {table} USING (tenant_id = current_setting('app.tenant_id'))"
         )
 
     # Also add foreign key for insight_reports → async_tasks
-    op.create_foreign_key(
-        "fk_insight_reports_task_id", "insight_reports", "async_tasks", ["task_id"], ["id"]
-    )
+    op.create_foreign_key("fk_insight_reports_task_id", "insight_reports", "async_tasks", ["task_id"], ["id"])
 
 
 def downgrade() -> None:

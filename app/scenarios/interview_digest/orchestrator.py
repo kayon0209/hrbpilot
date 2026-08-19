@@ -167,10 +167,14 @@ class InterviewDigestOrchestrator:
                 record = InterviewDigest(
                     tenant_id=tenant_id,
                     document_id=None,
-                    demands_json=json.dumps([item.model_dump() for item in result.employee_demands], ensure_ascii=False),
+                    demands_json=json.dumps(
+                        [item.model_dump() for item in result.employee_demands], ensure_ascii=False
+                    ),
                     risk_level=result.risk_level.value,
                     risk_signals_json=json.dumps(result.risk_signals, ensure_ascii=False),
-                    action_items_json=json.dumps([item.model_dump() for item in result.action_items], ensure_ascii=False),
+                    action_items_json=json.dumps(
+                        [item.model_dump() for item in result.action_items], ensure_ascii=False
+                    ),
                     suggested_owner=result.suggested_owner,
                     summary=result.summary,
                 )

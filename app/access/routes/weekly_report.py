@@ -38,8 +38,7 @@ async def generate_report(
     user_id = getattr(request.state, "user_id", "unknown")
 
     source_data = [
-        {"type": "interview_digest", "id": sid, "content": f"[访谈结果 {sid} 内容待加载]"}
-        for sid in body.source_ids
+        {"type": "interview_digest", "id": sid, "content": f"[访谈结果 {sid} 内容待加载]"} for sid in body.source_ids
     ]
 
     if not source_data:
@@ -61,7 +60,9 @@ async def generate_report(
         user_id=user_id,
     )
 
-    report_id = await orchestrator._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
+    report_id = await orchestrator._store_report(
+        tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data
+    )
 
     return {"report_id": report_id, "report": result, "is_draft": body.draft_mode}
 
@@ -76,8 +77,7 @@ async def save_report(body: SaveRequest, request: Request):
         row = (
             (
                 await session.execute(
-                    select(WeeklyReport)
-                    .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == body.report_id)
+                    select(WeeklyReport).where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == body.report_id)
                 )
             )
             .scalars()

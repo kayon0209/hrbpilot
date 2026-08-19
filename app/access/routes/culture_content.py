@@ -77,8 +77,7 @@ async def get_content(content_id: str, request: Request):
         row = (
             (
                 await session.execute(
-                    select(CultureContent)
-                    .where(CultureContent.tenant_id == tenant_id, CultureContent.id == content_id)
+                    select(CultureContent).where(CultureContent.tenant_id == tenant_id, CultureContent.id == content_id)
                 )
             )
             .scalars()

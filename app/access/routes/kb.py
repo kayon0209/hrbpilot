@@ -137,7 +137,9 @@ async def list_kbs(
 
     return {
         "knowledge_bases": [
-            _kb_to_dict(kb, document_count=count_map.get(kb.id, (0, 0))[0], total_chunks=count_map.get(kb.id, (0, 0))[1])
+            _kb_to_dict(
+                kb, document_count=count_map.get(kb.id, (0, 0))[0], total_chunks=count_map.get(kb.id, (0, 0))[1]
+            )
             for kb in kbs
         ],
         "total": len(kbs),

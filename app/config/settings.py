@@ -90,14 +90,21 @@ class Settings(BaseSettings):
             raise ValueError("APP_ENV must be one of development, staging, production")
         if self.app_env in {"staging", "production"}:
             if self.jwt_secret == "change-me-in-production" or len(self.jwt_secret) < 32:
-                raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production or staging")
+                raise ValueError(
+                    "JWT_SECRET must be a non-default value of at least 32 characters in production or staging"
+                )
             if not self.llm_api_key or self.llm_api_key == "change-me":
                 raise ValueError("LLM_API_KEY must be configured in production or staging")
             if not self.effective_embedding_api_key or not self.embedding_base_url:
                 raise ValueError("EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be configured in production or staging")
             if self.enable_dev_users:
                 raise ValueError("ENABLE_DEV_USERS must be false outside development")
-            if not self.minio_access_key or not self.minio_secret_key or self.minio_access_key == "minioadmin" or self.minio_secret_key == "minioadmin":
+            if (
+                not self.minio_access_key
+                or not self.minio_secret_key
+                or self.minio_access_key == "minioadmin"
+                or self.minio_secret_key == "minioadmin"
+            ):
                 raise ValueError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be configured in production or staging")
         return self
 

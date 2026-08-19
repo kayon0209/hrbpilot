@@ -81,7 +81,9 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC)
 
 
-def _create_token(user_id: str, role: str, tenant_id: str, email: str, token_type: str, expires_delta: datetime.timedelta, jti: str) -> str:
+def _create_token(
+    user_id: str, role: str, tenant_id: str, email: str, token_type: str, expires_delta: datetime.timedelta, jti: str
+) -> str:
     payload = {
         "sub": user_id,
         "role": role,
@@ -98,16 +100,34 @@ def _create_token(user_id: str, role: str, tenant_id: str, email: str, token_typ
 
 
 def _create_access_token(user_id: str, role: str, tenant_id: str, email: str) -> str:
-    return _create_token(user_id, role, tenant_id, email, "access", datetime.timedelta(minutes=settings.jwt_access_expires_minutes), str(uuid4()))
+    return _create_token(
+        user_id,
+        role,
+        tenant_id,
+        email,
+        "access",
+        datetime.timedelta(minutes=settings.jwt_access_expires_minutes),
+        str(uuid4()),
+    )
 
 
 def _create_refresh_token(user_id: str, tenant_id: str) -> str:
-    return _create_token(user_id, "employee", tenant_id, "", "refresh", datetime.timedelta(days=settings.jwt_refresh_expires_days), str(uuid4()))
+    return _create_token(
+        user_id,
+        "employee",
+        tenant_id,
+        "",
+        "refresh",
+        datetime.timedelta(days=settings.jwt_refresh_expires_days),
+        str(uuid4()),
+    )
 
 
 def _decode_jwt(token: str, expected_type: str) -> dict:
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_JWT_AUDIENCE, issuer=_JWT_ISSUER)
+        payload = jwt.decode(
+            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_JWT_AUDIENCE, issuer=_JWT_ISSUER
+        )
     except Exception as exc:
         raise AuthError("Invalid or expired token") from exc
     if payload.get("type") != expected_type:
@@ -201,7 +221,9 @@ async def login(body: LoginBody, request: Request):
         access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
         refresh_token = _create_refresh_token(user.id, user.tenant_id)
         logger.info("login_success", user_id=user.id, role=user.role)
-        return TokenResponse(access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60)
+        return TokenResponse(
+            access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60
+        )
 
     if not _dev_users_enabled():
         raise ExternalServiceError("database", "Authentication database is unavailable")
@@ -214,7 +236,9 @@ async def login(body: LoginBody, request: Request):
     access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
     refresh_token = _create_refresh_token(user.id, user.tenant_id)
     logger.info("login_success_dev", user_id=user.id, role=user.role)
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60)
+    return TokenResponse(
+        access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -236,7 +260,11 @@ async def refresh(body: RefreshBody):
                 raise NotFoundError("User", user_id)
             access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
             refresh_token = _create_refresh_token(user.id, user.tenant_id)
-            return TokenResponse(access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60)
+            return TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=settings.jwt_access_expires_minutes * 60,
+            )
 
     if not _dev_users_enabled():
         raise ExternalServiceError("database", "Authentication database is unavailable")
@@ -246,7 +274,9 @@ async def refresh(body: RefreshBody):
         raise NotFoundError("User", user_id)
     access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
     refresh_token = _create_refresh_token(user.id, user.tenant_id)
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60)
+    return TokenResponse(
+        access_token=access_token, refresh_token=refresh_token, expires_in=settings.jwt_access_expires_minutes * 60
+    )
 
 
 @router.get("/me", response_model=UserProfile)
@@ -281,4 +311,9 @@ async def list_dev_users():
     if not _dev_users_enabled():
         raise NotFoundError("Endpoint", "dev-users")
     from app.shared.dev_mock_users import _MOCK_USERS
-    return {"users": [{"email": u.email, "name": u.name, "role": u.role, "password_required": True} for u in _MOCK_USERS.values()]}
+
+    return {
+        "users": [
+            {"email": u.email, "name": u.name, "role": u.role, "password_required": True} for u in _MOCK_USERS.values()
+        ]
+    }

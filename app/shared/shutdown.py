@@ -43,19 +43,26 @@ async def shutdown(
         try:
             _done, pending = await asyncio.wait(tasks, timeout=timeout)
             if pending:
-                logger.warning("shutdown_timeout", pending_count=len(pending), message="Some requests did not complete in time")
+                logger.warning(
+                    "shutdown_timeout", pending_count=len(pending), message="Some requests did not complete in time"
+                )
         except Exception as e:
             logger.error("shutdown_wait_error", error=str(e))
 
     try:
         from app.data.database import get_engine
+
         engine = get_engine()
         await engine.dispose()
         logger.info("database_connections_closed")
     except Exception as e:
         logger.error("database_close_error", error=str(e))
 
-    logger.info("graceful_shutdown_complete", inflight_remaining=len(_inflight_requests), background_tasks=len(get_background_tasks()))
+    logger.info(
+        "graceful_shutdown_complete",
+        inflight_remaining=len(_inflight_requests),
+        background_tasks=len(get_background_tasks()),
+    )
 
 
 def register_shutdown_handlers(timeout: float = 30.0) -> None:

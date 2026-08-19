@@ -11,7 +11,7 @@ def test_validate_filter_id_accepts_project_identifiers(value: str) -> None:
     assert validate_filter_id(value) == value
 
 
-@pytest.mark.parametrize("value", ["", "x\" or true", "a && b", "../tenant", "a b"])
+@pytest.mark.parametrize("value", ["", 'x" or true', "a && b", "../tenant", "a b"])
 def test_validate_filter_id_rejects_expression_syntax(value: str) -> None:
     with pytest.raises(ValidationError, match="Invalid Milvus filter identifier"):
         validate_filter_id(value)

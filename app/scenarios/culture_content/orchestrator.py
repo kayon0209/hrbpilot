@@ -95,7 +95,9 @@ class CultureContentOrchestrator:
         keywords_str = ", ".join(keywords)
 
         raw_output, _tokens_used = await self.llm.generate(
-            prompt_template=prompt.replace("{{ keywords }}", keywords_str).replace("{{ content }}", context_text or "暂无文化素材"),
+            prompt_template=prompt.replace("{{ keywords }}", keywords_str).replace(
+                "{{ content }}", context_text or "暂无文化素材"
+            ),
             context=[{"source": "文化素材", "section": "关键词", "content": context_text or "暂无"}],
             query=f"请基于关键词 [{keywords_str}] 生成4个渠道的文化传播内容，基调: {tone}",
             max_tokens=self.config.max_tokens,

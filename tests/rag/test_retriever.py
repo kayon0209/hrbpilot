@@ -63,8 +63,13 @@ class _FakeSession:
 
 def _chunk(cid: str, score: float) -> RetrievedChunk:
     return RetrievedChunk(
-        chunk_id=cid, document_id="d", kb_id="k",
-        source="f", section="s", content="c", score=score,
+        chunk_id=cid,
+        document_id="d",
+        kb_id="k",
+        source="f",
+        section="s",
+        content="c",
+        score=score,
     )
 
 

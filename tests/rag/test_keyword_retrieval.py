@@ -57,9 +57,7 @@ async def test_sparse_filters_tenant_and_kb(monkeypatch):
         fake.seen_tenant = tenant_id
         return fake
 
-    monkeypatch.setattr(
-        "app.rag.retrieval.retriever.make_tenant_session", fake_make_tenant_session
-    )
+    monkeypatch.setattr("app.rag.retrieval.retriever.make_tenant_session", fake_make_tenant_session)
     retriever = Retriever()
     result = await retriever._sparse("请假流程", "kb-123", "tenant-A", 5)
 

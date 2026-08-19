@@ -307,7 +307,11 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
         payload = json.loads(task.result_json or "{}")
         kb_id = payload.get("kb_id", "")
         document_ids = payload.get("document_ids", [])
-        kb = (await session.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id))).scalar_one_or_none()
+        kb = (
+            await session.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
         if kb is None:
             raise ValueError(f"Knowledge base {kb_id} not found for ingestion task")
 
@@ -339,7 +343,9 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
                 logger.warning("ingestion_document_skipped", document_id=doc_id, task_id=task_id)
                 continue
             try:
-                await service.process_document(document, session, chunk_strategy=kb.chunk_strategy, chunk_size=kb.chunk_size)
+                await service.process_document(
+                    document, session, chunk_strategy=kb.chunk_strategy, chunk_size=kb.chunk_size
+                )
             except Exception as e:
                 document.status = "error"
                 document.error_message = str(e)[:2000]
@@ -368,9 +374,7 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
         task.result_json = json.dumps(
             {"kb_id": kb_id, "processed": processed, "succeeded": succeeded, "failed": failed, "skipped": skipped}
         )
-        task.error_message = (
-            f"{failed} document(s) failed; {skipped} skipped" if failed or skipped else None
-        )
+        task.error_message = f"{failed} document(s) failed; {skipped} skipped" if failed or skipped else None
         await session.commit()
         logger.info(
             "ingestion_task_completed",

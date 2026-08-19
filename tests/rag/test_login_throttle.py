@@ -6,13 +6,15 @@ from app.shared.errors import RateLimitError
 
 
 def _login_request(ip: str = "10.0.0.1") -> Request:
-    return Request({
-        "type": "http",
-        "method": "POST",
-        "path": "/api/auth/login",
-        "headers": [],
-        "client": (ip, 0),
-    })
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/login",
+            "headers": [],
+            "client": (ip, 0),
+        }
+    )
 
 
 @pytest.mark.asyncio

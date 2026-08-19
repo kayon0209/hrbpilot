@@ -50,5 +50,11 @@ class RateLimiter:
         tenant_ok = await _check_key(tenant_key, tenant_limit)
         user_ok = await _check_key(user_key, user_limit)
         if not tenant_ok or not user_ok:
-            logger.warning("rate_limit_exceeded", tenant_id=tenant_id, user_id=user_id, tenant_exceeded=not tenant_ok, user_exceeded=not user_ok)
+            logger.warning(
+                "rate_limit_exceeded",
+                tenant_id=tenant_id,
+                user_id=user_id,
+                tenant_exceeded=not tenant_ok,
+                user_exceeded=not user_ok,
+            )
             raise RateLimitError("请求过于频繁，请稍后再试")

@@ -3,6 +3,7 @@
 Verifies the app boots and core cost-control primitives work,
 without requiring external services (DB / Milvus / Redis).
 """
+
 import asyncio
 
 from fastapi import FastAPI
@@ -17,7 +18,6 @@ def test_create_app_boots():
     paths = list(app.openapi().get("paths", {}).keys())
     assert len(paths) > 0
     assert "/api/health" in paths
-
 
 
 def test_token_budget_records_usage():

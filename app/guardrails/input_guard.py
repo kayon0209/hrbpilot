@@ -48,9 +48,7 @@ INJECTION_PATTERNS = [
 class InputGuardrail:
     """Check and process input before it reaches LLM."""
 
-    async def check(
-        self, input_text: str, rules: list[str]
-    ) -> tuple[str, dict]:
+    async def check(self, input_text: str, rules: list[str]) -> tuple[str, dict]:
         """Apply guardrail rules to input text.
 
         Returns: (processed_text, flags_dict)

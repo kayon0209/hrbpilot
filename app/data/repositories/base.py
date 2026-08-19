@@ -28,9 +28,7 @@ class BaseRepository[ModelType: Base]:
 
     async def get_all(self, limit: int = 100, offset: int = 0) -> Sequence[ModelType]:
         """Get all records (tenant-scoped via RLS)."""
-        result = await self.session.execute(
-            select(self.model).limit(limit).offset(offset)
-        )
+        result = await self.session.execute(select(self.model).limit(limit).offset(offset))
         return result.scalars().all()
 
     async def create(self, obj: ModelType) -> ModelType:

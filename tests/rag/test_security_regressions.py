@@ -31,7 +31,9 @@ async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -
         yield SimpleNamespace()
 
     auth._LOGIN_ATTEMPTS.clear()
-    request = Request({"type": "http", "method": "POST", "path": "/api/auth/login", "headers": [], "client": ("127.0.0.1", 0)})
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/api/auth/login", "headers": [], "client": ("127.0.0.1", 0)}
+    )
 
     monkeypatch.setattr(auth, "_check_db_available", db_available)
     monkeypatch.setattr("app.data.database.get_db_session", fake_session)

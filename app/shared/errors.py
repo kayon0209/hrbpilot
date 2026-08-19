@@ -33,6 +33,7 @@ class AppError(Exception):
 
 # ---- 4xx Client Errors ----
 
+
 class NotFoundError(AppError):
     """Resource not found (404)."""
 
@@ -104,6 +105,7 @@ class RateLimitError(AppError):
 
 # ---- Guardrail Errors ----
 
+
 class GuardrailError(AppError):
     """Guardrail interception — input/output blocked."""
 
@@ -160,6 +162,7 @@ class ToxicityError(GuardrailError):
 
 
 # ---- 5xx Server Errors ----
+
 
 class LLMError(AppError):
     """LLM service error (502)."""

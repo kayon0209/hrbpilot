@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 
 # ---- Provider registry ----
 
+
 def _build_provider_registry() -> dict[str, dict]:
     """Build the provider config registry from settings."""
     registry = {}
@@ -196,6 +197,7 @@ def get_active_model() -> str:
 
 # ---- Prompt building ----
 
+
 def _build_system_prompt(prompt_template: str, context: list[dict]) -> str:
     """Build system prompt from template and RAG context."""
     if not prompt_template:
@@ -217,13 +219,14 @@ def _build_system_prompt(prompt_template: str, context: list[dict]) -> str:
         return rendered.strip()
     except Exception:
         system_prompt = prompt_template
-        for_pattern = r'\{%\s*for\s+\w+\s+in\s+\w+\s*%\}.*?\{%\s*endfor\s*%\}'
+        for_pattern = r"\{%\s*for\s+\w+\s+in\s+\w+\s*%\}.*?\{%\s*endfor\s*%\}"
         system_prompt = re.sub(for_pattern, context_block, system_prompt, flags=re.DOTALL)
-        system_prompt = re.sub(r'\{\{.*?\}\}', '', system_prompt)
+        system_prompt = re.sub(r"\{\{.*?\}\}", "", system_prompt)
         return system_prompt.strip()
 
 
 # ---- LLM Orchestrator ----
+
 
 class LLMOrchestrator:
     """Generate LLM responses with context-aware prompts."""
@@ -276,8 +279,7 @@ class LLMOrchestrator:
             return content, tokens
 
         except Exception as e:
-            logger.error("llm_call_failed", error=str(e), model=model,
-                         provider=get_active_provider())
+            logger.error("llm_call_failed", error=str(e), model=model, provider=get_active_provider())
             raise
 
     async def generate_stream(
@@ -328,6 +330,5 @@ class LLMOrchestrator:
             )
 
         except Exception as e:
-            logger.error("llm_stream_failed", error=str(e), model=model,
-                         provider=get_active_provider())
+            logger.error("llm_stream_failed", error=str(e), model=model, provider=get_active_provider())
             raise

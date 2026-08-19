@@ -44,6 +44,7 @@ class PlanItem(BaseModel):
 
 class WeeklyReportResponse(BaseModel):
     """Structured response for Weekly Report scenario."""
+
     period: str = Field("", description="报告周期")
     summary: str = Field("", description="整体摘要")
     progress: list[ProgressItem] = Field(default_factory=list)
@@ -54,6 +55,7 @@ class WeeklyReportResponse(BaseModel):
 
 class GenerateRequest(BaseModel):
     """Request to generate a weekly report."""
+
     period: str = Field(..., description="报告周期, 如 2026-W28")
     source_ids: list[str] = Field(default_factory=list, description="数据源ID列表")
     draft_mode: bool = Field(True, description="是否生成草稿（可编辑）")
@@ -61,6 +63,7 @@ class GenerateRequest(BaseModel):
 
 class SaveRequest(BaseModel):
     """Request to save/publish a weekly report."""
+
     report_id: str
     action: str = "save"  # save | publish
     edits: dict | None = None  # Optional manual edits

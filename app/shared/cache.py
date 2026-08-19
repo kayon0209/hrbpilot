@@ -21,7 +21,7 @@ from app.shared.redis_client import get_redis
 logger = get_logger(__name__)
 
 # Cache TTLs (seconds) — matches Phase 15 spec
-EMBEDDING_CACHE_TTL = 900     # 15 min
+EMBEDDING_CACHE_TTL = 900  # 15 min
 USER_CONTEXT_CACHE_TTL = 300  # 5 min
 KB_METADATA_CACHE_TTL = 1800  # 30 min
 
@@ -62,6 +62,7 @@ class CacheClient:
             return None
 
         import time
+
         if time.time() > entry["expires_at"]:
             del _in_memory_cache[key]
             return None
@@ -75,6 +76,7 @@ class CacheClient:
             return
 
         import time
+
         _in_memory_cache[key] = {
             "value": value,
             "expires_at": time.time() + ttl,
@@ -108,6 +110,7 @@ def cached(prefix: str, ttl: int = 300):
         async def get_embedding(text: str) -> list[float]:
             ...
     """
+
     def decorator(func: Callable):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
@@ -118,5 +121,7 @@ def cached(prefix: str, ttl: int = 300):
             result = await func(*args, **kwargs)
             await cache.set(key, result, ttl=ttl)
             return result
+
         return wrapper
+
     return decorator
