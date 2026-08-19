@@ -6,7 +6,6 @@ Orchestrates the weekly report generation flow:
 
 import json
 import time
-from datetime import datetime, timezone
 
 from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.orchestrator import LLMOrchestrator
@@ -20,8 +19,8 @@ from app.scenarios.weekly_report.schemas import (
     TaskStatus,
     WeeklyReportResponse,
 )
-from app.shared.logger import get_logger
 from app.shared.llm_utils import extract_json_from_llm_output
+from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 

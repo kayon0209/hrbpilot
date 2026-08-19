@@ -8,7 +8,6 @@ Generates 4 versions: news_article, group_notice, employee_story, event_copy.
 
 import json
 import time
-from datetime import datetime, timezone
 
 from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.orchestrator import LLMOrchestrator
@@ -17,8 +16,8 @@ from app.scenarios.culture_content.schemas import (
     CultureContentResponse,
     KeywordExpansionResponse,
 )
-from app.shared.logger import get_logger
 from app.shared.llm_utils import extract_json_from_llm_output
+from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -87,4 +87,4 @@ class OutputGuardrail:
         if not source_tokens:
             return False
         coverage = len(output_tokens & source_tokens) / max(1, len(output_tokens))
-        return coverage < 0.3
+        return coverage < 0.5

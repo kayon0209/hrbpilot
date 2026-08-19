@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from collections.abc import Coroutine
+from datetime import UTC
 from typing import Any, TypeVar
 
 from app.shared.celery_app import celery_app
@@ -108,10 +108,10 @@ async def _persist_voice_insight(tenant_id: str, task_id: str, result) -> None:
 @celery_app.task(name="scenario.interview_digest", acks_late=True)  # type: ignore[untyped-decorator]
 def interview_digest_task(task_id: str, document_content: str, tenant_id: str, user_id: str) -> None:
     """Run interview digest analysis and persist the result."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     _worker_loop = _get_worker_loop()
-    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(timezone.utc)))
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(UTC)))
 
     async def _run():
         from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
@@ -128,7 +128,7 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
                 status="completed",
                 progress=100,
                 result_json=result.model_dump_json(),
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
         )
         run_async_in_worker(_persist_interview_digest(tenant_id, result))
@@ -140,7 +140,7 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
                 tenant_id,
                 status="failed",
                 error_message=str(exc),
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
         )
 
@@ -148,10 +148,10 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
 @celery_app.task(name="scenario.voice_insight", acks_late=True)  # type: ignore[untyped-decorator]
 def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_id: str) -> None:
     """Run voice insight analysis and persist the result."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     _worker_loop = _get_worker_loop()
-    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(timezone.utc)))
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(UTC)))
 
     async def _run():
         from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
@@ -169,7 +169,7 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
                 status="completed",
                 progress=100,
                 result_json=result.model_dump_json(),
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
         )
         run_async_in_worker(_persist_voice_insight(tenant_id, task_id, result))
@@ -181,6 +181,6 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
                 tenant_id,
                 status="failed",
                 error_message=str(exc),
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
         )

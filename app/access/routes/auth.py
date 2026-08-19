@@ -40,6 +40,7 @@ async def _check_db_available() -> bool:
         return False
     try:
         from sqlalchemy import text
+
         from app.data.database import get_engine
 
         engine = get_engine()
@@ -176,6 +177,7 @@ async def login(body: LoginBody, request: Request):
 
     if db_ok:
         from passlib.context import CryptContext
+
         from app.data.database import get_db_session
         from app.data.repositories.user_repo import UserRepository
 

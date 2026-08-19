@@ -12,7 +12,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
@@ -26,8 +26,8 @@ from app.scenarios.interview_digest.schemas import (
     RiskLevel,
     Urgency,
 )
-from app.shared.logger import get_logger
 from app.shared.llm_utils import extract_json_from_llm_output
+from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -181,7 +181,7 @@ class InterviewDigestOrchestrator:
                     status="completed",
                     progress=100,
                     result_json=result.model_dump_json(),
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(UTC),
                 )
                 db.add(task)
                 await db.commit()

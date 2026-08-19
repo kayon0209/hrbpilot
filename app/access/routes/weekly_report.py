@@ -15,7 +15,7 @@ from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.scenarios import WeeklyReport
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
-from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest, WeeklyReportResponse
+from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 

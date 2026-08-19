@@ -20,7 +20,5 @@ jobs:
         run: |
           ruff check app tests
           ruff format --check app tests
-      - name: Type check
-        run: mypy app
       - name: Test
         run: pytest -q

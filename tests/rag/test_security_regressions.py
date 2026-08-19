@@ -8,7 +8,7 @@ from app.access.middleware.tenant import require_tenant_id
 from app.access.routes import auth
 from app.config.settings import Settings
 from app.guardrails.output_guard import OutputGuardrail
-from app.shared.errors import AuthError, RateLimitError
+from app.shared.errors import AuthError
 
 
 async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -> None:

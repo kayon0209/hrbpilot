@@ -14,8 +14,8 @@ from fastapi.responses import JSONResponse
 
 from app.access.middleware.auth import AuthMiddleware
 from app.access.middleware.cors import add_cors_middleware
-from app.access.middleware.rbac import RBACMiddleware
 from app.access.middleware.rate_limit import RateLimitMiddleware
+from app.access.middleware.rbac import RBACMiddleware
 from app.access.middleware.request_id import RequestIDMiddleware
 from app.access.middleware.security_headers import SecurityHeadersMiddleware
 from app.access.middleware.tenant import TenantContextMiddleware

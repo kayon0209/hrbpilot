@@ -38,7 +38,7 @@ def _parse_score(raw: str) -> float | None:
 async def _llm_judge(prompt: str) -> str | None:
     """Call the active LLM with a judge prompt. Returns None on failure."""
     try:
-        from app.rag.llm.orchestrator import get_llm_client, get_active_model
+        from app.rag.llm.orchestrator import get_active_model, get_llm_client
 
         client = get_llm_client()
         model = get_active_model()
@@ -68,6 +68,7 @@ class AutoEvaluator:
         sources: list[dict],
         metrics: list[str],
         tenant_id: str,
+        scenario_id: str = "rag_pipeline",
     ) -> dict:
         """Run evaluation metrics on a pipeline result."""
         scores: dict = {}
@@ -91,7 +92,7 @@ class AutoEvaluator:
 
         for metric_name, score in scores.items():
             try:
-                await metrics_aggregator.record(tenant_id, "rag_pipeline", metric_name, score)
+                await metrics_aggregator.record(tenant_id, scenario_id, metric_name, score)
             except Exception as e:
                 logger.warning("metric_record_failed", metric=metric_name, error=str(e))
 
