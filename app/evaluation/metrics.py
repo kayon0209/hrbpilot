@@ -111,6 +111,12 @@ class MetricsAggregator:
                     .all()
                 )
                 if not rows:
+                    logger.info(
+                        "metrics_db_empty_fallback_to_memory",
+                        tenant_id=tenant_id,
+                        scenario_id=scenario_id,
+                        source="async_query",
+                    )
                     return self.get_scenario_metrics(tenant_id, scenario_id)
 
                 # Fetch latest scores per metric

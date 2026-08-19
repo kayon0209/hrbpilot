@@ -116,13 +116,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
-        if self.app_env == "production":
+        if self.app_env in {"production", "staging"}:
             if self.jwt_secret == "change-me-in-production" or len(self.jwt_secret) < 32:
-                raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production")
+                raise ValueError("JWT_SECRET must be a non-default value of at least 32 characters in production or staging")
             if not self.llm_api_key or self.llm_api_key == "change-me":
-                raise ValueError("LLM_API_KEY must be configured in production")
+                raise ValueError("LLM_API_KEY must be configured in production or staging")
             if not self.effective_embedding_api_key or not self.embedding_base_url:
-                raise ValueError("EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be configured in production")
+                raise ValueError("EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be configured in production or staging")
         return self
 
     # --- Computed helpers ---
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.app_env == "production"
+        return self.app_env in {"production", "staging"}
 
     @property
     def effective_embedding_api_key(self) -> str:

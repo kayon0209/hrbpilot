@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.access.middleware.auth import AuthMiddleware
 from app.access.middleware.cors import add_cors_middleware
@@ -104,7 +105,7 @@ def create_app() -> FastAPI:
     return app
 
 
-async def _validation_error_handler(request, exc: RequestValidationError):
+async def _validation_error_handler(request, exc: RequestValidationError) -> JSONResponse:
     """Map FastAPI's built-in validation errors to our AppError format."""
     request_id = getattr(request.state, "request_id", "unknown")
     errors = [
@@ -115,13 +116,16 @@ async def _validation_error_handler(request, exc: RequestValidationError):
         }
         for err in exc.errors()
     ]
-    return {
-        "code": "VALIDATION_ERROR",
-        "status": 422,
-        "message": "Request validation failed",
-        "request_id": request_id,
-        "errors": errors,
-    }
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": "VALIDATION_ERROR",
+            "status": 422,
+            "message": "Request validation failed",
+            "request_id": request_id,
+            "errors": errors,
+        },
+    )
 
 
 # Application instance

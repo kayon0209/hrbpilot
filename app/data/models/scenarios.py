@@ -4,7 +4,9 @@ Interview digest, Insight report, Weekly report, Culture content.
 All have tenant_id for RLS.
 """
 
-from sqlalchemy import ForeignKey, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -46,6 +48,7 @@ class WeeklyReport(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     risks_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list of RiskItem
     plan_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list of PlanItem
     data_sources_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list of source references
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     def __repr__(self) -> str:
         return f"<WeeklyReport id={self.id} period={self.period}>"

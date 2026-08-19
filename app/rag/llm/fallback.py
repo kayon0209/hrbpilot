@@ -47,45 +47,49 @@ async def try_generate_with_fallback(
     original_provider = get_active_provider()
     errors: list[str] = []
 
-    for provider in get_fallback_order():
-        try:
-            if provider != get_active_provider():
-                logger.warning(
-                    "llm_fallback_attempt",
-                    from_provider=original_provider,
-                    to_provider=provider,
-                    errors=errors,
+    try:
+        for provider in get_fallback_order():
+            try:
+                if provider != get_active_provider():
+                    logger.warning(
+                        "llm_fallback_attempt",
+                        from_provider=original_provider,
+                        to_provider=provider,
+                        errors=errors,
+                    )
+                    set_active_provider(provider)
+
+                orchestrator = LLMOrchestrator()
+                content, tokens = await orchestrator.generate(
+                    prompt_template=prompt_template,
+                    context=context,
+                    query=query,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                 )
-                set_active_provider(provider)
 
-            orchestrator = LLMOrchestrator()
-            content, tokens = await orchestrator.generate(
-                prompt_template=prompt_template,
-                context=context,
-                query=query,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+                logger.info(
+                    "llm_generate_success",
+                    provider=provider,
+                    tokens=tokens,
+                )
+                return content, tokens, provider
 
-            logger.info(
-                "llm_generate_success",
-                provider=provider,
-                tokens=tokens,
-            )
-            return content, tokens, provider
+            except Exception as e:
+                errors.append(f"{provider}: {str(e)[:100]}")
+                logger.error(
+                    "llm_provider_failed",
+                    provider=provider,
+                    error=str(e)[:200],
+                )
 
-        except Exception as e:
-            errors.append(f"{provider}: {str(e)[:100]}")
-            logger.error(
-                "llm_provider_failed",
-                provider=provider,
-                error=str(e)[:200],
-            )
-
-    # All providers failed — return degraded response
-    logger.critical("llm_all_providers_failed", errors=errors)
-    return (
-        "抱歉，当前所有 AI 服务均不可用，请稍后再试。",
-        None,
-        "none",
-    )
+        # All providers failed — return degraded response
+        logger.critical("llm_all_providers_failed", errors=errors)
+        return (
+            "抱歉，当前所有 AI 服务均不可用，请稍后再试。",
+            None,
+            "none",
+        )
+    finally:
+        if original_provider != get_active_provider():
+            set_active_provider(original_provider)

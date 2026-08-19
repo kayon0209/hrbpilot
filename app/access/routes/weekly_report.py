@@ -8,6 +8,8 @@ GET  /api/weekly-report/history → Recent report history
 
 import json
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,11 +87,25 @@ async def save_report(body: SaveRequest, request: Request, session: AsyncSession
     if not row:
         raise NotFoundError("Report", body.report_id)
 
+    if body.edits:
+        if "summary" in body.edits:
+            row.summary = str(body.edits["summary"])
+        if "progress" in body.edits:
+            row.progress_json = json.dumps(body.edits["progress"], ensure_ascii=False)
+        if "risks" in body.edits:
+            row.risks_json = json.dumps(body.edits["risks"], ensure_ascii=False)
+        if "plan" in body.edits:
+            row.plan_json = json.dumps(body.edits["plan"], ensure_ascii=False)
+        if "data_sources" in body.edits:
+            row.data_sources_json = json.dumps(body.edits["data_sources"], ensure_ascii=False)
+
     if body.action == "publish":
+        row.published_at = datetime.now(UTC)
         logger.info("weekly_report_published", report_id=body.report_id)
     else:
         logger.info("weekly_report_saved", report_id=body.report_id)
 
+    await session.commit()
     return {"report_id": body.report_id, "action": body.action, "status": "saved"}
 
 

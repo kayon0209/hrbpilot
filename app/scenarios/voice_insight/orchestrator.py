@@ -100,43 +100,47 @@ class VoiceInsightOrchestrator:
         tenant_id: str,
         documents: list[dict],
     ) -> tuple[list[dict], list[str]]:
-        """Resolve document IDs to prompt text in one batched query."""
+        """Resolve document IDs or inline content to prompt text."""
         doc_ids = [str(doc.get("id", "")).strip() for doc in documents if doc.get("id")]
-        if not doc_ids:
-            return [], []
+        rows_by_id: dict[str, object] = {}
 
-        factory = get_session_factory()
-        async with factory() as db:
-            db.info["tenant_id"] = tenant_id
-            rows = (
-                (
-                    await db.execute(
-                        select(AsyncTask).where(
-                            AsyncTask.tenant_id == tenant_id,
-                            AsyncTask.id.in_(doc_ids),
+        if doc_ids:
+            factory = get_session_factory()
+            async with factory() as db:
+                db.info["tenant_id"] = tenant_id
+                rows = (
+                    (
+                        await db.execute(
+                            select(AsyncTask).where(
+                                AsyncTask.tenant_id == tenant_id,
+                                AsyncTask.id.in_(doc_ids),
+                            )
                         )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
+            rows_by_id = {row.id: row for row in rows}
 
-        rows_by_id = {row.id: row for row in rows}
         resolved: list[dict] = []
         skipped: list[str] = []
 
         for doc in documents:
             doc_id = str(doc.get("id", "")).strip()
+            inline_content = str(doc.get("content", "")).strip()
+            if inline_content:
+                resolved.append({"id": doc_id or "inline", "content": inline_content})
+                continue
             if not doc_id:
                 continue
             row = rows_by_id.get(doc_id)
-            if not row or not row.result_json:
+            if not row or not getattr(row, "result_json", None):
                 skipped.append(doc_id)
                 continue
             resolved.append(
                 {
                     "id": doc_id,
-                    "content": _summarize_async_task_result(row.result_json),
+                    "content": _summarize_async_task_result(getattr(row, "result_json", None)),
                 }
             )
 

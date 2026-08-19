@@ -30,15 +30,12 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
     """Resolve tenant_id and store in request state for RLS."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # JWT claims override this value in AuthMiddleware. Do not invent a
-        # real tenant for a request that has not established one.
-        tenant_id = None
+        # Do not trust tenant selection from a client-controlled header. The
+        # authenticated tenant comes from the JWT in AuthMiddleware.
+        if not getattr(request.state, "tenant_id", None):
+            tenant_id = request.headers.get("X-Tenant-ID")
+            if tenant_id:
+                request.state.requested_tenant_id = tenant_id
 
-        # JWT claims are set by auth middleware (runs after this)
-        # So we check header first; auth middleware will override if present
-        tenant_id = request.headers.get("X-Tenant-ID")
-
-        if tenant_id:
-            request.state.tenant_id = tenant_id
         response = await call_next(request)
         return response
