@@ -67,36 +67,6 @@ async def generate_content(body: GenerateContentRequest, request: Request):
     return {"content_id": content_id, "content": result}
 
 
-@router.get("/{content_id}")
-@require_auth
-@require_role("hrbp")
-async def get_content(content_id: str, request: Request):
-    """Get saved culture content."""
-    tenant_id = require_tenant_id(request)
-    async with get_db(request) as session:  # type: ignore[arg-type]
-        row = (
-            (
-                await session.execute(
-                    select(CultureContent)
-                    .where(CultureContent.tenant_id == tenant_id, CultureContent.id == content_id)
-                )
-            )
-            .scalars()
-            .first()
-        )
-    if not row:
-        raise NotFoundError("Content", content_id)
-    return CultureContentResponse(
-        news_article=row.news_article,
-        group_notice=row.group_notice,
-        employee_story=row.employee_story,
-        event_copy=row.event_copy,
-        keywords_used=[],
-        tone=row.tone,
-        confidence=1.0,
-    )
-
-
 @router.get("/history")
 @require_auth
 @require_role("hrbp")
@@ -133,3 +103,32 @@ async def get_history(
         )
 
     return {"contents": contents, "total": len(contents)}
+
+
+@router.get("/{content_id}")
+@require_auth
+@require_role("hrbp")
+async def get_content(content_id: str, request: Request, session: AsyncSession = Depends(get_db)):
+    """Get saved culture content."""
+    tenant_id = require_tenant_id(request)
+    row = (
+        (
+            await session.execute(
+                select(CultureContent)
+                .where(CultureContent.tenant_id == tenant_id, CultureContent.id == content_id)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not row:
+        raise NotFoundError("Content", content_id)
+    return CultureContentResponse(
+        news_article=row.news_article,
+        group_notice=row.group_notice,
+        employee_story=row.employee_story,
+        event_copy=row.event_copy,
+        keywords_used=[],
+        tone=row.tone,
+        confidence=1.0,
+    )

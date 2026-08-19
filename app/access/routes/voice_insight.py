@@ -61,7 +61,8 @@ async def start_analysis(
 @require_role("hrbp")
 async def get_progress(task_id: str, request: Request):
     """Poll async task progress."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    status = await orchestrator.get_task_status(task_id, tenant_id)
     if not status:
         raise NotFoundError("Task", task_id)
     return {"task_id": task_id, "status": status.status, "progress": status.progress}
@@ -72,7 +73,8 @@ async def get_progress(task_id: str, request: Request):
 @require_role("hrbp")
 async def get_report(task_id: str, request: Request):
     """Get completed insight report."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    status = await orchestrator.get_task_status(task_id, tenant_id)
     if not status:
         raise NotFoundError("Task", task_id)
     if status.status != "completed":

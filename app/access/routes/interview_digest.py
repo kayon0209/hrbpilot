@@ -129,7 +129,8 @@ async def get_progress(
     request: Request,
 ):
     """Poll async task progress."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    status = await orchestrator.get_task_status(task_id, tenant_id)
     if not status:
         raise NotFoundError("Task", task_id)
 
@@ -149,7 +150,8 @@ async def get_result(
     request: Request,
 ):
     """Get completed interview digest result."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    status = await orchestrator.get_task_status(task_id, tenant_id)
     if not status:
         raise NotFoundError("Task", task_id)
 

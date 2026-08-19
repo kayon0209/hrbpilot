@@ -6,6 +6,8 @@ GET  /api/weekly-report/{report_id} → Get saved report
 GET  /api/weekly-report/history → Recent report history
 """
 
+import json
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +17,7 @@ from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.scenarios import WeeklyReport
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
-from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest, WeeklyReportResponse
+from app.scenarios.weekly_report.schemas import GenerateRequest, PlanItem, Priority, ProgressItem, RiskItem, SaveRequest, Severity, TaskStatus, WeeklyReportResponse
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
 
@@ -69,20 +71,19 @@ async def generate_report(
 @router.post("/save")
 @require_auth
 @require_role("hrbp")
-async def save_report(body: SaveRequest, request: Request):
+async def save_report(body: SaveRequest, request: Request, session: AsyncSession = Depends(get_db)):
     """Save or publish a weekly report."""
     tenant_id = require_tenant_id(request)
-    async with get_db(request) as session:  # type: ignore[arg-type]
-        row = (
-            (
-                await session.execute(
-                    select(WeeklyReport)
-                    .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == body.report_id)
-                )
+    row = (
+        (
+            await session.execute(
+                select(WeeklyReport)
+                .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == body.report_id)
             )
-            .scalars()
-            .first()
         )
+        .scalars()
+        .first()
+    )
     if not row:
         raise NotFoundError("Report", body.report_id)
 
@@ -130,3 +131,40 @@ async def get_history(
         )
 
     return {"reports": reports, "total": len(reports)}
+
+
+@router.get("/{report_id}")
+@require_auth
+@require_role("hrbp")
+async def get_report(report_id: str, request: Request, session: AsyncSession = Depends(get_db)):
+    """Get a saved weekly report by ID."""
+    tenant_id = require_tenant_id(request)
+    row = (
+        (
+            await session.execute(
+                select(WeeklyReport)
+                .where(WeeklyReport.tenant_id == tenant_id, WeeklyReport.id == report_id)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not row:
+        raise NotFoundError("Report", report_id)
+
+    def _loads(text: str):
+        try:
+            return json.loads(text or "[]")
+        except Exception:
+            return []
+
+    return WeeklyReportResponse(
+        period=row.period,
+        summary=row.summary,
+        progress=[ProgressItem.model_validate(item) for item in _loads(row.progress_json)],
+        risks=[RiskItem.model_validate(item) for item in _loads(row.risks_json)],
+        plan=[PlanItem.model_validate(item) for item in _loads(row.plan_json)],
+        data_sources=_loads(row.data_sources_json),
+        confidence=1.0,
+        has_evidence=True,
+    )

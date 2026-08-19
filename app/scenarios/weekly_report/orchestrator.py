@@ -120,8 +120,6 @@ class WeeklyReportOrchestrator:
             has_evidence=True,
         )
 
-        await self._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
-
         logger.info("weekly_report_generated", period=period, latency_ms=latency_ms)
         return result
 

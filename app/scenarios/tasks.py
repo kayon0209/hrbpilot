@@ -64,47 +64,6 @@ async def _update_task(task_id: str, tenant_id: str, **fields) -> None:
         await db.commit()
 
 
-async def _persist_interview_digest(tenant_id: str, result) -> None:
-    """Persist completed interview digest result for durable history."""
-    from app.data.database import get_session_factory
-    from app.data.models.scenarios import InterviewDigest
-
-    factory = get_session_factory()
-    async with factory() as db:
-        db.info["tenant_id"] = tenant_id
-        row = InterviewDigest(
-            tenant_id=tenant_id,
-            document_id=None,
-            demands_json=json.dumps([item.model_dump() for item in result.employee_demands], ensure_ascii=False),
-            risk_level=result.risk_level.value,
-            risk_signals_json=json.dumps(result.risk_signals, ensure_ascii=False),
-            action_items_json=json.dumps([item.model_dump() for item in result.action_items], ensure_ascii=False),
-            suggested_owner=result.suggested_owner,
-            summary=result.summary,
-        )
-        db.add(row)
-        await db.commit()
-
-
-async def _persist_voice_insight(tenant_id: str, task_id: str, result) -> None:
-    """Persist completed voice insight result for durable history."""
-    from app.data.database import get_session_factory
-    from app.data.models.scenarios import InsightReport
-
-    factory = get_session_factory()
-    async with factory() as db:
-        db.info["tenant_id"] = tenant_id
-        row = InsightReport(
-            tenant_id=tenant_id,
-            task_id=task_id,
-            clusters_json=json.dumps([item.model_dump() for item in result.clusters], ensure_ascii=False),
-            signals_json=json.dumps([item.model_dump() for item in result.risk_signals], ensure_ascii=False),
-            trends_json=json.dumps([item.model_dump() for item in result.trends], ensure_ascii=False),
-        )
-        db.add(row)
-        await db.commit()
-
-
 @celery_app.task(name="scenario.interview_digest", acks_late=True)  # type: ignore[untyped-decorator]
 def interview_digest_task(task_id: str, document_content: str, tenant_id: str, user_id: str) -> None:
     """Run interview digest analysis and persist the result."""
@@ -131,7 +90,6 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
                 completed_at=datetime.now(timezone.utc),
             )
         )
-        run_async_in_worker(_persist_interview_digest(tenant_id, result))
     except Exception as exc:
         logger.error("interview_digest_task_failed", task_id=task_id, error=str(exc))
         run_async_in_worker(
@@ -172,7 +130,6 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
                 completed_at=datetime.now(timezone.utc),
             )
         )
-        run_async_in_worker(_persist_voice_insight(tenant_id, task_id, result))
     except Exception as exc:
         logger.error("voice_insight_task_failed", task_id=task_id, error=str(exc))
         run_async_in_worker(

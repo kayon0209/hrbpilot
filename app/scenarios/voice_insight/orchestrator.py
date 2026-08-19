@@ -10,7 +10,6 @@ persisted results are written to the scenario tables.
 import json
 import time
 import uuid
-from datetime import datetime, timezone
 
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
@@ -119,13 +118,6 @@ class VoiceInsightOrchestrator:
             has_evidence=True,
         )
 
-        await self._store_result(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            result=result,
-            raw_documents=documents,
-        )
-
         logger.info(
             "voice_insight_completed",
             clusters=len(clusters),
@@ -134,48 +126,6 @@ class VoiceInsightOrchestrator:
         )
 
         return result
-
-    async def _store_result(
-        self,
-        tenant_id: str,
-        user_id: str,
-        result: InsightReportResponse,
-        raw_documents: list[dict],
-    ) -> None:
-        """Persist the insight result to PostgreSQL for durable history."""
-        try:
-            from app.data.database import get_session_factory
-            from app.data.models.infra import AsyncTask
-            from app.data.models.scenarios import InsightReport
-
-            factory = get_session_factory()
-            async with factory() as db:
-                db.info["tenant_id"] = tenant_id
-                record = InsightReport(
-                    tenant_id=tenant_id,
-                    task_id=str(uuid.uuid4()),
-                    clusters_json=result.model_dump_json(),
-                    signals_json=json.dumps([item.model_dump() for item in result.risk_signals], ensure_ascii=False),
-                    trends_json=json.dumps([item.model_dump() for item in result.trends], ensure_ascii=False),
-                )
-                db.add(record)
-                task = AsyncTask(
-                    tenant_id=tenant_id,
-                    type="voice_insight",
-                    status="completed",
-                    progress=100,
-                    result_json=result.model_dump_json(),
-                    completed_at=datetime.now(timezone.utc),
-                )
-                db.add(task)
-                await db.commit()
-        except Exception as exc:
-            logger.warning(
-                "voice_insight_persist_failed",
-                error=str(exc),
-                user_id=user_id,
-                docs_count=len(raw_documents),
-            )
 
     async def start_async_task(
         self, documents: list[dict], tenant_id: str, user_id: str
@@ -218,14 +168,25 @@ class VoiceInsightOrchestrator:
 
         return task_id
 
-    async def get_task_status(self, task_id: str) -> TaskStatusResponse | None:
+    async def get_task_status(self, task_id: str, tenant_id: str) -> TaskStatusResponse | None:
         """Get the status of an async voice insight task from the database."""
+        from sqlalchemy import select
+
         from app.data.database import get_session_factory
         from app.data.models.infra import AsyncTask
 
         factory = get_session_factory()
         async with factory() as db:
-            row = await db.get(AsyncTask, task_id)
+            db.info["tenant_id"] = tenant_id
+            row = (
+                (
+                    await db.execute(
+                        select(AsyncTask).where(AsyncTask.id == task_id, AsyncTask.tenant_id == tenant_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if not row:
                 return None
             result = None

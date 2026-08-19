@@ -27,6 +27,9 @@ class ChatMessage(Base, UUIDPrimaryKey, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     citations_json: Mapped[str | None] = mapped_column(Text, default=None)  # JSON array of citation sources
     confidence: Mapped[float | None] = mapped_column(Float, default=None)
+    feedback_rating: Mapped[str | None] = mapped_column(String(10), default=None)
+    feedback_correction: Mapped[str | None] = mapped_column(Text, default=None)
+    feedback_at: Mapped[float | None] = mapped_column(Float, default=None)
 
     def __repr__(self) -> str:
         return f"<ChatMessage id={self.id} role={self.role} session={self.session_id}>"
