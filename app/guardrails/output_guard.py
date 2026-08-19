@@ -12,6 +12,7 @@ Per architecture spec ADR-004:
   - Toxicity detected → replace with safe response
 """
 
+from app.config.settings import settings
 from app.rag.retrieval.tokenizer import tokenize
 from app.shared.logger import get_logger
 
@@ -68,7 +69,7 @@ class OutputGuardrail:
                 logger.info("output_guardrail_citation_warning")
 
         # 3. Factuality check — flag, don't block
-        if "factuality_check" in rules:
+        if "factuality_check" in rules and settings.guardrail_factuality_check_enabled:
             if self._check_factuality(processed, sources):
                 flags["factuality_issues"] = True
                 flags["warnings"].append("factuality_flagged")

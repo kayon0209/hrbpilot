@@ -147,8 +147,8 @@ class CultureContentOrchestrator:
                 await db.refresh(record)
                 return record.id
         except Exception as exc:
-            logger.error("culture_content_persist_failed", error=str(exc), user_id=user_id)
-            raise
+            logger.warning("culture_content_persist_failed", error=str(exc), user_id=user_id)
+            return ""
 
     def save_content(self, content_id: str, content: CultureContentResponse):
         """Save content to in-memory store."""

@@ -150,5 +150,5 @@ class WeeklyReportOrchestrator:
                 await db.refresh(record)
                 return record.id
         except Exception as exc:
-            logger.error("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
-            raise
+            logger.warning("weekly_report_persist_failed", error=str(exc), user_id=user_id, sources=len(source_data))
+            return ""
