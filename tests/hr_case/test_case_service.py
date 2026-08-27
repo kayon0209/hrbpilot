@@ -101,7 +101,10 @@ async def test_full_lifecycle_through_service(session_factory):
         assert plan.steps_json and json.loads(plan.steps_json)[0]["tool"] == "create_hr_case"
 
         approval = await service.request_approval(
-            case_id, tool_name="create_hr_case", params={"title": "加班费争议"}, plan_id=plan.id
+            case_id,
+            tool_name="create_hr_case",
+            params={"title": "加班费争议", "subject_ref": "S1", "category": "overtime"},
+            plan_id=plan.id,
         )
         decided = await service.decide_approval(
             approval.id, approver_id="u9", decision="approve", reason="ok", role="hr_manager"
@@ -109,7 +112,11 @@ async def test_full_lifecycle_through_service(session_factory):
         assert decided.status == "APPROVED"
 
         execution = await service.begin_tool_execution(
-            case_id, "create_hr_case", {"title": "加班费争议"}, request_id="req-1", approval_id=approval.id
+            case_id,
+                "create_hr_case",
+                {"title": "加班费争议", "subject_ref": "S1", "category": "overtime"},
+                request_id="req-1",
+                approval_id=approval.id,
         )
         await service.finish_tool_execution(execution.id, ok=True, result_summary="case created")
         events = await service.list_events(case_id)
@@ -180,7 +187,9 @@ async def test_rejected_approval_cannot_execute(session_factory):
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
-        approval = await service.request_approval(case_id, "create_hr_case", {"title": "x"}, plan_id=plan.id)
+        approval = await service.request_approval(
+            case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
+        )
         await service.decide_approval(approval.id, "u9", "reject", "不需要建单", role="hr_manager")
         with pytest.raises(ApprovalError):
             await service.begin_tool_execution(
@@ -195,7 +204,9 @@ async def test_expired_approval_rejected(session_factory):
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
-        approval = await service.request_approval(case_id, "create_hr_case", {"title": "x"}, plan_id=plan.id, ttl_seconds=-1)
+        approval = await service.request_approval(
+            case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id, ttl_seconds=-1
+        )
         with pytest.raises(ApprovalError):
             await service.decide_approval(approval.id, "u9", "approve", None, role="admin")
 
@@ -207,7 +218,9 @@ async def test_employee_cannot_decide_approvals(session_factory):
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
-        approval = await service.request_approval(case_id, "create_hr_case", {"title": "x"}, plan_id=plan.id)
+        approval = await service.request_approval(
+            case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
+        )
         with pytest.raises(CasePermissionDeniedError):
             await service.decide_approval(approval.id, "u2", "approve", None, role="employee")
 
@@ -219,11 +232,17 @@ async def test_params_mismatch_between_approval_and_execution(session_factory):
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
-        approval = await service.request_approval(case_id, "create_hr_case", {"title": "真标题"}, plan_id=plan.id)
+        approval = await service.request_approval(
+            case_id, "create_hr_case", {"title": "真标题", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
+        )
         await service.decide_approval(approval.id, "u9", "approve", None, role="hr_manager")
         with pytest.raises(ApprovalError):
             await service.begin_tool_execution(
-                case_id, "create_hr_case", {"title": "换掉的标题"}, request_id="req-4", approval_id=approval.id
+                case_id,
+                "create_hr_case",
+                {"title": "换掉的标题", "subject_ref": "S1", "category": "overtime"},
+                request_id="req-4",
+                approval_id=approval.id,
             )
 
 

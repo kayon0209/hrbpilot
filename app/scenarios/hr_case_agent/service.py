@@ -179,12 +179,22 @@ class HRCaseService:
         case = await self.get_case(case_id)
         case.status = case_state.transition(case.status, case_state.AWAITING_APPROVAL)
         expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+        # Normalize first so the stored params carry schema defaults; the
+        # execution-side re-validation then produces the identical dict.
+        from app.scenarios.hr_case_agent.tools import validate_tool_call
+
+        try:
+            normalized = validate_tool_call(tool_name, params)
+        except Exception as e:
+            raise ApprovalError(f"Invalid params for {tool_name}: {e}") from e
+        params_json = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
         approval = ApprovalRequest(
             tenant_id=self.tenant_id,
             case_id=case_id,
             plan_id=plan_id,
             tool_name=tool_name,
-            params_json=json.dumps(params, ensure_ascii=False),
+            params_json=params_json,
+            input_hash=_hash_params(tool_name, normalized),
             requested_by=agent_run_id,
             expires_at=expires,
         )
@@ -263,7 +273,15 @@ class HRCaseService:
         if existing is not None:
             return existing
 
-        input_hash = _hash_params(tool_name, params)
+        # Approval↔execution binding compares the schema-normalized form
+        # (defaults included) so a re-validated call always hashes equal.
+        try:
+            from app.scenarios.hr_case_agent.tools import validate_tool_call
+
+            normalized_for_hash = validate_tool_call(tool_name, params)
+        except Exception:
+            normalized_for_hash = params
+        input_hash = _hash_params(tool_name, normalized_for_hash)
 
         if tool_name in WRITE_TOOLS:
             if approval_id is None:
@@ -284,7 +302,9 @@ class HRCaseService:
                 raise ApprovalError(f"Approval {approval_id} expired")
             if approval.status != "APPROVED":
                 raise ApprovalError(f"Tool {tool_name} requires APPROVED status, got {approval.status}")
-            if approval.params_json != json.dumps(params, ensure_ascii=False):
+            # Byte-for-byte params identity: the approval's stored params and
+            # the executed params must hash to the same input_hash.
+            if approval.input_hash is not None and approval.input_hash != input_hash:
                 raise ApprovalError("Approval does not match the executed params")
             approval.status = "CONSUMED"
 

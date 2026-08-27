@@ -90,6 +90,7 @@ def upgrade() -> None:
         sa.Column("plan_id", sa.String(length=36), sa.ForeignKey("case_plans.id"), nullable=True),
         sa.Column("tool_name", sa.String(length=50), nullable=False),
         sa.Column("params_json", sa.Text(), nullable=False),
+        sa.Column("input_hash", sa.String(length=64), nullable=True),
         sa.Column("status", sa.String(length=20), nullable=False, server_default="PENDING"),
         sa.Column("requested_by", sa.String(length=36), nullable=True),
         sa.Column("approver_id", sa.String(length=36), sa.ForeignKey("users.id"), nullable=True),

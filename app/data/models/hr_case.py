@@ -68,6 +68,7 @@ class ApprovalRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     plan_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("case_plans.id"), default=None)
     tool_name: Mapped[str] = mapped_column(String(50), nullable=False)
     params_json: Mapped[str] = mapped_column(Text, nullable=False)
+    input_hash: Mapped[str | None] = mapped_column(String(64), default=None)  # sha256 of tool+params
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
     requested_by: Mapped[str | None] = mapped_column(String(36), default=None)  # agent run
     approver_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), default=None)
