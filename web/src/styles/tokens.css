@@ -1,0 +1,15 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap");
+
+:root {
+  --canvas: #f7f7f4;
+  --surface: #ffffff;
+  --ink: #20231f;
+  --muted: #6c716a;
+  --action: #245b4d;
+  --evidence: #a9652b;
+  --danger: #b8473f;
+  --line: #e3e5df;
+  --font-display: "Noto Serif SC", serif;
+  --font-body: "Noto Sans SC", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
