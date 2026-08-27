@@ -54,7 +54,9 @@ services:
       POSTGRES_PASSWORD: postgres_local_password
       POSTGRES_DB: hrbp_workbench
     ports:
-      - "5432:5432"
+      # Host 5432 is occupied by a local Windows PostgreSQL service; publish
+      # the container on 5433 so both can coexist. Point DATABASE_URL at it.
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-application-role.sql:ro
