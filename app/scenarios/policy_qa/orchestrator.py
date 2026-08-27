@@ -47,16 +47,16 @@ class PolicyQAOrchestrator:
             guarded_input, input_flags = await self.input_guard.check(
                 rewritten_query, self.config.guardrail_rules.input
             )
-            if input_flags.get("blocked"):
-                return QAResponse(
-                    answer=str(input_flags.get("block_message", "输入被护栏拦截")),
-                    citations=[],
-                    confidence=0.0,
-                    has_evidence=False,
-                    guardrail_flags={"input": input_flags},
-                    latency_ms=int((time.time() - start_time) * 1000),
-                    tokens_used=0,
-                )
+        if input_flags.get("blocked"):
+            return QAResponse(
+                answer=str(input_flags.get("block_message", "输入被护栏拦截")),
+                citations=[],
+                confidence=0.0,
+                has_evidence=False,
+                guardrail_flags={"input": input_flags},
+                latency_ms=int((time.time() - start_time) * 1000),
+                tokens_used=0,
+            )
 
         context_chunks = []
         target_kb_id = kb_id or self.config.knowledge_base_id
@@ -87,15 +87,11 @@ class PolicyQAOrchestrator:
 
         final_output = await no_evidence_fallback(guarded_output, self.config, context_chunks)
         confidence = max((float(chunk.get("confidence", 0.0) or 0.0) for chunk in context_chunks), default=0.0)
-        citations = [
-            CitationSource(
-                document_name=s.get("source", "unknown"),
-                section=s.get("section", "unknown"),
-                content_snippet=s.get("content", "")[:200],
-                confidence=min(1.0, max(0.0, float(s.get("confidence", 0.0) or 0.0))),
-            )
-            for s in context_chunks[:3]
-        ]
+        # Citations must mirror ONLY the evidence actually backing the answer.
+        # When the no-evidence fallback replaced the LLM output, the LLM's
+        # (possibly fabricated) claims are gone — so are its citations.
+        evidence_used = confidence >= settings.guardrail_confidence_threshold
+        citations = self._build_citations(context_chunks) if evidence_used else []
         latency_ms = int((time.time() - start_time) * 1000)
 
         if self.config.eval_metrics:
@@ -116,11 +112,29 @@ class PolicyQAOrchestrator:
             answer=final_output,
             citations=citations,
             confidence=confidence,
-            has_evidence=confidence >= settings.guardrail_confidence_threshold,
+            has_evidence=evidence_used,
             guardrail_flags={"input": input_flags, "output": output_flags},
             latency_ms=latency_ms,
             tokens_used=tokens_used,
         )
+
+    @staticmethod
+    def _build_citations(context_chunks: list[dict]) -> list[CitationSource]:
+        """Bind structured citations to the retrieved evidence chunks.
+
+        Mirrors the chunks that were actually fed to generation so
+        ``QAResponse.citations`` and the retrieval evidence stay consistent
+        (Phase 2: production/evaluation path alignment).
+        """
+        return [
+            CitationSource(
+                document_name=s.get("source", "unknown"),
+                section=s.get("section", "unknown"),
+                content_snippet=s.get("content", "")[:200],
+                confidence=min(1.0, max(0.0, float(s.get("confidence", 0.0) or 0.0))),
+            )
+            for s in context_chunks[:3]
+        ]
 
     async def execute_stream(
         self, question: str, tenant_id: str, user_id: str, kb_id: str | None = None
