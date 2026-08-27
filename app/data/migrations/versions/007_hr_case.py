@@ -19,6 +19,11 @@ depends_on: str | Sequence[str] | None = None
 
 TABLES = ("hr_cases", "case_plans", "approval_requests", "tool_executions", "case_events", "agent_runs")
 
+_TIMESTAMPS = (
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+)
+
 
 def _add_rls(table: str) -> None:
     op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
@@ -34,6 +39,7 @@ def _drop_rls(table: str) -> None:
 
 
 def upgrade() -> None:
+    # Order matters: agent_runs is referenced by case_plans / tool_executions.
     op.create_table(
         "hr_cases",
         sa.Column("id", sa.String(length=36), primary_key=True),
@@ -46,22 +52,7 @@ def upgrade() -> None:
         sa.Column("owner_id", sa.String(length=36), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-    )
-
-    op.create_table(
-        "case_plans",
-        sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("tenant_id", sa.String(length=36), nullable=False, index=True),
-        sa.Column("case_id", sa.String(length=36), sa.ForeignKey("hr_cases.id"), nullable=False, index=True),
-        sa.Column("agent_run_id", sa.String(length=36), sa.ForeignKey("agent_runs.id"), nullable=True),
-        sa.Column("steps_json", sa.Text(), nullable=False),
-        sa.Column("rationale", sa.Text(), nullable=True),
-        sa.Column("risk_notes", sa.Text(), nullable=True),
-        sa.Column("estimated_tokens", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        *_TIMESTAMPS,
     )
 
     op.create_table(
@@ -75,8 +66,20 @@ def upgrade() -> None:
         sa.Column("tokens_used", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("handoff_reason", sa.Text(), nullable=True),
         sa.Column("final_state", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        *_TIMESTAMPS,
+    )
+
+    op.create_table(
+        "case_plans",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("tenant_id", sa.String(length=36), nullable=False, index=True),
+        sa.Column("case_id", sa.String(length=36), sa.ForeignKey("hr_cases.id"), nullable=False, index=True),
+        sa.Column("agent_run_id", sa.String(length=36), sa.ForeignKey("agent_runs.id"), nullable=True),
+        sa.Column("steps_json", sa.Text(), nullable=False),
+        sa.Column("rationale", sa.Text(), nullable=True),
+        sa.Column("risk_notes", sa.Text(), nullable=True),
+        sa.Column("estimated_tokens", sa.Integer(), nullable=True),
+        *_TIMESTAMPS,
     )
 
     op.create_table(
@@ -93,8 +96,7 @@ def upgrade() -> None:
         sa.Column("decision_reason", sa.Text(), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        *_TIMESTAMPS,
     )
 
     op.create_table(
@@ -112,8 +114,7 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(length=50), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("attempt", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        *_TIMESTAMPS,
         sa.UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),
     )
 
@@ -127,8 +128,7 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(length=40), nullable=False),
         sa.Column("payload_json", sa.Text(), nullable=True),
         sa.Column("actor", sa.String(length=80), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        *_TIMESTAMPS,
         sa.UniqueConstraint("case_id", "seq", name="uq_case_events_case_seq"),
     )
 
@@ -142,6 +142,6 @@ def downgrade() -> None:
     op.drop_table("case_events")
     op.drop_table("tool_executions")
     op.drop_table("approval_requests")
-    op.drop_table("agent_runs")
     op.drop_table("case_plans")
+    op.drop_table("agent_runs")
     op.drop_table("hr_cases")
