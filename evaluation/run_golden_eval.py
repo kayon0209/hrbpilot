@@ -32,9 +32,12 @@ Outputs: evaluation/results/golden_eval_<timestamp>.json  (+ token_usage jsonl)
 """
 
 import asyncio
+import hashlib
 import json
+import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -57,7 +60,7 @@ from app.evaluation.golden_metrics import (  # noqa: E402
 from app.guardrails.input_guard import InputGuardrail  # noqa: E402
 from app.guardrails.output_guard import OutputGuardrail  # noqa: E402
 from app.rag.config_loader import load_scenario_config  # noqa: E402
-from app.rag.llm.orchestrator import LLMOrchestrator, get_llm_client  # noqa: E402
+from app.rag.llm.orchestrator import LLMOrchestrator, get_active_model, get_llm_client  # noqa: E402
 from app.rag.pipeline import CapabilityPipeline  # noqa: E402
 from app.rag.retrieval.retriever import Retriever  # noqa: E402
 from app.shared.token_budget import DEFAULT_MONTHLY_BUDGET, record_token_usage  # noqa: E402
@@ -82,6 +85,67 @@ def llm_available() -> bool:
 REAL_LLM = llm_available()
 TENANT = "eval-runner"
 USER = "eval"
+
+
+def _git_commit() -> str:
+    """Return the HEAD commit this run was executed at."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    except Exception:
+        return "unknown"
+
+
+def _dataset_hash() -> str:
+    """Stable SHA-256 over the full golden dataset content and order."""
+    payload = []
+    for sid in sorted(GOLDEN):
+        payload.append(
+            {
+                "scenario_id": sid,
+                "samples": [
+                    {
+                        "input": s.input,
+                        "expected_output_contains": list(s.expected_output_contains),
+                        "expected_citations": list(s.expected_citations or []),
+                        "expected_risk_level": s.expected_risk_level,
+                        "should_reject": s.should_reject,
+                    }
+                    for s in GOLDEN[sid]
+                ],
+            }
+        )
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _active_model_name() -> str | None:
+    """Provider/model identifier for the run — never API keys."""
+    try:
+        return get_active_model()
+    except Exception:
+        return None
+
+
+def _build_output_header(mode: str, total_samples: int, scored: int, errors: int) -> dict:
+    """Run-claimability header.
+
+    A run is only usable for external claims when it is a REAL-LLM run that
+    covered every sample without errors; incomplete runs stay visibly
+    unclaimable even in REAL mode.
+    """
+    complete = total_samples > 0 and scored == total_samples and errors == 0
+    header: dict = {"mode": mode, "for_external_claims": mode == "REAL-LLM" and complete}
+    if mode != "REAL-LLM":
+        header["mock_notice"] = (
+            "[MOCK-LLM MODE] Outputs and scores are SYNTHETIC. "
+            "Do NOT use this run for external or resume claims."
+        )
+    elif not complete:
+        header["claims_notice"] = (
+            f"[INCOMPLETE RUN] {scored}/{total_samples} samples scored with {errors} errors. "
+            "Do NOT use this run for external or resume claims."
+        )
+    return header
 
 
 class MockLLMGenerator:
@@ -109,11 +173,13 @@ async def guardrail_pass() -> dict:
     """Offline-real guardrail evaluation over all golden inputs."""
     input_guard = InputGuardrail()
     rows = []
+    guardrail_errors = 0
     for sid, samples in GOLDEN.items():
         try:
             config = load_scenario_config(sid)
         except Exception as e:
             print(f"  [warn] cannot load config for {sid}: {e}")
+            guardrail_errors += len(samples)
             continue
         rules = config.guardrail_rules.input
         for s in samples:
@@ -123,6 +189,7 @@ async def guardrail_pass() -> dict:
                 blocked = bool(flags.get("blocked"))
             except Exception as e:
                 print(f"  [warn] guardrail check failed for {sid}: {e}")
+                guardrail_errors += 1
             rows.append({
                 "scenario": sid,
                 "should_reject": s.should_reject,
@@ -144,6 +211,7 @@ async def guardrail_pass() -> dict:
         "injection_recall": inj_recall,  # fraction of injection attempts correctly blocked
         "normal_cases": len(normal_rows),
         "false_positive_rate": fp,  # fraction of legit queries wrongly blocked
+        "error_count": guardrail_errors,
         "rows": rows,
     }
 
@@ -163,7 +231,7 @@ async def quality_pass(llm, token_log: list) -> dict:
     )
 
     per_sample = []
-    scenario_acc = {sid: {"kw": [], "cit": [], "n": 0} for sid in GOLDEN}
+    scenario_acc = {sid: {"kw": [], "cit": [], "n": 0, "errors": 0} for sid in GOLDEN}
 
     for sid, samples in GOLDEN.items():
         config = load_scenario_config(sid)
@@ -185,6 +253,7 @@ async def quality_pass(llm, token_log: list) -> dict:
                     .get("blocked", False)
                 )
             except Exception as e:
+                scenario_acc[sid]["errors"] += 1
                 per_sample.append({"scenario": sid, "error": str(e)})
                 continue
 
@@ -228,10 +297,16 @@ async def quality_pass(llm, token_log: list) -> dict:
         n = acc["n"]
         summary[sid] = {
             "n": n,
+            "errors": acc["errors"],
             "avg_keyword_recall": round(sum(acc["kw"]) / n, 4) if n else 0.0,
             "avg_citation_recall": round(sum(acc["cit"]) / n, 4) if n else 0.0,
         }
-    return {"per_sample": per_sample, "scenario_summary": summary}
+    return {
+        "per_sample": per_sample,
+        "scenario_summary": summary,
+        "sample_count": sum(acc["n"] for acc in scenario_acc.values()),
+        "error_count": sum(acc["errors"] for acc in scenario_acc.values()),
+    }
 
 
 def main() -> None:
@@ -261,24 +336,49 @@ def main() -> None:
     q = asyncio.run(quality_pass(llm, token_log))
     print("   per-scenario avg keyword/citation recall:")
     for sid, s in q["scenario_summary"].items():
-        print(f"     {sid:18s} n={s['n']:3d}  kw={s['avg_keyword_recall']}  cit={s['avg_citation_recall']}")
+        print(f"     {sid:18s} n={s['n']:3d} err={s['errors']} kw={s['avg_keyword_recall']} cit={s['avg_citation_recall']}")
+    print(f"   scored={q['sample_count']} errors={q['error_count']}")
 
     total_tokens = sum(t.get("tokens", t.get("est_total_tokens", 0)) for t in token_log)
     real_tokens = sum(t["tokens"] for t in token_log if t.get("real"))
-    out = {
-        "run_at": ts,
-        "mode": mode,
+    estimated_tokens = total_tokens - real_tokens
+    real_samples = sum(1 for t in token_log if t.get("real"))
+
+    out: dict = {
+        "run": {
+            "run_id": uuid.uuid4().hex[:12],
+            "run_at": ts,
+            "git_commit": _git_commit(),
+            "dataset_hash": _dataset_hash(),
+            "dataset_sizes": {sid: len(samples) for sid, samples in sorted(GOLDEN.items())},
+            "mode": mode,
+            "provider_model": _active_model_name() if REAL_LLM else None,
+            "tenant": TENANT,
+            "monthly_budget": DEFAULT_MONTHLY_BUDGET,
+        },
+        "sample_count": q["sample_count"],
+        "error_count": q["error_count"],
+        "guardrail_error_count": gr.get("error_count", 0),
         "monthly_budget": DEFAULT_MONTHLY_BUDGET,
         "guardrail": {k: v for k, v in gr.items() if k != "rows"},
         "quality_scenario_summary": q["scenario_summary"],
         "token_totals": {
             "samples_scored": len(token_log),
+            "real_samples": real_samples,
+            "estimated_samples": len(token_log) - real_samples,
             "total_tokens": total_tokens,
             "real_tokens": real_tokens,
+            "estimated_tokens": estimated_tokens,
             "budget_pct": round(100 * total_tokens / DEFAULT_MONTHLY_BUDGET, 4),
         },
         "per_sample": q["per_sample"],
         "guardrail_rows": gr["rows"],
+    }
+    # Claimability header must sit at the very top of the result file.
+    total_samples = sum(len(v) for v in GOLDEN.values())
+    out = {
+        **_build_output_header(mode, total_samples, q["sample_count"], q["error_count"] + gr.get("error_count", 0)),
+        **out,
     }
 
     result_path = results_dir / f"golden_eval_{ts}.json"

@@ -44,6 +44,14 @@ async def get_redis() -> Redis | None:
         return _client
     except Exception as e:
         _client_unavailable = True
-        _client = None
+        if _client is not None:
+            # Shut the failed connection down cleanly, otherwise its
+            # transport error surfaces later as an orphaned
+            # "Future exception was never retrieved" warning.
+            try:
+                await _client.aclose()
+            except Exception:
+                pass
+            _client = None
         logger.warning("redis_unavailable", error=str(e), msg="falling back to in-memory")
         return None
