@@ -129,7 +129,7 @@ flowchart TB
 
 ## 📊 评测结果（真实 LLM 跑通）
 
-2026-07-30 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM 完整跑通。
+2026-07-30 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM 完整跑通。样本构成：`policy_qa` 与 `interview_digest` 共 **100 条人工撰写**；`voice_insight`、`weekly_report`、`culture_content` 共 **150 条由确定性模板扩增**，两类不可混作同一数据质量口径。
 
 <table>
 <tr>

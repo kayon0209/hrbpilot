@@ -129,7 +129,7 @@ flowchart TB
 
 ## 📊 Evaluation results (real LLM run)
 
-On 2026-07-30 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM.
+On 2026-07-30 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM. Composition: `policy_qa` and `interview_digest` account for **100 hand-written samples**; `voice_insight`, `weekly_report`, and `culture_content` are **150 deterministically parameterized samples** — the two groups must not be presented as a single data-quality figure.
 
 <table>
 <tr>
