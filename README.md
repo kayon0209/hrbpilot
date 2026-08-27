@@ -331,7 +331,22 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 ## ⚠️ 已知限制
 
 - `weekly_report` 场景的关键词命中（0.32）偏低，主要因周报自由文本难以用关键词衡量，正在优化评测方式。
-- `policy_qa` 的引用覆盖率（0.33）仍有提升空间，是当前优先改进方向。
+- `policy_qa` 的引用覆盖率（0.33，legacy 子串口径）仍有提升空间；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测受限于本地环境（5432 端口冲突已解决、EMBEDDING_API_KEY 待配置）。
+
+## 🤖 HR Case Agent（受控执行体，Phase 4–7 新增）
+
+在五个分析场景之外，新增一个边界清晰的 HR Case Agent：员工/HR 提出问题 → 风险识别 → 制度取证 → 计划生成 → **人工审批** → 执行写工具（建单/指派/通知/状态更新）→ 审计留痕。
+
+- 状态机唯一可信：`NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED`，非法跳转一律 422（`app/scenarios/hr_case_agent/state.py`）。
+- 写工具四重门禁：审批 APPROVED、未过期、参数哈希一致、未消费；审批与执行是两个独立请求。
+- 失败恢复：写工具失败 → 案件 FAILED → **必须新审批 + 新 request_id** 才能重试，消费过的审批不可复用。
+- 可观测性：`GET /api/v1/hr-cases/{id}/runs/{run_id}` 返回计划、工具执行、审批与事件全链路。
+- Token 治理：Redis 热计数 + PostgreSQL `token_ledger` 追加式账本，(tenant, request_id) 唯一约束防重复结算。
+- 评测门禁（OFFLINE-DETERMINISTIC）：未授权写 = 0、重复副作用 = 0、高风险转人工 ≥ 0.95、误升级 ≤ 0.10、审批门 = 1.0（`tests/evaluation/test_agent_trajectory_gate.py`）。
+- 演示：`python scripts/demo_hr_case.py` 覆盖成功、拒绝、失败恢复三条旅程。
+- 设计决策与运维手册：`docs/upgrade/ADR-0001-single-bounded-agent.md` · `docs/upgrade/HR_CASE_AGENT_RUNBOOK.md`。
+
+> 诚实声明：Agent 评测为离线确定性模式，未宣称 REAL-LLM 端到端数字；生产写工具执行器（create/assign/notify 的真实下游）未接入，当前为 501 TOOL_EXECUTOR_MISSING 显式暴露。
 
 ---
 
