@@ -157,6 +157,8 @@ async def test_duplicate_request_id_is_idempotent(session_factory):
         first = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-dup", approval_id=approval.id
         )
+        await service.finish_tool_execution(first.id, ok=True, result_summary="done")
+        # same request_id after SUCCESS → returns the SUCCEEDED row, no new side effect
         second = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-dup", approval_id=approval.id
         )
@@ -271,3 +273,28 @@ async def test_events_are_monotonic_per_case(session_factory):
         # CASE_CREATED + 3 transitions for id1; CASE_CREATED + 1 for id2
         assert [e.seq for e in events1] == [1, 2, 3, 4]
         assert [e.seq for e in events2] == [1, 2]
+
+
+async def test_failed_execution_cannot_rerun_under_consumed_approval(session_factory):
+    """Phase 7 demo finding: a FAILED execution must not silently re-run under
+    its consumed approval — retry requires a fresh approval + request_id."""
+    case_id = await make_case(session_factory)
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[{"tool": "update_case_status", "params": {"status": "RESOLVED"}}])
+        approval = await service.request_approval(
+            case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
+        )
+        await service.decide_approval(approval.id, "u9", "approve", None, role="admin")
+
+        first = await service.begin_tool_execution(
+            case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-f", approval_id=approval.id
+        )
+        await service.finish_tool_execution(first.id, ok=False, error_code="PROVIDER_TIMEOUT")
+
+        with pytest.raises(ApprovalError):
+            await service.begin_tool_execution(
+                case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-f", approval_id=approval.id
+            )

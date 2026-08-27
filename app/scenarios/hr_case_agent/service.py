@@ -276,6 +276,15 @@ class HRCaseService:
             )
         ).scalars().first()
         if existing is not None:
+            # Only a SUCCEEDED execution is truly done. A FAILED row under a
+            # CONSUMED approval must not be silently re-executed — retrying
+            # requires a FRESH approval (Phase 7 demo uncovered this).
+            if existing.status == "SUCCEEDED":
+                return existing
+            if tool_name in WRITE_TOOLS:
+                raise ApprovalError(
+                    f"Execution {request_id} previously {existing.status}; obtain a new approval and a new request_id to retry"
+                )
             return existing
 
         # Approval↔execution binding compares the schema-normalized form

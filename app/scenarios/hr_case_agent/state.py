@@ -57,7 +57,9 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     PLAN_READY: frozenset({AWAITING_APPROVAL}),
     AWAITING_APPROVAL: frozenset({EXECUTING, PLAN_READY}),
     EXECUTING: frozenset({RESOLVED, FAILED}),
-    FAILED: frozenset({EXECUTING}),
+    # Failed write tools need a FRESH approval before retry (the consumed
+    # approval cannot be reused) — hence FAILED → AWAITING_APPROVAL.
+    FAILED: frozenset({EXECUTING, AWAITING_APPROVAL}),
     RESOLVED: frozenset(),
     HANDED_OFF: frozenset(),
 }
