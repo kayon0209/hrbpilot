@@ -278,3 +278,91 @@ def json_loads_safe(raw: str | None) -> dict:
         return json.loads(raw) if raw else {}
     except json.JSONDecodeError:
         return {"raw": raw}
+
+
+@router.get("/{case_id}/runs/{run_id}")
+@require_auth
+async def get_agent_run_trace(case_id: str, run_id: str, request: Request, session: AsyncSession = Depends(get_db)):
+    """Observability: full trace of one agent run (Phase 7).
+
+    Returns the run record, its plan, tool executions, approval decisions,
+    and the slice of case events belonging to this run — everything needed
+    to reconstruct what the agent did and why.
+    """
+    service = _service(request, session)
+    await service.get_case(case_id)  # tenant check
+
+    from sqlalchemy import select
+
+    from app.data.models.hr_case import AgentRun, ApprovalRequest, CasePlan, ToolExecution
+
+    run = (
+        await session.execute(
+            select(AgentRun).where(AgentRun.id == run_id, AgentRun.case_id == case_id, AgentRun.tenant_id == service.tenant_id)
+        )
+    ).scalars().first()
+    if run is None:
+        raise NotFoundError("Agent run", run_id)
+
+    plan = (
+        await session.execute(
+            select(CasePlan).where(CasePlan.agent_run_id == run_id, CasePlan.tenant_id == service.tenant_id).order_by(CasePlan.created_at.desc())
+        )
+    ).scalars().first()
+
+    executions = (
+        await session.execute(
+            select(ToolExecution).where(ToolExecution.agent_run_id == run_id, ToolExecution.tenant_id == service.tenant_id).order_by(ToolExecution.created_at.asc())
+        )
+    ).scalars().all()
+
+    approvals = (
+        await session.execute(
+            select(ApprovalRequest).where(ApprovalRequest.case_id == case_id, ApprovalRequest.tenant_id == service.tenant_id).order_by(ApprovalRequest.created_at.asc())
+        )
+    ).scalars().all()
+
+    events = await service.list_events(case_id)
+    run_events = [e for e in events if e.agent_run_id == run_id]
+
+    return {
+        "run": {
+            "id": run.id,
+            "goal": run.goal,
+            "status": run.status,
+            "steps_taken": run.steps_taken,
+            "tokens_used": run.tokens_used,
+            "handoff_reason": run.handoff_reason,
+        },
+        "plan": {
+            "id": plan.id if plan else None,
+            "steps": json.loads(plan.steps_json) if plan else [],
+            "rationale": plan.rationale if plan else None,
+            "risk_notes": plan.risk_notes if plan else None,
+        },
+        "tool_executions": [
+            {
+                "tool": ex.tool_name,
+                "request_id": ex.request_id,
+                "status": ex.status,
+                "result_summary": ex.result_summary,
+                "error_code": ex.error_code,
+                "attempt": ex.attempt,
+            }
+            for ex in executions
+        ],
+        "approvals": [
+            {
+                "id": ap.id,
+                "tool": ap.tool_name,
+                "status": ap.status,
+                "approver_id": ap.approver_id,
+                "decision_reason": ap.decision_reason,
+            }
+            for ap in approvals
+        ],
+        "events": [
+            {"seq": e.seq, "type": e.event_type, "actor": e.actor, "payload": json_loads_safe(e.payload_json)}
+            for e in run_events
+        ],
+    }
