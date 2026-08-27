@@ -44,3 +44,10 @@ data/local_db*
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 graft/
+
+# --- Local investigation / audit artifacts ---
+_audit_outputs/
+_*.txt
+_shot_*.png
+remove_secret.py
+replace-secrets.txt
