@@ -42,25 +42,25 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.evaluation.golden_dataset import (  # noqa: E402
-    POLICY_QA_GOLDEN,
+    CULTURE_CONTENT_GOLDEN,
     INTERVIEW_DIGEST_GOLDEN,
+    POLICY_QA_GOLDEN,
     VOICE_INSIGHT_GOLDEN,
     WEEKLY_REPORT_GOLDEN,
-    CULTURE_CONTENT_GOLDEN,
 )
-from app.rag.pipeline import CapabilityPipeline  # noqa: E402
-from app.rag.config_loader import load_scenario_config  # noqa: E402
-from app.rag.retrieval.retriever import Retriever  # noqa: E402
-from app.rag.llm.orchestrator import LLMOrchestrator, get_llm_client  # noqa: E402
+from app.evaluation.golden_metrics import (  # noqa: E402
+    citation_recall,
+    estimate_token_split,
+    guardrail_match,
+    keyword_recall,
+)
 from app.guardrails.input_guard import InputGuardrail  # noqa: E402
 from app.guardrails.output_guard import OutputGuardrail  # noqa: E402
-from app.evaluation.golden_metrics import (  # noqa: E402
-    keyword_recall,
-    citation_recall,
-    guardrail_match,
-    estimate_token_split,
-)
-from app.shared.token_budget import record_token_usage, DEFAULT_MONTHLY_BUDGET  # noqa: E402
+from app.rag.config_loader import load_scenario_config  # noqa: E402
+from app.rag.llm.orchestrator import LLMOrchestrator, get_llm_client  # noqa: E402
+from app.rag.pipeline import CapabilityPipeline  # noqa: E402
+from app.rag.retrieval.retriever import Retriever  # noqa: E402
+from app.shared.token_budget import DEFAULT_MONTHLY_BUDGET, record_token_usage  # noqa: E402
 
 GOLDEN = {
     "policy_qa": POLICY_QA_GOLDEN,
@@ -194,14 +194,14 @@ async def quality_pass(llm, token_log: list) -> dict:
             # Token accounting
             real_tokens = result.tokens_used
             if real_tokens:
-                rec = record_token_usage(TENANT, int(real_tokens), model="eval")
+                await record_token_usage(TENANT, int(real_tokens), model="eval")
                 token_log.append({"scenario": sid, "tokens": int(real_tokens), "real": True})
                 tok_total = int(real_tokens)
                 tok_input = None
                 tok_output = None
             else:
                 est = estimate_token_split(config.prompt_template, s.input, output)
-                rec = record_token_usage(TENANT, est["est_total_tokens"], model="eval-mock")
+                await record_token_usage(TENANT, est["est_total_tokens"], model="eval-mock")
                 token_log.append({"scenario": sid, **est, "real": False})
                 tok_total = est["est_total_tokens"]
                 tok_input = est["est_input_tokens"]
