@@ -7,10 +7,12 @@ events for one run — everything needed to reconstruct what happened.
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.data.models import hr_case as H
+from app.data.models import hr_case
 from app.data.models.base import Base
 from app.scenarios.hr_case_agent import agent_loop
 from app.scenarios.hr_case_agent.service import HRCaseService
+
+H = hr_case  # short alias used in the table list below
 
 
 @pytest.fixture()
