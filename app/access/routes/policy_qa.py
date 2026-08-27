@@ -8,14 +8,14 @@ import time
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db, tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
-from app.data.models.knowledge_base import KnowledgeBase
+from app.data.models.knowledge_base import Document, KnowledgeBase
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
 from app.scenarios.policy_qa.schemas import QAResponse
 from app.shared.errors import NotFoundError
@@ -171,3 +171,65 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
     response = result.model_dump()
     response["message_id"] = message_id
     return response
+
+
+@router.post("/feedback")
+@require_auth
+async def submit_feedback(body: FeedbackBody, request: Request, session: AsyncSession = Depends(get_db)):
+    """Rate an assistant answer (up/down) — writes chat_messages feedback columns."""
+    tenant_id = require_tenant_id(request)
+    user_id = getattr(request.state, "user_id", "unknown")
+
+    message = (
+        (
+            await session.execute(
+                select(ChatMessage)
+                .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+                .where(
+                    ChatMessage.id == body.message_id,
+                    ChatSession.tenant_id == tenant_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.scenario_id == "policy_qa",
+                    ChatMessage.role == "assistant",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if message is None:
+        raise NotFoundError("Assistant message", body.message_id)
+
+    message.feedback_rating = body.rating
+    message.feedback_at = time.time()
+    if body.correction:
+        message.feedback_correction = body.correction
+    await session.commit()
+    return {"status": "ok", "message_id": message.id, "rating": message.feedback_rating}
+
+
+@router.get("/knowledge-bases")
+@require_auth
+async def list_policy_knowledge_bases(request: Request, session: AsyncSession = Depends(get_db)):
+    """Knowledge bases usable for policy QA in the caller's tenant."""
+    tenant_id = require_tenant_id(request)
+    stmt = select(KnowledgeBase).where(
+        KnowledgeBase.tenant_id == tenant_id,
+        KnowledgeBase.scenario_id == "policy_qa",
+        KnowledgeBase.status == "active",
+    )
+    kbs = (await session.execute(stmt)).scalars().all()
+    doc_counts: dict[str, int] = {}
+    if kbs:
+        count_rows = (
+            await session.execute(
+                select(Document.kb_id, func.count(Document.id)).where(Document.kb_id.in_([kb.id for kb in kbs])).group_by(Document.kb_id)
+            )
+        ).all()
+        doc_counts = {row[0]: int(row[1]) for row in count_rows}
+    return {
+        "knowledge_bases": [
+            {"id": kb.id, "name": kb.name, "document_count": doc_counts.get(kb.id, 0), "status": kb.status}
+            for kb in kbs
+        ]
+    }
