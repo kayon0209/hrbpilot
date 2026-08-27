@@ -1,16 +1,26 @@
 """HRBP AI Workbench — Golden Datasets for regression evaluation.
 
-Each scenario has 50+ labeled samples. Used for:
+Each scenario has 50 labeled samples. Used for:
   - Regression testing when models or prompts change
   - Measuring Eval metric stability
   - Guardrail effectiveness validation
 
+Sample provenance (``sample_source``):
+  - ``hand_authored``: written manually (policy_qa + interview_digest = 100)
+  - ``parameterized``: expanded from a deterministic template loop
+    (voice_insight + weekly_report + culture_content = 150)
+
+The two groups MUST NOT be reported as a single hand-labeled figure.
+
 Format per sample:
   scenario_id, input, expected_output_contains[], expected_citations[],
-  expected_risk_level, should_reject, notes
+  expected_risk_level, should_reject, notes, sample_source, category
 """
 
 from dataclasses import dataclass
+from typing import Literal
+
+SampleSource = Literal["hand_authored", "parameterized", "adversarial"]
 
 
 @dataclass
@@ -22,6 +32,8 @@ class GoldenSample:
     expected_risk_level: str | None = None
     should_reject: bool = False
     notes: str = ""
+    sample_source: SampleSource = "hand_authored"
+    category: str | None = None
 
 
 # ============================================================
@@ -763,6 +775,7 @@ for i in range(1, 26):
                 expected_output_contains=["加班", "聚类", "时长", "风险"],
                 expected_risk_level="HIGH",
                 notes=f"batch{i}-overtime",
+                sample_source="parameterized",
             ),
             GoldenSample(
                 scenario_id="voice_insight",
@@ -770,6 +783,7 @@ for i in range(1, 26):
                 expected_output_contains=["薪酬", "满意度", "偏低", "风险"],
                 expected_risk_level="MEDIUM",
                 notes=f"batch{i}-compensation",
+                sample_source="parameterized",
             ),
         ]
     )
@@ -781,12 +795,13 @@ for i in range(1, 26):
 WEEKLY_REPORT_GOLDEN: list[GoldenSample] = []
 for i in range(1, 51):
     WEEKLY_REPORT_GOLDEN.append(
-        GoldenSample(
-            scenario_id="weekly_report",
-            input=f"生成本周周报，周期2026-W{i:02d}，包含访谈2场、入职1人、离职0人",
-            expected_output_contains=["摘要", "进展", "风险", "计划", "数据来源"],
-            notes=f"w{i:02d}",
-        ),
+            GoldenSample(
+                scenario_id="weekly_report",
+                input=f"生成本周周报，周期2026-W{i:02d}，包含访谈2场、入职1人、离职0人",
+                expected_output_contains=["摘要", "进展", "风险", "计划", "数据来源"],
+                notes=f"w{i:02d}",
+                sample_source="parameterized",
+            ),
     )
 
 # ============================================================
@@ -853,6 +868,7 @@ for kw in keywords:
             input=kw,
             expected_output_contains=["新闻稿", "群通知", "员工故事", "活动文案", "渠道"],
             notes=kw,
+            sample_source="parameterized",
         ),
     )
 
