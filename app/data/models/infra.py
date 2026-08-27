@@ -8,7 +8,7 @@ All have tenant_id for RLS.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
+from sqlalchemy import DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -61,3 +61,29 @@ class EvalResult(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
 
     def __repr__(self) -> str:
         return f"<EvalResult id={self.id} metric={self.metric} score={self.score}>"
+
+
+class TokenLedgerEntry(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    """Append-only persistent token ledger (Phase 7).
+
+    Redis keeps hot monthly counters and thresholds; this table is the
+    traceable source of truth. ``settlement_state`` guards double
+    settlement: reserve → settle → refund, each request_id settles once
+    (unique constraint with agent run/request id below).
+    """
+
+    __tablename__ = "token_ledger"
+    __table_args__ = (UniqueConstraint("tenant_id", "request_id", name="uq_token_ledger_tenant_request"),)
+
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    scenario_id: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
+    model: Mapped[str] = mapped_column(String(100), nullable=False, default="unknown")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    measured: Mapped[bool] = mapped_column(nullable=False, default=False)  # True = real usage, False = estimate
+    settlement_state: Mapped[str] = mapped_column(String(12), nullable=False, default="SETTLED")  # RESERVE|SETTLED|REFUNDED
+
+    def __repr__(self) -> str:
+        return f"<TokenLedgerEntry id={self.id} req={self.request_id} total={self.total_tokens}>"

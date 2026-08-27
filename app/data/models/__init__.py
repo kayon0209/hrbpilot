@@ -10,7 +10,7 @@ from app.data.models.hr_case import (
     HRCase,
     ToolExecution,
 )
-from app.data.models.infra import AsyncTask, AuditLog, EvalResult
+from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEntry
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.data.models.scenarios import (
     CultureContent,
@@ -42,6 +42,7 @@ __all__ = [
     "Tenant",
     "TenantMixin",
     "TimestampMixin",
+    "TokenLedgerEntry",
     "ToolExecution",
     "UUIDPrimaryKey",
     "User",
