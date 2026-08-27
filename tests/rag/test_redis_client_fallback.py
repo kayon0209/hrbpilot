@@ -20,8 +20,12 @@ async def test_get_redis_returns_none_when_unreachable(monkeypatch):
     assert rc._client_unavailable is True
 
 
-async def test_get_redis_short_circuits_after_failure(monkeypatch):
+async def test_get_redis_short_circuits_on_same_loop_after_failure(monkeypatch):
+    # Failure recorded on loop L: repeated calls on L return None (no hammering).
+    import asyncio
+
     monkeypatch.setattr(rc, "_client", None)
     monkeypatch.setattr(rc, "_client_unavailable", True)
+    monkeypatch.setattr(rc, "_client_loop", asyncio.get_running_loop())
 
     assert await rc.get_redis() is None

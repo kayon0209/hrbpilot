@@ -147,8 +147,13 @@ class HRCaseService:
         agent_run_id: str | None = None,
     ) -> CasePlan:
         case = await self.get_case(case_id)
-        if case_state.transition(case.status, case_state.PLAN_READY) != case_state.PLAN_READY:
-            raise case_state.InvalidTransitionError(case.status, case_state.PLAN_READY)
+        # Drive any pre-plan states first: NEW → TRIAGED → EVIDENCE_READY.
+        while case.status != case_state.EVIDENCE_READY:
+            previous = case.status
+            case.status = case_state.transition(previous, case_state.TRIAGED if previous == case_state.NEW else case_state.EVIDENCE_READY)
+            await self._append_event(
+                case_id, "STATUS_CHANGED", {"from": previous, "to": case.status, "reason": "plan created"}, agent_run_id=agent_run_id
+            )
         plan = CasePlan(
             tenant_id=self.tenant_id,
             case_id=case_id,

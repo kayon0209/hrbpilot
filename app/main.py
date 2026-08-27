@@ -23,6 +23,7 @@ from app.access.routes.auth import router as auth_router
 from app.access.routes.culture_content import router as culture_router
 from app.access.routes.eval import router as eval_metrics_router
 from app.access.routes.health import router as health_router
+from app.access.routes.hr_case import router as hr_case_router
 from app.access.routes.interview_digest import router as interview_router
 from app.access.routes.kb import router as kb_router
 from app.access.routes.policy_qa import router as policy_qa_router
@@ -78,8 +79,8 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
     add_cors_middleware(app)
     app.add_middleware(TenantContextMiddleware)
-    app.add_middleware(AuthMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(AuthMiddleware)
     app.add_middleware(RBACMiddleware)
 
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router)
+    app.include_router(hr_case_router)
     app.include_router(policy_qa_router)
     app.include_router(interview_router)
     app.include_router(voice_router)

@@ -5,6 +5,27 @@ from app.access.routes import auth
 from app.shared.errors import RateLimitError
 
 
+@pytest.fixture(autouse=True)
+def _clear_login_throttle_keys():
+    """The throttle keeps sliding windows in Redis that outlive a test run;
+    leftover keys from earlier runs would trip these tests. Clear them."""
+    import asyncio
+
+    import redis.asyncio as aioredis
+
+    async def _flush():
+        try:
+            r = aioredis.from_url("redis://localhost:6379/0", decode_responses=True)
+            keys = await r.keys("login_attempts:*")
+            if keys:
+                await r.delete(*keys)
+            await r.aclose()
+        except Exception:
+            pass  # redis unavailable: throttle falls back to memory
+
+    asyncio.run(_flush())
+
+
 def _login_request(ip: str = "10.0.0.1") -> Request:
     return Request(
         {

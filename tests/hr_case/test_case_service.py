@@ -246,12 +246,14 @@ async def test_params_mismatch_between_approval_and_execution(session_factory):
             )
 
 
-async def test_plan_requires_valid_preceding_state(session_factory):
+async def test_plan_auto_advances_from_new(session_factory):
     case_id = await make_case(session_factory)
     async with session_factory() as session:
         service = HRCaseService(session, "t1")
-        with pytest.raises(InvalidTransitionError):
-            await service.save_plan(case_id, steps=[])
+        plan = await service.save_plan(case_id, steps=[])
+        case = await service.get_case(case_id)
+        assert case.status == "PLAN_READY"
+        assert plan.steps_json
 
 
 async def test_events_are_monotonic_per_case(session_factory):
