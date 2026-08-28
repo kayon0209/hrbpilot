@@ -56,6 +56,19 @@ graft/
 # --- Local investigation / audit artifacts ---
 _audit_outputs/
 _*.txt
+_audit_*.py
 _shot_*.png
 remove_secret.py
 replace-secrets.txt
+
+# --- Local agent/tooling config (machine-specific paths; not shared) ---
+.ignore
+AGENTS.md
+docs/superpowers/
+
+# --- Incomplete golden eval runs (marked unclaimable; not evidence) ---
+evaluation/results/golden_eval_20260827T221009Z.json
+evaluation/results/golden_eval_20260827T221316Z.json
+evaluation/results/golden_eval_20260827T221506Z.json
+evaluation/results/golden_eval_20260828T095445Z.json
+evaluation/results/golden_eval_20260828T102205Z.json
