@@ -242,23 +242,33 @@ async def quality_pass(llm, token_log: list) -> dict:
                 if not REAL_LLM and isinstance(llm, MockLLMGenerator):
                     llm.set_expected(s.expected_output_contains)
                 t0 = time.time()
-                try:
-                    result = await pipeline.execute(
-                        input=s.input,
-                        config=config,
-                        tenant_id=TENANT,
-                        user_id=USER,
-                    )
-                    output = result.output or ""
-                    blocked = bool(
-                        (result.guardrail_flags or {})
-                        .get("input", {})
-                        .get("blocked", False)
-                    )
-                except Exception as e:
+                # Retry transient transport failures (connection errors /
+                # timeouts) with escalating backoff — the provider can degrade
+                # for minutes at a time, beyond the SDK's built-in retries.
+                result = None
+                sample_error: Exception | None = None
+                for attempt in range(4):
+                    try:
+                        result = await pipeline.execute(
+                            input=s.input,
+                            config=config,
+                            tenant_id=TENANT,
+                            user_id=USER,
+                        )
+                        sample_error = None
+                        break
+                    except Exception as e:
+                        sample_error = e
+                        if attempt < 3:
+                            wait_s = [15, 45, 90][attempt]
+                            print(f"  [retry {attempt + 1}/3] {sid}: {e} — waiting {wait_s}s")
+                            await asyncio.sleep(wait_s)
+                if result is None:
                     scenario_acc[sid]["errors"] += 1
-                    per_sample.append({"scenario": sid, "error": str(e)})
+                    per_sample.append({"scenario": sid, "error": str(sample_error)})
                     continue
+                output = result.output or ""
+                blocked = bool((result.guardrail_flags or {}).get("input", {}).get("blocked", False))
 
                 kw = keyword_recall(output, s.expected_output_contains)
                 cit = citation_recall(output, s.expected_citations)
