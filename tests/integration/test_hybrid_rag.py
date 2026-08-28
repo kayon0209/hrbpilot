@@ -119,6 +119,10 @@ async def test_hybrid_rag_end_to_end():
                 status="active",
             )
         )
+        # Flush the KB before adding its Document: a bare ForeignKey does not
+        # order the unit of work, so a single flush can emit the child INSERT
+        # first and violate fk_documents_kb_id (production flushes in stages too).
+        await session.flush()
         session.add(
             Document(
                 id=doc_id,

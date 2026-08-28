@@ -53,6 +53,7 @@ def test_production_rejects_default_jwt_secret() -> None:
 
 def test_production_accepts_strong_jwt_secret() -> None:
     configured = Settings(
+        _env_file=None,  # hermetic: don't inherit machine-local .env (e.g. VECTOR_DB_PORT)
         app_env="production",
         jwt_secret="a" * 32,
         llm_api_key="configured-llm-key",
