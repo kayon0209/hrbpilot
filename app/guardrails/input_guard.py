@@ -29,6 +29,9 @@ INJECTION_PATTERNS = [
     # English instruction hijacking
     r"ignore\s+(?:all\s+)?(?:previous|above|earlier)\s+(?:instructions?|rules?|constraints?|prompts?)",
     r"(forget|disregard|override|bypass)\s+(?:all\s+)?(?:previous|above|earlier|the)\s+(?:instructions?|rules?|constraints?|prompts?)",
+    r"(forget|disregard)\s+everything",
+    r"(forget|disregard|override|bypass)\s+all\s+(?:constraints?|rules?|instructions?|limits?|restrictions?)",
+    r"unrestricted\s+(?:ai|assistant|mode)",
     r"you\s+are\s+now\s+(?:going\s+to\s+)?(?:act\s+as|behave\s+as|become)\s+",
     r"system\s+message\s*[:：]",
     r"system\s+prompt\s*[:：]",
@@ -42,6 +45,8 @@ INJECTION_PATTERNS = [
     r"你现在是(?:一个)?\s*(?:不受限制|无限制)的?\s*(?:ai|助手|系统)",
     r"作为(?:一个)?\s*(?:不受限制|无限制)的?\s*(?:ai|助手|系统)",
     r"输出\s*(?:你的)?\s*(?:系统|开发者)?\s*(?:提示词|提示|规则|指令)",
+    # Role-play impersonation aimed at data exfiltration ("假装你是CEO…")
+    r"假装\s*你是",
 ]
 
 
