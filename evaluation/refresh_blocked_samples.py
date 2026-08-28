@@ -141,7 +141,7 @@ def main() -> None:
         raise SystemExit("[abort] row count mismatch between base run and current dataset")
     samples = _flat_samples()
     flipped: list[tuple[int, object]] = []
-    for i, (old, new) in enumerate(zip(old_rows, gr["rows"])):
+    for i, (old, new) in enumerate(zip(old_rows, gr["rows"], strict=True)):
         if old["should_reject"] != new["should_reject"]:
             raise SystemExit(f"[abort] should_reject flag drifted at row {i}")
         if bool(old["blocked"]) != bool(new["blocked"]):
@@ -156,7 +156,7 @@ def main() -> None:
     fresh_rows = asyncio.run(_rerun_flipped(flipped))
 
     per_sample = list(base["per_sample"])
-    for (idx, _), row in zip(flipped, fresh_rows):
+    for (idx, _), row in zip(flipped, fresh_rows, strict=True):
         per_sample[idx] = row
 
     scenario_summary: dict[str, dict] = {}
@@ -207,26 +207,29 @@ def main() -> None:
         },
         "per_sample": per_sample,
         "guardrail_rows": gr["rows"],
-        "repair_history": base.get("repair_history", []) + [{
-            "at": ts,
-            "action": "guardrail_fix_partial_rerun",
-            "base_run_id": base["run"]["run_id"],
-            "base_run_at": base["run"]["run_at"],
-            "base_git_commit": base["run"]["git_commit"],
-            "git_commit": _git_commit(),
-            "reason": (
-                "Guardrail fix restored injection detection for three attack shapes "
-                "(forget-everything hijack, role-play impersonation, disregard-all-constraints "
-                "jailbreak). Only samples whose guardrail verdict flipped were re-run through "
-                "the real pipeline (blocked samples never reach the LLM); all other per_sample "
-                "rows are carried over unchanged from the base run. Guardrail section was "
-                "recomputed offline over all 250 inputs."
-            ),
-            "rerun_samples": [
-                {"index": idx, "scenario": s.scenario_id, "input": s.input} for idx, s in flipped
-            ],
-            "carried_over_samples": len(per_sample) - len(flipped),
-        }],
+        "repair_history": [
+            *base.get("repair_history", []),
+            {
+                "at": ts,
+                "action": "guardrail_fix_partial_rerun",
+                "base_run_id": base["run"]["run_id"],
+                "base_run_at": base["run"]["run_at"],
+                "base_git_commit": base["run"]["git_commit"],
+                "git_commit": _git_commit(),
+                "reason": (
+                    "Guardrail fix restored injection detection for three attack shapes "
+                    "(forget-everything hijack, role-play impersonation, disregard-all-constraints "
+                    "jailbreak). Only samples whose guardrail verdict flipped were re-run through "
+                    "the real pipeline (blocked samples never reach the LLM); all other per_sample "
+                    "rows are carried over unchanged from the base run. Guardrail section was "
+                    "recomputed offline over all 250 inputs."
+                ),
+                "rerun_samples": [
+                    {"index": idx, "scenario": s.scenario_id, "input": s.input} for idx, s in flipped
+                ],
+                "carried_over_samples": len(per_sample) - len(flipped),
+            },
+        ],
     }
 
     result_path = base_path.parent / f"golden_eval_{ts}.json"

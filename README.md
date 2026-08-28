@@ -129,7 +129,9 @@ flowchart TB
 
 ## 📊 评测结果（真实 LLM 跑通）
 
-2026-07-30 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM 完整跑通。样本构成：`policy_qa` 与 `interview_digest` 共 **100 条人工撰写**；`voice_insight`、`weekly_report`、`culture_content` 共 **150 条由确定性模板扩增**，两类不可混作同一数据质量口径。
+2026-08-28 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM（Gitee AI `qwen3.8-flash`）完整跑通。样本构成：`policy_qa` 与 `interview_digest` 共 **100 条人工撰写**；`voice_insight`、`weekly_report`、`culture_content` 共 **150 条由确定性模板扩增**，两类不可混作同一数据质量口径。
+
+可宣称产物：`evaluation/results/golden_eval_20260828T215711Z.json`（`for_external_claims: true`，250/250 全量、0 错误；`repair_history` 完整披露了 2 次瞬态错误修复与护栏修复后的 3 条部分重跑，其余 247 条继承自基础运行）。
 
 <table>
 <tr>
@@ -142,9 +144,9 @@ flowchart TB
 | 护栏 overall | **1.0** |
 | 注入拦截 recall | **1.0** （5/5 全拦） |
 | 误拦率 false_positive | **0.0** |
-| Token 总消耗 | 225,133（99.78% 真实计费） |
-| 预算占用 | 10M 月度预算的 **2.25%** |
-| 折算容量 | 约 **44 次 / 租户 / 月** |
+| Token 总消耗 | 554,387（99.9% 真实计费） |
+| 预算占用 | 10M 月度预算的 **5.54%** |
+| 折算容量 | 约 **18 次 / 租户 / 月** |
 
 </td>
 <td width="50%" valign="top">
@@ -153,11 +155,11 @@ flowchart TB
 
 | 场景 | 关键词命中 | 引用覆盖率 |
 | :--- | :---: | :---: |
-| `policy_qa` | 0.58 | 0.33 |
-| `interview_digest` | 0.83 | **1.0** |
-| `voice_insight` | 0.89 | **1.0** |
-| `weekly_report` | 0.32 | **1.0** |
-| `culture_content` | 0.62 | **1.0** |
+| `policy_qa` | 0.908 | 0.9 |
+| `interview_digest` | 0.79 | **1.0** |
+| `voice_insight` | 0.91 | **1.0** |
+| `weekly_report` | 0.536 | **1.0** |
+| `culture_content` | 0.104 | **1.0** |
 
 </td>
 </tr>
@@ -330,8 +332,9 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 
 ## ⚠️ 已知限制
 
-- `weekly_report` 场景的关键词命中（0.32）偏低，主要因周报自由文本难以用关键词衡量，正在优化评测方式。
-- `policy_qa` 的引用覆盖率（0.33，legacy 子串口径）仍有提升空间；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测受限于本地环境（5432 端口冲突已解决、EMBEDDING_API_KEY 待配置）。
+- `weekly_report` 场景的关键词命中（0.536）偏低，主要因周报自由文本难以用关键词衡量，正在优化评测方式。
+- `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
+- `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
 
 ## 🤖 HR Case Agent（受控执行体，Phase 4–7 新增）
 
