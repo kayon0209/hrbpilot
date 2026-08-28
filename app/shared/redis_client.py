@@ -94,3 +94,21 @@ async def get_redis() -> Redis | None:
             _client = None
         logger.warning("redis_unavailable", error=str(e), msg="falling back to in-memory")
         return None
+
+
+async def close_redis() -> None:
+    """Close the cached client at script shutdown.
+
+    Without this, the connection's StreamWriter is garbage-collected after
+    the event loop closes and surfaces as a noisy
+    "RuntimeError: Event loop is closed" traceback on exit.
+    """
+    global _client, _client_loop, _client_unavailable
+    if _client is not None:
+        try:
+            await _client.aclose()
+        except Exception:
+            pass
+    _client = None
+    _client_loop = None
+    _client_unavailable = False

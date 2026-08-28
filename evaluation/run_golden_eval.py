@@ -38,6 +38,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -63,6 +64,7 @@ from app.rag.config_loader import load_scenario_config  # noqa: E402
 from app.rag.llm.orchestrator import LLMOrchestrator, get_active_model, get_llm_client  # noqa: E402
 from app.rag.pipeline import CapabilityPipeline  # noqa: E402
 from app.rag.retrieval.retriever import Retriever  # noqa: E402
+from app.shared.redis_client import close_redis  # noqa: E402
 from app.shared.token_budget import DEFAULT_MONTHLY_BUDGET, record_token_usage  # noqa: E402
 
 GOLDEN = {
@@ -233,80 +235,93 @@ async def quality_pass(llm, token_log: list) -> dict:
     per_sample = []
     scenario_acc = {sid: {"kw": [], "cit": [], "n": 0, "errors": 0} for sid in GOLDEN}
 
-    for sid, samples in GOLDEN.items():
-        config = load_scenario_config(sid)
-        for s in samples:
-            if not REAL_LLM and isinstance(llm, MockLLMGenerator):
-                llm.set_expected(s.expected_output_contains)
-            t0 = time.time()
-            try:
-                result = await pipeline.execute(
-                    input=s.input,
-                    config=config,
-                    tenant_id=TENANT,
-                    user_id=USER,
-                )
-                output = result.output or ""
-                blocked = bool(
-                    (result.guardrail_flags or {})
-                    .get("input", {})
-                    .get("blocked", False)
-                )
-            except Exception as e:
-                scenario_acc[sid]["errors"] += 1
-                per_sample.append({"scenario": sid, "error": str(e)})
-                continue
+    try:
+        for sid, samples in GOLDEN.items():
+            config = load_scenario_config(sid)
+            for s in samples:
+                if not REAL_LLM and isinstance(llm, MockLLMGenerator):
+                    llm.set_expected(s.expected_output_contains)
+                t0 = time.time()
+                try:
+                    result = await pipeline.execute(
+                        input=s.input,
+                        config=config,
+                        tenant_id=TENANT,
+                        user_id=USER,
+                    )
+                    output = result.output or ""
+                    blocked = bool(
+                        (result.guardrail_flags or {})
+                        .get("input", {})
+                        .get("blocked", False)
+                    )
+                except Exception as e:
+                    scenario_acc[sid]["errors"] += 1
+                    per_sample.append({"scenario": sid, "error": str(e)})
+                    continue
 
-            kw = keyword_recall(output, s.expected_output_contains)
-            cit = citation_recall(output, s.expected_citations)
+                kw = keyword_recall(output, s.expected_output_contains)
+                cit = citation_recall(output, s.expected_citations)
 
-            # Token accounting
-            real_tokens = result.tokens_used
-            if real_tokens:
-                await record_token_usage(TENANT, int(real_tokens), model="eval")
-                token_log.append({"scenario": sid, "tokens": int(real_tokens), "real": True})
-                tok_total = int(real_tokens)
-                tok_input = None
-                tok_output = None
-            else:
-                est = estimate_token_split(config.prompt_template, s.input, output)
-                await record_token_usage(TENANT, est["est_total_tokens"], model="eval-mock")
-                token_log.append({"scenario": sid, **est, "real": False})
-                tok_total = est["est_total_tokens"]
-                tok_input = est["est_input_tokens"]
-                tok_output = est["est_output_tokens"]
+                # Token accounting
+                real_tokens = result.tokens_used
+                if real_tokens:
+                    await record_token_usage(TENANT, int(real_tokens), model="eval")
+                    token_log.append({"scenario": sid, "tokens": int(real_tokens), "real": True})
+                    tok_total = int(real_tokens)
+                    tok_input = None
+                    tok_output = None
+                else:
+                    est = estimate_token_split(config.prompt_template, s.input, output)
+                    await record_token_usage(TENANT, est["est_total_tokens"], model="eval-mock")
+                    token_log.append({"scenario": sid, **est, "real": False})
+                    tok_total = est["est_total_tokens"]
+                    tok_input = est["est_input_tokens"]
+                    tok_output = est["est_output_tokens"]
 
-            per_sample.append({
-                "scenario": sid,
-                "should_reject": s.should_reject,
-                "blocked": blocked,
-                "keyword_recall": kw,
-                "citation_recall": cit,
-                "latency_ms": int((time.time() - t0) * 1000),
-                "tokens_total": tok_total,
-                "tokens_input": tok_input,
-                "tokens_output": tok_output,
-                "output_len": len(output),
-            })
-            scenario_acc[sid]["kw"].append(kw)
-            scenario_acc[sid]["cit"].append(cit)
-            scenario_acc[sid]["n"] += 1
+                per_sample.append({
+                    "scenario": sid,
+                    "should_reject": s.should_reject,
+                    "blocked": blocked,
+                    "keyword_recall": kw,
+                    "citation_recall": cit,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                    "tokens_total": tok_total,
+                    "tokens_input": tok_input,
+                    "tokens_output": tok_output,
+                    "output_len": len(output),
+                })
+                scenario_acc[sid]["kw"].append(kw)
+                scenario_acc[sid]["cit"].append(cit)
+                scenario_acc[sid]["n"] += 1
 
-    summary = {}
-    for sid, acc in scenario_acc.items():
-        n = acc["n"]
-        summary[sid] = {
-            "n": n,
-            "errors": acc["errors"],
-            "avg_keyword_recall": round(sum(acc["kw"]) / n, 4) if n else 0.0,
-            "avg_citation_recall": round(sum(acc["cit"]) / n, 4) if n else 0.0,
+        summary = {}
+        for sid, acc in scenario_acc.items():
+            n = acc["n"]
+            summary[sid] = {
+                "n": n,
+                "errors": acc["errors"],
+                "avg_keyword_recall": round(sum(acc["kw"]) / n, 4) if n else 0.0,
+                "avg_citation_recall": round(sum(acc["cit"]) / n, 4) if n else 0.0,
+            }
+        return {
+            "per_sample": per_sample,
+            "scenario_summary": summary,
+            "sample_count": sum(acc["n"] for acc in scenario_acc.values()),
+            "error_count": sum(acc["errors"] for acc in scenario_acc.values()),
         }
-    return {
-        "per_sample": per_sample,
-        "scenario_summary": summary,
-        "sample_count": sum(acc["n"] for acc in scenario_acc.values()),
-        "error_count": sum(acc["errors"] for acc in scenario_acc.values()),
-    }
+    finally:
+        # Close cached async clients while their loop is still running;
+        # otherwise their transports are GC'd after loop close and exit
+        # with a noisy "RuntimeError: Event loop is closed" traceback.
+        await close_redis()
+        embedder = getattr(retriever, "_embedder", None)
+        if embedder is not None:
+            with suppress(Exception):
+                await embedder.aclose()
+        if REAL_LLM:
+            with suppress(Exception):
+                await get_llm_client().close()
 
 
 def main() -> None:

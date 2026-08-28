@@ -59,6 +59,10 @@ class EmbeddingClient:
             raise ValueError("Embedding provider returned an invalid vector (non-finite or zero norm)")
         return embeddings
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client (script shutdown hygiene)."""
+        await self._client.close()
+
 
 def get_embedder() -> EmbeddingClient:
     """Build the configured embedding client (cloud-only)."""
