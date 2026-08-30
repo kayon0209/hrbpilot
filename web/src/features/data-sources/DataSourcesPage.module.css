@@ -1,0 +1,30 @@
+.form{display:grid;gap:12px;max-width:620px}
+.form label{display:grid;gap:6px;color:var(--ink-soft);font-size:var(--text-ui);font-weight:500}
+.form input,.form select{padding:10px 12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);font:inherit}
+.note{margin:0;color:var(--muted);font-size:var(--text-meta);line-height:1.6}
+.actions{display:flex;gap:10px}
+.error{margin:0;color:var(--danger);font-size:var(--text-ui)}
+.list{display:grid;gap:16px}
+.card{padding:18px 20px;border:1px solid var(--line);background:var(--surface-subtle)}
+.cardRevoked{opacity:.8}
+.cardHead{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.cardHead strong{font-size:var(--text-ui)}
+.cert{padding:2px 8px;border-radius:var(--radius-pill);font-size:var(--text-micro);color:var(--info);background:var(--info-soft)}
+.cert_4{color:var(--success);background:var(--success-soft)}
+.cert_2,.cert_3{color:var(--warning);background:var(--warning-soft)}
+.sync{padding:2px 8px;border-radius:var(--radius-pill);font-size:var(--text-micro);color:var(--muted);background:var(--surface)}
+.sync_ok{color:var(--success);background:var(--success-soft)}
+.sync_failed{color:var(--danger);background:var(--danger-soft)}
+.sync_paused{color:var(--warning);background:var(--warning-soft)}
+.meta{display:grid;gap:8px;margin:0 0 12px}
+.meta div{display:grid;grid-template-columns:88px 1fr;gap:8px}
+.meta dt{color:var(--muted);font-size:var(--text-meta)}
+.meta dd{margin:0;font-size:var(--text-ui);line-height:1.6}
+.errorNote{margin:0 0 12px;color:var(--danger);font-size:var(--text-ui)}
+.revokedNote{margin:0;color:var(--ink-soft);font-size:var(--text-ui)}
+.cardActions{display:flex;gap:8px;flex-wrap:wrap}
+.cardActions button{min-height:36px}
+@media(max-width:820px){.meta div{grid-template-columns:1fr}}
+.dialogBackdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:24px;background:rgb(30 36 32 / .42)}
+.dialog{width:min(520px,100%);padding:24px;background:var(--surface);box-shadow:var(--shadow-dialog)}
+.dialog h2{margin-top:0}.dialog label{display:grid;gap:8px}.dialog textarea{padding:12px;border:1px solid var(--line);font:var(--text-ui)/var(--text-ui-line) var(--font-body);resize:vertical}

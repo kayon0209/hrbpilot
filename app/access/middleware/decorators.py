@@ -13,16 +13,38 @@ from fastapi import Request
 
 from app.shared.errors import AuthError, ForbiddenError
 
-# Role hierarchy for "or above" checks
-ROLE_HIERARCHY: dict[str, int] = {
-    "employee": 0,
-    "hrbp": 1,
-    "hr_manager": 2,
-    "admin": 3,
-}
-
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+def require_capability(
+    capability: str,
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+    """Require one explicit capability; roles never inherit from each other."""
+
+    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+        @wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            request: Request | None = None
+            for arg in args:
+                if isinstance(arg, Request):
+                    request = arg
+                    break
+            if not request:
+                request = kwargs.get("request")  # type: ignore[assignment]
+
+            if request:
+                from app.access.middleware.rbac import ROLE_CAPABILITIES
+
+                role = getattr(request.state, "user_role", "employee")
+                if capability not in ROLE_CAPABILITIES.get(role, set()):
+                    raise ForbiddenError(message="当前角色无权使用此功能", required_role=capability)
+
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def require_auth(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
@@ -44,36 +66,3 @@ def require_auth(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         return await func(*args, **kwargs)
 
     return wrapper
-
-
-def require_role(
-    min_role: str,
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
-    """Require a minimum role level (redundant with RBACMiddleware)."""
-
-    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-        @wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            request: Request | None = None
-            for arg in args:
-                if isinstance(arg, Request):
-                    request = arg
-                    break
-            if not request:
-                request = kwargs.get("request")  # type: ignore[assignment]
-
-            if request:
-                user_role = getattr(request.state, "user_role", "employee")
-                min_level = ROLE_HIERARCHY.get(min_role, 0)
-                user_level = ROLE_HIERARCHY.get(user_role, 0)
-                if user_level < min_level:
-                    raise ForbiddenError(
-                        message=f"需要 '{min_role}' 或以上角色，当前角色: '{user_role}'",
-                        required_role=min_role,
-                    )
-
-            return await func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

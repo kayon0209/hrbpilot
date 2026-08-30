@@ -8,10 +8,48 @@ for user-visible history and feedback links.
 from __future__ import annotations
 
 import json
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+async def append_security_audit_event(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    action: str,
+    object_type: str,
+    object_id: str,
+    details: dict[str, Any] | None = None,
+) -> str:
+    """Append an audit row inside the caller's transaction.
+
+    Sensitive mutations use this strict helper so the business write and its
+    audit evidence commit or roll back together.
+    """
+    from app.data.models.infra import AuditLog
+
+    row = AuditLog(
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        scenario_id=action,
+        input_summary=json.dumps(
+            {"object_type": object_type, "object_id": object_id},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        output_summary=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+        guardrail_result_json="{}",
+        response_latency_ms=0,
+    )
+    db.add(row)
+    await db.flush()
+    return row.id
 
 
 async def write_audit_log(

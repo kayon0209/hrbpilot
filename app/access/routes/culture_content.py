@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.decorators import require_auth, require_capability
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.scenarios import CultureContent
@@ -30,7 +30,7 @@ orchestrator = CultureContentOrchestrator()
 
 @router.post("/expand-keywords")
 @require_auth
-@require_role("hrbp")
+@require_capability("culture_content")
 async def expand_keywords(body: GenerateContentRequest, request: Request):
     """Expand keywords for culture content generation."""
     expansion = orchestrator.expand_keywords(body.keywords)
@@ -39,7 +39,7 @@ async def expand_keywords(body: GenerateContentRequest, request: Request):
 
 @router.post("/generate")
 @require_auth
-@require_role("hrbp")
+@require_capability("culture_content")
 async def generate_content(body: GenerateContentRequest, request: Request):
     """Generate 4-channel culture content from keywords."""
     tenant_id = require_tenant_id(request)
@@ -69,7 +69,7 @@ async def generate_content(body: GenerateContentRequest, request: Request):
 
 @router.get("/{content_id}")
 @require_auth
-@require_role("hrbp")
+@require_capability("culture_content")
 async def get_content(content_id: str, request: Request):
     """Get saved culture content."""
     tenant_id = require_tenant_id(request)
@@ -97,7 +97,7 @@ async def get_content(content_id: str, request: Request):
 
 @router.get("/history")
 @require_auth
-@require_role("hrbp")
+@require_capability("culture_content")
 async def get_history(
     request: Request,
     limit: int = 20,

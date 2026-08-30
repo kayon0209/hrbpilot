@@ -7,7 +7,7 @@ auditable original text + keyword_text (jieba tokens) + a generated tsvector.
 
 from datetime import datetime
 
-from sqlalchemy import Computed, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Computed, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,15 @@ class KnowledgeBase(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
 
 class Document(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index(
+            "uq_documents_kb_content_sha256_nonempty",
+            "kb_id",
+            "content_sha256",
+            unique=True,
+            postgresql_where=text("content_sha256 <> ''"),
+        ),
+    )
 
     kb_id: Mapped[str] = mapped_column(ForeignKey("knowledge_bases.id"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -49,9 +58,14 @@ class Document(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
 
 class DocumentChunk(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "document_chunks"
-    __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_document_chunks_document_index"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_document_chunks_document_index"),
+        Index("ix_document_chunks_tenant_kb", "tenant_id", "kb_id"),
+        Index("ix_document_chunks_search_vector", "search_vector", postgresql_using="gin"),
+    )
 
-    kb_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kb_id: Mapped[str] = mapped_column(String(36), nullable=False)
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)

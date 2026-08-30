@@ -1,15 +1,85 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap");
+@import url('/fonts/noto-sc.css');
+
+/* HRBPilot design tokens — single source of truth, mirrors DESIGN.md §2–§5. */
 
 :root {
-  --canvas: #f7f7f4;
-  --surface: #ffffff;
-  --ink: #20231f;
-  --muted: #6c716a;
-  --action: #245b4d;
-  --evidence: #a9652b;
-  --danger: #b8473f;
-  --line: #e3e5df;
-  --font-display: "Noto Serif SC", serif;
-  --font-body: "Noto Sans SC", sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
+  /* 颜色（DESIGN.md §3） */
+  --canvas: #F6F6F1;
+  --surface: #FFFFFF;
+  --surface-subtle: #F0F1EC;
+  --ink: #1E2420;
+  --ink-soft: #545C55;
+  --muted: #626A63;
+  --line: #E1E4DD;
+  --line-strong: #C7CDC4;
+  --action: #1F5A48;
+  --action-hover: #184939;
+  --action-soft: #E3EEE8;
+  --evidence: #A8642F;
+  --evidence-soft: #F4EADF;
+  --success: #2F6B50;
+  --success-soft: #E5F0E9;
+  --warning: #93611E;
+  --warning-soft: #F6EBD8;
+  --danger: #B4473D;
+  --danger-soft: #F7E7E5;
+  --info: #496B7A;
+  --info-soft: #E6EEF1;
+
+  /* 字号 / 行高（DESIGN.md §2：正文 16px，UI 14px） */
+  --text-display: 32px;
+  --text-display-line: 42px;
+  --text-h2: 24px;
+  --text-h2-line: 34px;
+  --text-h3: 18px;
+  --text-h3-line: 28px;
+  --text-body: 16px;
+  --text-body-line: 26px;
+  --text-ui: 14px;
+  --text-ui-line: 22px;
+  --text-meta: 13px;
+  --text-meta-line: 20px;
+  --text-eyebrow: 12px;
+  --text-micro: 12px;
+  --text-micro-line: 18px;
+
+  /* 间距（4 基数；限定集合见 DESIGN.md §4） */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-7: 32px; --space-8: 40px; --space-9: 48px; --space-10: 64px;
+
+  /* 圆角（pill 仅头像与短状态） */
+  --radius-1: 4px; --radius-2: 6px; --radius-3: 8px; --radius-pill: 999px;
+
+  /* 控件与布局尺寸 */
+  --control-height: 40px;
+  --sidebar-width: 232px;
+  --topbar-height: 56px;
+  --content-max: 1240px;
+  --reading-max: 760px;
+  --evidence-width: 320px;
+
+  /* 阴影（仅浮层：弹层、抽屉、菜单；列表表格无阴影） */
+  --shadow-1: 0 1px 2px rgb(30 36 32 / .04), 0 1px 1px rgb(30 36 32 / .03);
+  --shadow-dialog: 0 24px 60px rgb(30 36 32 / .18);
+
+  /* 动效（支持 prefers-reduced-motion，见 App.css） */
+  --motion-fast: 100ms;
+  --motion-state: 180ms;
+  --motion-drawer: 260ms;
+
+  /* 焦点（2px 可见，对比 ≥3:1） */
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--action);
+
+  /* 字体 */
+  --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  --font-body: "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-state: 0ms;
+    --motion-drawer: 0ms;
+  }
 }

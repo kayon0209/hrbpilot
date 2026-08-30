@@ -1,0 +1,16 @@
+.kf-list{display:grid;gap:16px}
+.kf-card{padding:18px 20px;border:1px solid var(--line);background:var(--surface-subtle)}
+.kf-card--confirmed{border-left:3px solid var(--success)}
+.kf-card--rejected{border-left:3px solid var(--muted);opacity:.75}
+.kf-card--assigned{border-left:3px solid var(--info)}
+.kf-card__head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.kf-source{padding:2px 8px;border-radius:var(--radius-pill);font-size:var(--text-micro);color:var(--info);background:var(--info-soft)}
+.kf-source--negative_feedback{color:var(--warning);background:var(--warning-soft)}
+.kf-source--repeated_theme{color:var(--evidence);background:var(--evidence-soft)}
+.kf-occurrences{color:var(--muted);font-size:var(--text-meta)}
+.kf-card h3{margin:0 0 8px;font:500 var(--text-h3)/var(--text-h3-line) var(--font-body)}
+.kf-evidence{margin:0 0 12px;color:var(--ink-soft);font-size:var(--text-ui);line-height:1.6}
+.kf-actions{display:flex;flex-wrap:wrap;gap:8px}
+.kf-actions button{min-height:36px}
+.kf-decided{margin:0;color:var(--ink-soft);font-size:var(--text-ui)}
+@media(max-width:820px){.kf-actions{display:grid}}

@@ -181,9 +181,9 @@ class InterviewDigestOrchestrator:
                 db.add(record)
                 task = AsyncTask(
                     tenant_id=tenant_id,
+                    created_by=user_id,
                     type="interview_digest",
                     status="completed",
-                    progress=100,
                     result_json=result.model_dump_json(),
                     completed_at=datetime.now(UTC),
                 )
@@ -212,9 +212,9 @@ class InterviewDigestOrchestrator:
             task = AsyncTask(
                 id=task_id,
                 tenant_id=tenant_id,
+                created_by=user_id,
                 type="interview_digest",
                 status="pending",
-                progress=0,
             )
             db.add(task)
             await db.commit()
@@ -239,14 +239,38 @@ class InterviewDigestOrchestrator:
 
         return task_id
 
-    async def get_task_status(self, task_id: str) -> DigestStatus | None:
-        """Get the status of an async digest task from the database."""
+    async def get_task_status(
+        self,
+        task_id: str,
+        tenant_id: str,
+        visible_user_ids: set[str],
+    ) -> DigestStatus | None:
+        """Get the status of an async digest task from the database.
+
+        The tenant context is required: ``async_tasks`` is RLS-protected and a
+        session without ``app.tenant_id`` set cannot see any row.
+        """
+        from sqlalchemy import select
+
         from app.data.database import get_session_factory
         from app.data.models.infra import AsyncTask
 
         factory = get_session_factory()
         async with factory() as db:
-            row = await db.get(AsyncTask, task_id)
+            db.info["tenant_id"] = tenant_id
+            row = (
+                (
+                    await db.execute(
+                        select(AsyncTask).where(
+                            AsyncTask.tenant_id == tenant_id,
+                            AsyncTask.id == task_id,
+                            AsyncTask.created_by.in_(visible_user_ids),
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if not row:
                 return None
             result = None
@@ -258,7 +282,6 @@ class InterviewDigestOrchestrator:
             return DigestStatus(
                 task_id=row.id,
                 status=row.status,
-                progress=row.progress / 100.0 if row.progress else 0.0,
                 result=result,
                 error=row.error_message,
             )

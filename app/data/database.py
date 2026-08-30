@@ -5,6 +5,7 @@ Tenant context is set per-session for RLS policies.
 Engine is created lazily to avoid import-time failures when DB is unavailable.
 """
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from app.config.settings import settings
 from app.shared.errors import AuthError
@@ -41,12 +43,18 @@ def _init_engine() -> None:
     """Create async engine and session factory on first use."""
     global _engine, _async_session_factory
     if _engine is None:
-        _engine = create_async_engine(
-            settings.database_url,
-            pool_size=settings.database_pool_size,
-            max_overflow=settings.database_max_overflow,
-            echo=settings.app_debug,
-        )
+        engine_options: dict[str, object] = {"echo": settings.app_debug}
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            # Starlette TestClient and pytest-asyncio use different event loops.
+            # asyncpg pooled connections are loop-bound, so tests must not
+            # return a connection created by one loop to another loop.
+            engine_options["poolclass"] = NullPool
+        else:
+            engine_options.update(
+                pool_size=settings.database_pool_size,
+                max_overflow=settings.database_max_overflow,
+            )
+        _engine = create_async_engine(settings.database_url, **engine_options)
         _async_session_factory = async_sessionmaker(
             _engine,
             class_=AsyncSession,

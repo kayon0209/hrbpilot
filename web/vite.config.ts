@@ -6,8 +6,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8001",
-      "/openapi.json": "http://localhost:8001",
+      "/api": process.env.E2E_API_TARGET ?? "http://localhost:8001",
+      "/openapi.json": process.env.E2E_API_TARGET ?? "http://localhost:8001",
     },
   },
   test: {

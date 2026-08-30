@@ -23,6 +23,19 @@ logger = get_logger(__name__)
 # ---- Provider registry ----
 
 
+def _label_for(provider_id: str, model: str, base_url: str) -> str:
+    """Derive a display label that reflects the actual backend endpoint."""
+    if "gitee" in base_url:
+        return f"Gitee AI · {model}"
+    if provider_id == "zhipu":
+        return f"智谱 · {model}"
+    if provider_id == "deepseek":
+        return f"DeepSeek · {model}"
+    if provider_id == "openai":
+        return f"OpenAI · {model}"
+    return model
+
+
 def _build_provider_registry() -> dict[str, dict]:
     """Build the provider config registry from settings."""
     registry = {}
@@ -33,7 +46,7 @@ def _build_provider_registry() -> dict[str, dict]:
             "api_key": settings.llm_api_key,
             "model": settings.llm_model,
             "base_url": settings.llm_base_url,
-            "label": "智谱 GLM-4",
+            "label": _label_for("zhipu", settings.llm_model, settings.llm_base_url),
         }
 
     # DeepSeek (fallback)
@@ -42,7 +55,7 @@ def _build_provider_registry() -> dict[str, dict]:
             "api_key": settings.deepseek_api_key,
             "model": settings.deepseek_model,
             "base_url": settings.deepseek_base_url,
-            "label": "DeepSeek V3",
+            "label": _label_for("deepseek", settings.deepseek_model, settings.deepseek_base_url),
         }
 
     # OpenAI (fallback)
@@ -51,7 +64,7 @@ def _build_provider_registry() -> dict[str, dict]:
             "api_key": settings.openai_api_key,
             "model": settings.openai_model,
             "base_url": settings.openai_base_url,
-            "label": "OpenAI GPT-4o",
+            "label": _label_for("openai", settings.openai_model, settings.openai_base_url),
         }
 
     return registry

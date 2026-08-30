@@ -20,7 +20,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.decorators import require_auth, require_capability
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.infra import AsyncTask
@@ -83,9 +83,58 @@ def _doc_to_dict(doc: Document, chunk_count: int = 0) -> dict[str, Any]:
     }
 
 
+async def _sweep_stale_ingestion(session: AsyncSession, tenant_id: str, kb_id: str) -> None:
+    """Surface dead ingestion runs honestly (audit 2026-08-31 P0-1).
+
+    A worker that died mid-run used to leave its async task in ``pending``
+    forever and its documents stuck in ``parsing`` with no explanation. This
+    sweep (a) expires stale tasks for the caller's tenant (FORCE RLS requires
+    an explicit tenant context) and (b) returns documents claimed by a failed
+    ingestion back to ``error`` with a recoverable message so the import can
+    be retried.
+    """
+    from app.scenarios.tasks import expire_stale_tasks
+
+    await expire_stale_tasks(tenant_id)
+    failed_tasks = (
+        (
+            await session.execute(
+                select(AsyncTask).where(
+                    AsyncTask.tenant_id == tenant_id,
+                    AsyncTask.type == "document_ingestion",
+                    AsyncTask.status == "failed",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stale_doc_ids: list[str] = []
+    for task in failed_tasks:
+        try:
+            payload = json.loads(task.result_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if payload.get("kb_id") != kb_id:
+            continue
+        stale_doc_ids.extend(payload.get("document_ids") or [])
+    if stale_doc_ids:
+        await session.execute(
+            update(Document)
+            .where(
+                Document.tenant_id == tenant_id,
+                Document.kb_id == kb_id,
+                Document.id.in_(stale_doc_ids),
+                Document.status == "parsing",
+            )
+            .values(status="error", error_message="导入任务超时未完成，请重新建立索引。")
+        )
+        await session.commit()
+
+
 @router.post("/create")
 @require_auth
-@require_role("hr_manager")
+@require_capability("kb_management")
 async def create_kb(
     body: CreateKBBody,
     request: Request,
@@ -174,7 +223,7 @@ async def get_kb(
 
 @router.post("/{kb_id}/upload")
 @require_auth
-@require_role("hr_manager")
+@require_capability("kb_management")
 async def upload_document(
     kb_id: str,
     request: Request,
@@ -262,7 +311,7 @@ async def upload_document(
 
 @router.post("/{kb_id}/ingest")
 @require_auth
-@require_role("hr_manager")
+@require_capability("kb_management")
 async def trigger_ingestion(
     kb_id: str,
     request: Request,
@@ -276,6 +325,10 @@ async def trigger_ingestion(
     ).scalar_one_or_none()
     if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
+
+    # Dead-run sweep BEFORE claiming: previously stuck documents (from a task
+    # whose worker died) return to 'error' here so this retry can pick them up.
+    await _sweep_stale_ingestion(session, tenant_id, kb_id)
 
     # Atomic claim: concurrent requests cannot enqueue the same document twice.
     claimed_ids = list(
@@ -340,6 +393,10 @@ async def list_documents(
     if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
 
+    # Honesty sweep: a document left 'parsing' by a dead worker must surface
+    # as error here, not hang in the list forever (audit 2026-08-31 P0-1).
+    await _sweep_stale_ingestion(session, tenant_id, kb_id)
+
     docs = (
         (
             await session.execute(
@@ -369,7 +426,7 @@ async def list_documents(
 
 @router.delete("/{kb_id}/documents/{doc_id}")
 @require_auth
-@require_role("hr_manager")
+@require_capability("kb_management")
 async def delete_document(
     kb_id: str,
     doc_id: str,
@@ -410,7 +467,7 @@ async def delete_document(
 
 @router.post("/delete")
 @require_auth
-@require_role("hr_manager")
+@require_capability("kb_management")
 async def delete_kb(
     body: DeleteKBBody,
     request: Request,

@@ -11,8 +11,16 @@ const SYMBOL: Record<AsyncKind, ReactNode> = {
       <path d="M5 13l4 4 10-11" />
     </svg>
   ),
-  error: '!',
-  unauthorized: '×',
+  error: (
+    <svg className="async-state__check" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 6l12 12M18 6l-12 12" />
+    </svg>
+  ),
+  unauthorized: (
+    <svg className="async-state__check" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 6l12 12M18 6l-12 12" />
+    </svg>
+  ),
 }
 
 export function AsyncState({ kind, title, detail, action }: { kind: AsyncKind; title: string; detail?: string; action?: ReactNode }) {

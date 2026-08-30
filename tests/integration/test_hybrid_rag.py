@@ -174,3 +174,15 @@ async def test_hybrid_rag_end_to_end():
             await milvus.delete_by_kb_async(kb_id)
     finally:
         await session.close()
+
+    # This test runs on a pytest-asyncio event loop that closes when the test
+    # ends. The pooled asyncpg connections stay bound to that dead loop, so
+    # ANY later test reusing the global engine (TestClient tests included)
+    # crashes with "Event loop is closed". Dispose the pool and reset the
+    # singleton so the next consumer rebuilds on its own loop.
+    import app.data.database as db_mod
+
+    if db_mod._engine is not None:
+        await db_mod._engine.dispose()
+    db_mod._engine = None
+    db_mod._async_session_factory = None

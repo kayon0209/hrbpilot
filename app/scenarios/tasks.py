@@ -38,7 +38,12 @@ def run_async_in_worker(coro: Coroutine[Any, Any, T]) -> T:
 
 
 async def _update_task(task_id: str, tenant_id: str, **fields) -> None:
-    """Update AsyncTask row within the worker loop and tenant context."""
+    """Update AsyncTask row within the worker loop and tenant context.
+
+    ``progress`` is only written when a real, measurable denominator exists
+    (spec §9.1: mode ``units``). Scenario analysis is a single LLM generation
+    with no measurable steps, so those tasks never write fake percentages.
+    """
     from app.data.database import get_session_factory
     from app.data.models.infra import AsyncTask
 
@@ -62,6 +67,46 @@ async def _update_task(task_id: str, tenant_id: str, **fields) -> None:
             elif key == "completed_at":
                 row.completed_at = value
         await db.commit()
+
+
+async def expire_stale_tasks(tenant_id: str, max_age_seconds: int = 900) -> int:
+    """Mark tasks stuck in pending/running as failed so nothing hangs forever.
+
+    Spec Phase 0 exit gate: "没有无解释永久 pending". A task whose worker died
+    mid-run must surface as failed with an explanatory message, not stay
+    'running' until the user gives up.
+
+    ``tenant_id`` is mandatory: ``async_tasks`` is FORCE RLS, so a session
+    without the tenant context silently matches zero rows (audit 2026-08-31
+    P0-1 — a document ingestion task stayed ``pending`` for 13 days because
+    the previous no-context sweep could never see it).
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import update
+
+    from app.data.database import get_session_factory
+    from app.data.models.infra import AsyncTask
+
+    cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        result = await db.execute(
+            update(AsyncTask)
+            .where(
+                AsyncTask.tenant_id == tenant_id,
+                AsyncTask.status.in_(("pending", "running")),
+                AsyncTask.created_at < cutoff,
+            )
+            .values(
+                status="failed",
+                error_message="任务超时未完成，已完成的部分不会丢失，可重新发起分析。",
+                completed_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def _persist_interview_digest(tenant_id: str, result) -> None:
@@ -110,8 +155,7 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
     """Run interview digest analysis and persist the result."""
     from datetime import datetime
 
-    _worker_loop = _get_worker_loop()
-    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(UTC)))
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", started_at=datetime.now(UTC)))
 
     async def _run():
         from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
@@ -126,7 +170,6 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
                 task_id,
                 tenant_id,
                 status="completed",
-                progress=100,
                 result_json=result.model_dump_json(),
                 completed_at=datetime.now(UTC),
             )
@@ -150,8 +193,7 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
     """Run voice insight analysis and persist the result."""
     from datetime import datetime
 
-    _worker_loop = _get_worker_loop()
-    run_async_in_worker(_update_task(task_id, tenant_id, status="running", progress=30, started_at=datetime.now(UTC)))
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", started_at=datetime.now(UTC)))
 
     async def _run():
         from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
@@ -167,7 +209,6 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
                 task_id,
                 tenant_id,
                 status="completed",
-                progress=100,
                 result_json=result.model_dump_json(),
                 completed_at=datetime.now(UTC),
             )

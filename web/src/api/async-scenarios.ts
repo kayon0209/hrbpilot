@@ -1,7 +1,9 @@
 import { apiClient } from './http'
 import type { UnknownRecord } from './types'
 
-export interface TaskProgress { task_id: string; status: string; progress: number; error?: string | null }
+// status is a stage word: pending(排队中) | running(正在分析) | completed | failed —
+// single-shot LLM analysis has no measurable steps, so no percentage (spec §9.1)
+export interface TaskProgress { task_id: string; status: string; error?: string | null }
 export const uploadInterviewDocument = (file: File) => { const body = new FormData(); body.set('file', file); return apiClient.request<{ filename: string; content: string; text_length: number }>('/api/interview-digest/upload', { method: 'POST', body }) }
 export const startInterviewAnalysis = (content: string) => apiClient.request<{ task_id: string; status: string }>('/api/interview-digest/analyze', { method: 'POST', body: JSON.stringify({ content }) })
 export const getInterviewProgress = (taskId: string) => apiClient.request<TaskProgress>(`/api/interview-digest/progress/${taskId}`)

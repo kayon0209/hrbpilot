@@ -66,7 +66,6 @@ class TaskStatusResponse(BaseModel):
     """Status of an async analysis task."""
 
     task_id: str
-    status: str  # pending | processing | completed | failed
-    progress: float = 0.0
+    status: str  # queued | running | completed | failed — stage words, never fake percentages
     result: InsightReportResponse | None = None
     error: str | None = None

@@ -19,7 +19,7 @@ profiles are stored.
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -84,6 +84,7 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Idempotent tool invocation record (request_id dedupes side effects)."""
 
     __tablename__ = "tool_executions"
+    __table_args__ = (UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),)
 
     case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
     approval_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("approval_requests.id"), default=None)
@@ -105,6 +106,7 @@ class CaseEvent(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Append-only audit event. Never updated or deleted by application code."""
 
     __tablename__ = "case_events"
+    __table_args__ = (UniqueConstraint("case_id", "seq", name="uq_case_events_case_seq"),)
 
     case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
     agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)

@@ -38,7 +38,7 @@ async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -
     monkeypatch.setattr(auth, "_check_db_available", db_available)
     monkeypatch.setattr("app.data.database.get_db_session", fake_session)
     monkeypatch.setattr("app.data.repositories.user_repo.UserRepository.get_by_email", get_user)
-    monkeypatch.setattr("passlib.context.CryptContext.verify", lambda *_args: True)
+    monkeypatch.setattr("bcrypt.checkpw", lambda *_args: True)
 
     result = await auth.login(auth.LoginBody(email=user.email, password="secret"), request)
 
@@ -61,6 +61,7 @@ def test_production_accepts_strong_jwt_secret() -> None:
         embedding_base_url="https://embedding.example/v1",
         minio_access_key="configured-minio-key",
         minio_secret_key="configured-minio-secret",
+        vector_db_port=19530,
     )
     assert configured.is_production
     assert configured.milvus_endpoint == "http://localhost:19530"

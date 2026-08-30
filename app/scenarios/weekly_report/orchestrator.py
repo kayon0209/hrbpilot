@@ -115,8 +115,6 @@ class WeeklyReportOrchestrator:
             data_sources=parsed.get("data_sources", []),
         )
 
-        await self._store_report(tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data)
-
         logger.info("weekly_report_generated", period=period, latency_ms=latency_ms)
         return result
 
@@ -137,6 +135,7 @@ class WeeklyReportOrchestrator:
                 db.info["tenant_id"] = tenant_id
                 record = WeeklyReport(
                     tenant_id=tenant_id,
+                    created_by=user_id,
                     period=report.period,
                     summary=report.summary,
                     progress_json=json.dumps([item.model_dump() for item in report.progress], ensure_ascii=False),

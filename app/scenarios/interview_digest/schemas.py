@@ -57,7 +57,6 @@ class DigestStatus(BaseModel):
     """Status of an interview digest task."""
 
     task_id: str
-    status: str  # pending | processing | completed | failed
-    progress: float = 0.0
+    status: str  # queued | running | completed | failed — stage words, never fake percentages
     result: InterviewDigestResponse | None = None
     error: str | None = None

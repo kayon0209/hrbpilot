@@ -51,7 +51,7 @@ export class ApiClient {
   }
 }
 
-async function normalizeError(response: Response): Promise<ApiError> {
+export async function normalizeError(response: Response): Promise<ApiError> {
   let body: unknown
   try { body = await response.json() } catch { body = undefined }
   const parsed = errorSchema.safeParse(body)
@@ -83,4 +83,18 @@ export function authHeaders(init?: HeadersInit) {
   const token = handlers.getAccessToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   return headers
+}
+
+/**
+ * fetch with auth + 401→refresh→retry-once, for streaming endpoints that
+ * can't go through ApiClient.request (they need the raw Response body).
+ */
+export async function authorizedFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: authHeaders(init.headers) })
+  if (response.status === 401 && retry) {
+    const refreshed = await handlers.refresh()
+    if (refreshed) return authorizedFetch(path, init, false)
+    handlers.onUnauthorized()
+  }
+  return response
 }

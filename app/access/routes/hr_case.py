@@ -220,9 +220,10 @@ async def approve_case(case_id: str, body: ApproveBody, request: Request, sessio
 @require_auth
 async def execute_case(case_id: str, body: ExecuteBody, request: Request, session: AsyncSession = Depends(get_db)):
     """SECOND request after explicit approval — runs the approved write tool."""
-    # Role gate FIRST: employees never reach the database path.
+    # Capability gate FIRST: only business roles with hr_case capability reach
+    # the database path; platform admin is not a business role (spec §3.2).
     role = getattr(request.state, "user_role", "employee")
-    if role not in ("hr_manager", "admin"):
+    if role not in ("hr_manager", "hrbp"):
         from app.scenarios.hr_case_agent.service import CasePermissionDeniedError
 
         raise CasePermissionDeniedError(f"Role {role} cannot execute write tools")

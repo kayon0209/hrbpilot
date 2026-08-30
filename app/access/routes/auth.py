@@ -196,12 +196,11 @@ async def login(body: LoginBody, request: Request):
     db_ok = await _check_db_available()
 
     if db_ok:
-        from passlib.context import CryptContext
+        import bcrypt
 
         from app.data.database import get_db_session
         from app.data.repositories.user_repo import UserRepository
 
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         dummy_hash = "$2b$12$C6UzMDM.H6dfI/f/IKcEeOe0ZVg2Lz0V5A1E1L1o3d1Wv9C1mQx1W"
 
         try:
@@ -214,7 +213,11 @@ async def login(body: LoginBody, request: Request):
             raise DatabaseError("Authentication database query failed") from exc
 
         stored_hash = user.hashed_password if user else dummy_hash
-        if not user or not pwd_context.verify(body.password, stored_hash):
+        try:
+            password_ok = bcrypt.checkpw(body.password.encode("utf-8"), stored_hash.encode("utf-8"))
+        except ValueError:
+            password_ok = False
+        if not user or not password_ok:
             logger.warning("login_failed", email=body.email)
             raise AuthError("Invalid email or password")
 

@@ -98,13 +98,15 @@ async def _add_message(
 
 
 async def _save_history_async(
-    tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None
+    tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None,
+    citations_json: str | None = None,
 ) -> str | None:
     async with tenant_session(tenant_id) as db:
         chat_session = await _get_or_create_chat_session(db, tenant_id, user_id, session_id)
         await _add_message(db, chat_session.id, "user", question)
         assistant_message = await _add_message(
-            db, chat_session.id, "assistant", result.answer, confidence=result.confidence
+            db, chat_session.id, "assistant", result.answer, confidence=result.confidence,
+            citations_json=citations_json,
         )
         await db.commit()
         return assistant_message.id
@@ -123,17 +125,35 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
         async def event_stream():
             try:
                 start = time.time()
+                # Aggregate the streamed answer + citations as they pass
+                # through, so the persisted history matches what the user
+                # actually saw (chunk text was previously discarded — the
+                # assistant message saved with an empty body).
+                streamed_answer = ""
+                streamed_citations = ""
                 async for raw_event in orchestrator.execute_stream(
                     body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id
                 ):
                     event = json.loads(raw_event)
+                    if event.get("event") == "chunk":
+                        try:
+                            chunk_payload = json.loads(event.get("data", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            chunk_payload = {}
+                        streamed_answer += str(chunk_payload.get("text", ""))
+                        yield f"data: {raw_event}\n\n"
+                        continue
+                    if event.get("event") == "sources":
+                        streamed_citations = str(event.get("data", ""))
+                        yield f"data: {raw_event}\n\n"
+                        continue
                     if event.get("event") == "done":
                         try:
                             done_payload = json.loads(event.get("data", "{}"))
                         except (json.JSONDecodeError, TypeError):
                             done_payload = {}
                         qa_result = QAResponse(
-                            answer="",
+                            answer=streamed_answer,
                             citations=[],
                             confidence=float(done_payload.get("confidence", 0.0) or 0.0),
                             has_evidence=bool(done_payload.get("has_evidence", False)),
@@ -142,7 +162,7 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                             tokens_used=done_payload.get("tokens_used"),
                         )
                         message_id = await _save_history_async(
-                            tenant_id, user_id, body.question, qa_result, body.session_id
+                            tenant_id, user_id, body.question, qa_result, body.session_id, citations_json=streamed_citations or None
                         )
                         done_payload["message_id"] = message_id
                         done_payload["latency_ms"] = int((time.time() - start) * 1000)
@@ -171,6 +191,101 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
     response = result.model_dump()
     response["message_id"] = message_id
     return response
+
+
+@router.get("/sessions")
+@require_auth
+async def list_sessions(request: Request, session: AsyncSession = Depends(get_db)):
+    """List the caller's own policy QA sessions, newest first (spec §7.3 会话历史).
+
+    Only sessions belonging to this user in this tenant are returned; titles
+    are derived from the first user message — no other user's content leaks.
+    """
+    tenant_id = require_tenant_id(request)
+    user_id = getattr(request.state, "user_id", "unknown")
+    sessions = (
+        (
+            await session.execute(
+                select(ChatSession)
+                .where(
+                    ChatSession.tenant_id == tenant_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.scenario_id == "policy_qa",
+                )
+                .order_by(ChatSession.updated_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out = []
+    for s in sessions:
+        first_user = (
+
+                await session.execute(
+                    select(ChatMessage.content)
+                    .where(ChatMessage.session_id == s.id, ChatMessage.role == "user")
+                    .order_by(ChatMessage.created_at.asc())
+                    .limit(1)
+                )
+
+        ).scalar_one_or_none()
+        out.append(
+            {
+                "session_id": s.id,
+                "title": (first_user or "新会话")[:60],
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            }
+        )
+    return {"sessions": out}
+
+
+@router.get("/sessions/{session_id}/messages")
+@require_auth
+async def get_session_messages(session_id: str, request: Request, session: AsyncSession = Depends(get_db)):
+    """Replay one chat session so the user can continue an interrupted QA (spec §7.3 恢复中断)."""
+    tenant_id = require_tenant_id(request)
+    user_id = getattr(request.state, "user_id", "unknown")
+    chat_session = (
+        (
+            await session.execute(
+                select(ChatSession).where(
+                    ChatSession.id == session_id,
+                    ChatSession.tenant_id == tenant_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.scenario_id == "policy_qa",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if chat_session is None:
+        raise NotFoundError("Chat session", session_id)
+    messages = (
+        (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "session_id": session_id,
+        "messages": [
+            {
+                "message_id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "citations": json.loads(m.citations_json) if m.citations_json else [],
+            }
+            for m in messages
+        ],
+    }
 
 
 @router.post("/feedback")

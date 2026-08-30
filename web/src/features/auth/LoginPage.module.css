@@ -1,6 +1,6 @@
 .page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(380px, .65fr); }
 .intro { padding: clamp(48px, 9vw, 132px); display: flex; flex-direction: column; justify-content: center; background: #e9eee9; border-right: 1px solid var(--line); }
-.kicker { color: var(--action); font: 600 12px/1 var(--font-mono); letter-spacing: .16em; }
+.kicker { color: var(--action); font: 600 13px/1.2 var(--font-body); letter-spacing: 0.04em; }
 .intro h1 { max-width: 820px; margin: 28px 0; font: 600 clamp(38px, 4vw, 66px)/1.25 var(--font-display); letter-spacing: -.035em; }
 .intro p { max-width: 650px; color: var(--muted); font-size: 18px; line-height: 1.8; }
 .card { align-self: center; margin: 48px; padding: 48px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 24px 70px rgb(32 35 31 / .08); }

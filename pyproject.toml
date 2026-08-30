@@ -15,7 +15,6 @@ dependencies = [
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
     "bcrypt>=4.1.0,<5.0",
     "python-multipart>=0.0.18",
     "redis[hiredis]>=5.2.0,<6.0",
@@ -26,6 +25,7 @@ dependencies = [
     "pymilvus>=2.5.0,<3.0",
     "python-docx>=1.1.0",
     "pypdf>=5.1.0",
+    "openpyxl>=3.1.0",
     "jieba>=0.42.1",
     "openai>=1.58.0",
     "anthropic>=0.42.0",
@@ -93,5 +93,5 @@ no_implicit_reexport = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-module = ["pymilvus.*", "minio.*", "jieba.*", "jose.*", "passlib.*"]
+module = ["pymilvus.*", "minio.*", "jieba.*", "jose.*"]
 ignore_missing_imports = true

@@ -21,7 +21,13 @@ async def health_check():
 
 @router.get("/ready")
 async def readiness_check():
-    """Readiness probe — checks if all critical dependencies are reachable."""
+    """Readiness probe — checks if all critical dependencies are reachable.
+
+    This endpoint is PUBLIC (no auth): a degraded response must not disclose
+    internal topology (host names, ports, driver errors). Raw exception text
+    only goes to the server log; the public payload carries status only
+    (audit 2026-08-31 P2-1).
+    """
     checks = {}
 
     # Database check
@@ -36,7 +42,7 @@ async def readiness_check():
         checks["database"] = {"status": "ok"}
     except Exception as e:
         logger.error("database_unavailable", error=str(e))
-        checks["database"] = {"status": "error", "detail": str(e)}
+        checks["database"] = {"status": "error"}
 
     # Redis check
     try:
@@ -48,7 +54,7 @@ async def readiness_check():
         checks["redis"] = {"status": "ok"}
     except Exception as e:
         logger.warning("redis_unavailable", error=str(e))
-        checks["redis"] = {"status": "error", "detail": str(e)}
+        checks["redis"] = {"status": "error"}
 
     try:
         from app.rag.storage.milvus import MilvusStore
@@ -57,7 +63,7 @@ async def readiness_check():
         checks["milvus"] = {"status": "ok"}
     except Exception as e:
         logger.warning("milvus_unavailable", error=str(e))
-        checks["milvus"] = {"status": "error", "detail": str(e)}
+        checks["milvus"] = {"status": "error"}
 
     try:
         from app.rag.storage.object_store import ObjectStore
@@ -66,13 +72,12 @@ async def readiness_check():
         checks["minio"] = {"status": "ok"}
     except Exception as e:
         logger.warning("minio_unavailable", error=str(e))
-        checks["minio"] = {"status": "error", "detail": str(e)}
+        checks["minio"] = {"status": "error"}
 
     embedding_configured = bool(settings.embedding_base_url and settings.effective_embedding_api_key)
-    checks["embedding"] = {
-        "status": "ok" if embedding_configured else "error",
-        "detail": "configured" if embedding_configured else "missing endpoint or API key",
-    }
+    if not embedding_configured:
+        logger.warning("embedding_unconfigured", detail="missing endpoint or API key")
+    checks["embedding"] = {"status": "ok" if embedding_configured else "error"}
 
     # Overall status
     all_ok = all(c.get("status") == "ok" for c in checks.values())

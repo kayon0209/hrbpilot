@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access.middleware.decorators import require_auth, require_role
+from app.access.middleware.decorators import require_auth, require_capability
 from app.access.middleware.tenant import require_tenant_id
+from app.access.object_scope import resolve_visible_user_ids
 from app.data.database import get_db
 from app.data.models.infra import AsyncTask
 from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
@@ -34,7 +35,7 @@ class AnalyzeRequest(BaseModel):
 
 @router.post("/analyze")
 @require_auth
-@require_role("hrbp")
+@require_capability("voice_insight")
 async def start_analysis(
     request: Request,
     body: AnalyzeRequest,
@@ -58,21 +59,39 @@ async def start_analysis(
 
 @router.get("/progress/{task_id}")
 @require_auth
-@require_role("hrbp")
+@require_capability("voice_insight")
 async def get_progress(task_id: str, request: Request):
     """Poll async task progress."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    visible_user_ids = await resolve_visible_user_ids(
+        tenant_id, request.state.user_id, request.state.user_role
+    )
+    status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
-    return {"task_id": task_id, "status": status.status, "progress": status.progress}
+
+    # Lazy staleness sweep: dead-worker tasks must surface as failed, not hang.
+    if status.status in ("pending", "running"):
+        from app.scenarios.tasks import expire_stale_tasks
+
+        await expire_stale_tasks(tenant_id)
+        status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
+        if not status:
+            raise NotFoundError("Task", task_id)
+
+    return {"task_id": task_id, "status": status.status, "error": status.error}
 
 
 @router.get("/report/{task_id}")
 @require_auth
-@require_role("hrbp")
+@require_capability("voice_insight")
 async def get_report(task_id: str, request: Request):
     """Get completed insight report."""
-    status = await orchestrator.get_task_status(task_id)
+    tenant_id = require_tenant_id(request)
+    visible_user_ids = await resolve_visible_user_ids(
+        tenant_id, request.state.user_id, request.state.user_role
+    )
+    status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
     if status.status != "completed":
@@ -82,7 +101,7 @@ async def get_report(task_id: str, request: Request):
 
 @router.get("/history")
 @require_auth
-@require_role("hrbp")
+@require_capability("voice_insight")
 async def get_history(
     request: Request,
     limit: int = 20,
@@ -90,6 +109,9 @@ async def get_history(
 ):
     """Get recent voice insight analysis history from async task records."""
     tenant_id = require_tenant_id(request)
+    visible_user_ids = await resolve_visible_user_ids(
+        tenant_id, request.state.user_id, request.state.user_role
+    )
     rows = (
         (
             await session.execute(
@@ -99,6 +121,7 @@ async def get_history(
                     AsyncTask.type == "voice_insight",
                     AsyncTask.status == "completed",
                     AsyncTask.result_json.is_not(None),
+                    AsyncTask.created_by.in_(visible_user_ids),
                 )
                 .order_by(AsyncTask.completed_at.desc().nullslast(), AsyncTask.created_at.desc())
                 .limit(limit)
@@ -119,7 +142,6 @@ async def get_history(
             {
                 "task_id": row.id,
                 "status": row.status,
-                "progress": row.progress / 100.0 if row.progress else 0.0,
                 "result": result.model_dump() if result else None,
                 "completed_at": row.completed_at.isoformat() if row.completed_at else None,
                 "created_at": row.created_at.isoformat() if row.created_at else None,

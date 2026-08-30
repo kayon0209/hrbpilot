@@ -86,4 +86,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.tenant_id = tenant_id
         request.state.email = payload.get("email", "")
 
+        # BaseHTTPMiddleware layers each get a copy of request.state; the
+        # scope dict is the only place shared across middleware layers.
+        # RBACMiddleware reads the role from here.
+        request.scope["auth"] = {
+            "user_id": user_id,
+            "role": role,
+            "tenant_id": tenant_id,
+        }
+
         return await call_next(request)
