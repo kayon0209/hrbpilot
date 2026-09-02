@@ -3,6 +3,7 @@
 .form input,.form select{padding:10px 12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);font:inherit}
 .note{margin:0;color:var(--muted);font-size:var(--text-meta);line-height:1.6}
 .actions{display:flex;gap:10px}
+.sectionHeading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.sectionHeading h2{margin:0}
 .error{margin:0;color:var(--danger);font-size:var(--text-ui)}
 .list{display:grid;gap:16px}
 .card{padding:18px 20px;border:1px solid var(--line);background:var(--surface-subtle)}
@@ -22,6 +23,10 @@
 .meta dd{margin:0;font-size:var(--text-ui);line-height:1.6}
 .errorNote{margin:0 0 12px;color:var(--danger);font-size:var(--text-ui)}
 .revokedNote{margin:0;color:var(--ink-soft);font-size:var(--text-ui)}
+.identityBinding{display:grid;gap:10px;margin:16px 0;padding:14px;border:1px solid var(--line);background:var(--surface)}
+.identityBinding h2{margin:0;font-size:var(--text-ui)}
+.identityBinding p{margin:0;color:var(--ink-soft);font-size:var(--text-ui);line-height:1.6}
+.callbackPath{display:grid;gap:8px}.callbackPath code{display:block;overflow-wrap:anywhere;padding:10px 12px;color:var(--ink);background:var(--surface-subtle);border:1px solid var(--line);font-size:var(--text-meta);line-height:1.5}.callbackPath button{justify-self:start}
 .cardActions{display:flex;gap:8px;flex-wrap:wrap}
 .cardActions button{min-height:36px}
 @media(max-width:820px){.meta div{grid-template-columns:1fr}}

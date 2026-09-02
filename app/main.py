@@ -22,6 +22,7 @@ from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.routes.admin_users import router as admin_users_router
 from app.access.routes.audit import router as audit_router
 from app.access.routes.auth import router as auth_router
+from app.access.routes.connector_webhooks import router as connector_webhooks_router
 from app.access.routes.culture_content import router as culture_router
 from app.access.routes.data_source import router as data_source_router
 from app.access.routes.employee_request import router as employee_request_router
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_feedback_router)
     app.include_router(employee_request_router)
     app.include_router(data_source_router)
+    app.include_router(connector_webhooks_router)
     app.include_router(audit_router)
     app.include_router(admin_users_router)
 

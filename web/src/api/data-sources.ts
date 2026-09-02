@@ -7,6 +7,8 @@ export interface DataSourceView {
   platform_label: string
   purpose: string
   authorized_scope: string
+  authorized_scope_json: { chat_ids?: string[]; folder_ids?: string[] } | null
+  event_route: 'none' | 'employee_request'
   content_types: string[]
   data_destination: string
   certification_level: number
@@ -19,6 +21,10 @@ export interface DataSourceView {
   paused: boolean
   revoked_at: string | null
   revoked_reason: string | null
+  wecom_callback_configured: boolean
+  wecom_corp_id: string | null
+  wecom_agent_id: string | null
+  wecom_callback_path: string | null
   updated_at: string | null
 }
 
@@ -41,10 +47,32 @@ export function createDataSource(body: {
   platform: string
   purpose: string
   authorized_scope: string
+  authorized_scope_json?: { chat_ids?: string[]; folder_ids?: string[] }
+  event_route?: 'none' | 'employee_request'
   content_types: string[]
   data_destination: string
 }) {
   return apiClient.request<DataSourceView>('/api/data-sources', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function bindPlatformIdentity(sourceId: string, body: { external_user_id: string; user_id: string }) {
+  return apiClient.request<{ source_id: string; external_user_id: string; user_id: string }>(
+    `/api/data-sources/${sourceId}/identity-bindings`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export function configureWeComCallback(sourceId: string, body: {
+  corp_id: string
+  agent_id: string
+  corp_secret: string
+  callback_token: string
+  encoding_aes_key: string
+}) {
+  return apiClient.request<{ source_id: string; configured: boolean; corp_id: string; agent_id: string; callback_path: string }>(
+    `/api/data-sources/${sourceId}/wecom-callback-config`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  )
 }
 
 export function pauseDataSource(sourceId: string) {

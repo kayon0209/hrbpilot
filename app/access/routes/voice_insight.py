@@ -63,9 +63,7 @@ async def start_analysis(
 async def get_progress(task_id: str, request: Request):
     """Poll async task progress."""
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
@@ -88,9 +86,7 @@ async def get_progress(task_id: str, request: Request):
 async def get_report(task_id: str, request: Request):
     """Get completed insight report."""
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
@@ -109,9 +105,7 @@ async def get_history(
 ):
     """Get recent voice insight analysis history from async task records."""
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     rows = (
         (
             await session.execute(

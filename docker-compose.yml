@@ -122,7 +122,7 @@ services:
       app:
         condition: service_started
     ports:
-      - "3000:80"
+      - "3001:80"
 
 volumes:
   etcd_data:

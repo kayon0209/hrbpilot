@@ -12,6 +12,8 @@ Security invariants (enforced in service layer + tests):
   - every table carries tenant_id for RLS
   - case events are append-only (no update/delete paths)
   - write tools may only execute against an approved ApprovalRequest
+  - every child->parent reference is a composite (tenant_id, id) FK (020) so
+    the database itself rejects cross-tenant bindings.
 
 subject_ref is a SYNTHETIC identifier by design (Phase 4): no real employee
 profiles are stored.
@@ -19,7 +21,14 @@ profiles are stored.
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -29,13 +38,26 @@ class HRCase(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Case aggregate root."""
 
     __tablename__ = "hr_cases"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_hr_cases_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
+            name="fk_hr_cases_tenant_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "owner_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_hr_cases_tenant_owner",
+        ),
+    )
 
-    created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     subject_ref: Mapped[str] = mapped_column(String(120), nullable=False, index=True)  # synthetic ref only
     category: Mapped[str] = mapped_column(String(50), nullable=False)  # overtime | leave | payroll | ...
     risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="LOW")  # LOW|MEDIUM|HIGH
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="NEW")
-    owner_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), default=None)
+    owner_id: Mapped[str | None] = mapped_column(String(36), default=None)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
 
@@ -47,9 +69,22 @@ class CasePlan(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Agent-proposed plan for a case; validated server-side before storage."""
 
     __tablename__ = "case_plans"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_case_plans_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
+            name="fk_case_plans_tenant_case",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_run_id"],
+            ["agent_runs.tenant_id", "agent_runs.id"],
+            name="fk_case_plans_tenant_run",
+        ),
+    )
 
-    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
-    agent_run_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agent_runs.id"), default=None)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
     steps_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON: [{tool, params, reason, expected}]
     rationale: Mapped[str | None] = mapped_column(Text, default=None)
     risk_notes: Mapped[str | None] = mapped_column(Text, default=None)
@@ -63,15 +98,35 @@ class ApprovalRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """A pending write action that a human must approve before execution."""
 
     __tablename__ = "approval_requests"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_approval_requests_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
+            name="fk_approval_requests_tenant_case",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "plan_id"],
+            ["case_plans.tenant_id", "case_plans.id"],
+            name="fk_approval_requests_tenant_plan",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "approver_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_approval_requests_tenant_approver",
+        ),
+    )
 
-    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
-    plan_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("case_plans.id"), default=None)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    plan_id: Mapped[str | None] = mapped_column(String(36), default=None)
     tool_name: Mapped[str] = mapped_column(String(50), nullable=False)
     params_json: Mapped[str] = mapped_column(Text, nullable=False)
     input_hash: Mapped[str | None] = mapped_column(String(64), default=None)  # sha256 of tool+params
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING"
+    )  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
     requested_by: Mapped[str | None] = mapped_column(String(36), default=None)  # agent run
-    approver_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), default=None)
+    approver_id: Mapped[str | None] = mapped_column(String(36), default=None)
     decision_reason: Mapped[str | None] = mapped_column(Text, default=None)
     expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     decided_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -84,11 +139,28 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Idempotent tool invocation record (request_id dedupes side effects)."""
 
     __tablename__ = "tool_executions"
-    __table_args__ = (UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),)
+    __table_args__ = (
+        UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
+            name="fk_tool_executions_tenant_case",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "approval_id"],
+            ["approval_requests.tenant_id", "approval_requests.id"],
+            name="fk_tool_executions_tenant_approval",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "agent_run_id"],
+            ["agent_runs.tenant_id", "agent_runs.id"],
+            name="fk_tool_executions_tenant_run",
+        ),
+    )
 
-    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
-    approval_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("approval_requests.id"), default=None)
-    agent_run_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agent_runs.id"), default=None)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    approval_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
     tool_name: Mapped[str] = mapped_column(String(50), nullable=False)
     request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # idempotency key
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # sha256 of params
@@ -106,9 +178,16 @@ class CaseEvent(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Append-only audit event. Never updated or deleted by application code."""
 
     __tablename__ = "case_events"
-    __table_args__ = (UniqueConstraint("case_id", "seq", name="uq_case_events_case_seq"),)
+    __table_args__ = (
+        UniqueConstraint("case_id", "seq", name="uq_case_events_case_seq"),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
+            name="fk_case_events_tenant_case",
+        ),
+    )
 
-    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)  # per-case monotonic sequence
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)  # STATUS_CHANGED|PLAN_CREATED|...
@@ -123,10 +202,20 @@ class AgentRun(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """One bounded agent run against a case."""
 
     __tablename__ = "agent_runs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_agent_runs_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
+            name="fk_agent_runs_tenant_case",
+        ),
+    )
 
-    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("hr_cases.id"), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="RUNNING")  # RUNNING|COMPLETED|STOPPED_LIMIT|HANDED_OFF|FAILED
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="RUNNING"
+    )  # RUNNING|COMPLETED|STOPPED_LIMIT|HANDED_OFF|FAILED
     steps_taken: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     handoff_reason: Mapped[str | None] = mapped_column(Text, default=None)

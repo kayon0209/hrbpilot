@@ -9,7 +9,7 @@ GET  /api/weekly-report/history → Recent report history
 import json
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,7 @@ from app.scenarios.voice_insight.schemas import InsightReportResponse
 from app.scenarios.weekly_report.orchestrator import WeeklyReportOrchestrator
 from app.scenarios.weekly_report.schemas import GenerateRequest, SaveRequest
 from app.shared.audit import append_security_audit_event
-from app.shared.errors import NotFoundError, ValidationError
+from app.shared.errors import DatabaseError, NotFoundError, ValidationError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -171,6 +171,10 @@ async def generate_report(
     report_id = await orchestrator._store_report(
         tenant_id=tenant_id, user_id=user_id, report=result, source_data=source_data
     )
+    # _store_report swallows persistence failures and returns "" — returning a
+    # 200 with an empty report_id would fake success (users lose the draft).
+    if not report_id:
+        raise DatabaseError("周报未能保存，请稍后重试")
 
     return {"report_id": report_id, "report": result.model_dump(), "is_draft": body.draft_mode}
 
@@ -235,7 +239,7 @@ async def save_report(body: SaveRequest, request: Request):
 @require_capability("weekly_report")
 async def get_history(
     request: Request,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ):
     """Get recent weekly report history from database records."""
@@ -263,6 +267,7 @@ async def get_history(
 
     reports = []
     for row in rows:
+
         def _parse_list(raw: str | None) -> list:
             if not raw:
                 return []

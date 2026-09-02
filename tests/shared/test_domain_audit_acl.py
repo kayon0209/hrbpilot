@@ -33,20 +33,50 @@ async def test_weekly_publish_is_owner_only_and_durably_audited():
         db.info["tenant_id"] = tenant_id
         db.add_all(
             [
-                User(id=owner_id, tenant_id=tenant_id, name="Owner", email=f"{owner_id}@example.com", hashed_password="x", role="hrbp"),
-                User(id=other_id, tenant_id=tenant_id, name="Other", email=f"{other_id}@example.com", hashed_password="x", role="hrbp"),
+                User(
+                    id=owner_id,
+                    tenant_id=tenant_id,
+                    name="Owner",
+                    email=f"{owner_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
+                User(
+                    id=other_id,
+                    tenant_id=tenant_id,
+                    name="Other",
+                    email=f"{other_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
             ]
         )
         await db.flush()
         for report_id, created_by in ((own_report, owner_id), (other_report, other_id)):
-            db.add(WeeklyReport(id=report_id, tenant_id=tenant_id, created_by=created_by, period="2026-W35", summary="s", progress_json="[]", risks_json="[]", plan_json="[]", data_sources_json="[]"))
+            db.add(
+                WeeklyReport(
+                    id=report_id,
+                    tenant_id=tenant_id,
+                    created_by=created_by,
+                    period="2026-W35",
+                    summary="s",
+                    progress_json="[]",
+                    risks_json="[]",
+                    plan_json="[]",
+                    data_sources_json="[]",
+                )
+            )
         await db.commit()
 
     try:
         with pytest.raises(NotFoundError):
-            await save_report(SaveRequest(report_id=other_report, action="publish"), _request(tenant_id, owner_id, "hrbp"))
+            await save_report(
+                SaveRequest(report_id=other_report, action="publish"), _request(tenant_id, owner_id, "hrbp")
+            )
 
-        response = await save_report(SaveRequest(report_id=own_report, action="publish"), _request(tenant_id, owner_id, "hrbp"))
+        response = await save_report(
+            SaveRequest(report_id=own_report, action="publish"), _request(tenant_id, owner_id, "hrbp")
+        )
         assert response["status"] == "saved"
 
         async with factory() as db:
@@ -82,11 +112,37 @@ async def test_knowledge_decision_is_durably_audited():
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        db.add(KnowledgeFeedbackCandidate(id=candidate_id, tenant_id=tenant_id, source_type="no_evidence", question="Q", occurrences=1, status="open"))
+        db.add(
+            User(
+                id=manager_id,
+                tenant_id=tenant_id,
+                name="Manager",
+                email=f"{manager_id}@example.com",
+                hashed_password="x",
+                role="hr_manager",
+            )
+        )
+        await db.flush()
+        db.add(
+            KnowledgeFeedbackCandidate(
+                id=candidate_id,
+                tenant_id=tenant_id,
+                source_user_id=manager_id,
+                source_type="no_evidence",
+                question="Q",
+                occurrences=1,
+                status="open",
+            )
+        )
         await db.commit()
 
     try:
-        await decide_candidate(tenant_id, manager_id, DecideBody(candidate_id=candidate_id, decision="confirm", reason="制度缺口"))
+        await decide_candidate(
+            tenant_id,
+            manager_id,
+            "hr_manager",
+            DecideBody(candidate_id=candidate_id, decision="confirm", reason="制度缺口"),
+        )
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             event = (
@@ -107,5 +163,8 @@ async def test_knowledge_decision_is_durably_audited():
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
-            await db.execute(delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id))
+            await db.execute(
+                delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id)
+            )
+            await db.execute(delete(User).where(User.tenant_id == tenant_id))
             await db.commit()

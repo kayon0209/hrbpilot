@@ -27,9 +27,7 @@ def session_factory():
 
     async def make():
         async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: Base.metadata.create_all(c, tables=[infra_models.TokenLedgerEntry.__table__])
-            )
+            await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[infra_models.TokenLedgerEntry.__table__]))
 
     asyncio.run(make())
     yield factory
@@ -54,7 +52,9 @@ async def test_settle_reserves_then_settles_once(session_factory):
         assert reserve.settlement_state == "RESERVE"
         await session.commit()
 
-        settled = await settle_reservation(session, "t1", "req-2", actual_total=320, input_tokens=200, output_tokens=120)
+        settled = await settle_reservation(
+            session, "t1", "req-2", actual_total=320, input_tokens=200, output_tokens=120
+        )
         await session.commit()
         assert settled.total_tokens == 320
         assert settled.measured is True

@@ -27,8 +27,14 @@ def session_factory():
             await conn.run_sync(
                 lambda c: Base.metadata.create_all(
                     c,
-                    tables=[H.HRCase.__table__, H.CasePlan.__table__, H.ApprovalRequest.__table__,
-                            H.ToolExecution.__table__, H.CaseEvent.__table__, H.AgentRun.__table__],
+                    tables=[
+                        H.HRCase.__table__,
+                        H.CasePlan.__table__,
+                        H.ApprovalRequest.__table__,
+                        H.ToolExecution.__table__,
+                        H.CaseEvent.__table__,
+                        H.AgentRun.__table__,
+                    ],
                 )
             )
 
@@ -65,10 +71,14 @@ async def test_run_trace_exposes_full_trajectory(session_factory, monkeypatch):
 
         from app.scenarios.hr_case_agent.planner import Planner
 
-        draft = Planner(None).validate(json.dumps({"steps": [{"tool": "search_policy", "params": {"query": "加班费"}}]}))
+        draft = Planner(None).validate(
+            json.dumps({"steps": [{"tool": "search_policy", "params": {"query": "加班费"}}]})
+        )
         await service.save_plan(
             case.id,
-            steps=[{"tool": s.tool, "params": s.params, "reason": s.reason, "expected": s.expected} for s in draft.steps],
+            steps=[
+                {"tool": s.tool, "params": s.params, "reason": s.reason, "expected": s.expected} for s in draft.steps
+            ],
             rationale=draft.rationale,
             agent_run_id=run.id,
         )

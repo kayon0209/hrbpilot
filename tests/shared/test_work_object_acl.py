@@ -98,9 +98,33 @@ async def test_manager_sees_only_users_in_explicit_org_scopes():
         await db.flush()
         db.add_all(
             [
-                User(id=manager_id, tenant_id=tenant_id, name="M", email=f"{manager_id}@example.com", hashed_password="x", role="hr_manager", org_unit_id=org_a),
-                User(id=visible_user_id, tenant_id=tenant_id, name="A", email=f"{visible_user_id}@example.com", hashed_password="x", role="employee", org_unit_id=org_a),
-                User(id=hidden_user_id, tenant_id=tenant_id, name="B", email=f"{hidden_user_id}@example.com", hashed_password="x", role="employee", org_unit_id=org_b),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="M",
+                    email=f"{manager_id}@example.com",
+                    hashed_password="x",
+                    role="hr_manager",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=visible_user_id,
+                    tenant_id=tenant_id,
+                    name="A",
+                    email=f"{visible_user_id}@example.com",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=hidden_user_id,
+                    tenant_id=tenant_id,
+                    name="B",
+                    email=f"{hidden_user_id}@example.com",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_b,
+                ),
             ]
         )
         await db.flush()
@@ -144,16 +168,55 @@ async def test_work_summary_filters_by_creator_before_aggregation():
         db.info["tenant_id"] = tenant_id
         db.add_all(
             [
-                User(id=actor_id, tenant_id=tenant_id, name="A", email=f"{actor_id}@example.com", hashed_password="x", role="hrbp"),
-                User(id=other_id, tenant_id=tenant_id, name="B", email=f"{other_id}@example.com", hashed_password="x", role="hrbp"),
+                User(
+                    id=actor_id,
+                    tenant_id=tenant_id,
+                    name="A",
+                    email=f"{actor_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
+                User(
+                    id=other_id,
+                    tenant_id=tenant_id,
+                    name="B",
+                    email=f"{other_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
             ]
         )
         await db.flush()
         db.add_all(
             [
-                AsyncTask(id=actor_task_id, tenant_id=tenant_id, type="interview_digest", status="completed", created_by=actor_id, updated_at=now),
-                AsyncTask(id=other_task_id, tenant_id=tenant_id, type="voice_insight", status="completed", created_by=other_id, updated_at=now + timedelta(seconds=5)),
-                WeeklyReport(id=actor_report_id, tenant_id=tenant_id, created_by=actor_id, period="2026-W35", summary="s", progress_json="[]", risks_json="[]", plan_json="[]", data_sources_json="[]", updated_at=now),
+                AsyncTask(
+                    id=actor_task_id,
+                    tenant_id=tenant_id,
+                    type="interview_digest",
+                    status="completed",
+                    created_by=actor_id,
+                    updated_at=now,
+                ),
+                AsyncTask(
+                    id=other_task_id,
+                    tenant_id=tenant_id,
+                    type="voice_insight",
+                    status="completed",
+                    created_by=other_id,
+                    updated_at=now + timedelta(seconds=5),
+                ),
+                WeeklyReport(
+                    id=actor_report_id,
+                    tenant_id=tenant_id,
+                    created_by=actor_id,
+                    period="2026-W35",
+                    summary="s",
+                    progress_json="[]",
+                    risks_json="[]",
+                    plan_json="[]",
+                    data_sources_json="[]",
+                    updated_at=now,
+                ),
             ]
         )
         await db.commit()

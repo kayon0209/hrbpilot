@@ -3,6 +3,14 @@
 from app.data.models.access_scope import ManagerOrgScope, OrgUnit
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 from app.data.models.chat import ChatMessage, ChatSession
+from app.data.models.connector import (
+    ConnectorDeliveryAttempt,
+    ConnectorEventLog,
+    ConnectorIdentityBinding,
+    ConnectorIntakeEvent,
+    ConnectorSyncCursor,
+    OAuthNonce,
+)
 from app.data.models.data_source import DataSource
 from app.data.models.hr_case import (
     AgentRun,
@@ -24,6 +32,7 @@ from app.data.models.scenarios import (
 )
 from app.data.models.tenant import Tenant
 from app.data.models.user import User
+from app.data.models.work_task import WorkTask
 
 __all__ = [
     "AgentRun",
@@ -35,6 +44,11 @@ __all__ = [
     "CasePlan",
     "ChatMessage",
     "ChatSession",
+    "ConnectorDeliveryAttempt",
+    "ConnectorEventLog",
+    "ConnectorIdentityBinding",
+    "ConnectorIntakeEvent",
+    "ConnectorSyncCursor",
     "CultureContent",
     "DataSource",
     "Document",
@@ -47,6 +61,7 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
+    "OAuthNonce",
     "OrgUnit",
     "Tenant",
     "TenantMixin",
@@ -56,4 +71,5 @@ __all__ = [
     "UUIDPrimaryKey",
     "User",
     "WeeklyReport",
+    "WorkTask",
 ]

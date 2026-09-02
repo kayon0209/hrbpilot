@@ -11,14 +11,20 @@ The critical Phase 5 guarantees covered here at the HTTP boundary:
   - execute requires hr_manager/admin
 """
 
+import asyncio
 import os
 from datetime import UTC
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
+from sqlalchemy import delete
 
 from app.config.settings import settings
+from app.data.database import get_session_factory
+from app.data.models.hr_case import AgentRun, ApprovalRequest, CaseEvent, CasePlan, HRCase, ToolExecution
+from app.data.models.user import User
 from app.main import create_app
 
 _JWT_ISSUER = "hrbp-ai-workbench"
@@ -95,13 +101,57 @@ def test_hr_case_endpoints_reject_anonymous(client):
 def _real_db_required():
     if not os.environ.get("DATABASE_URL"):
         pytest.skip("needs a real database via DATABASE_URL")
-def test_full_case_flow_with_real_db(client, _real_db_required):
+
+
+async def _seed_case_actor(tenant_id: str, user_id: str) -> None:
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        db.add(
+            User(
+                id=user_id,
+                tenant_id=tenant_id,
+                name="HRCase HTTP test manager",
+                email=f"{user_id}@example.test",
+                hashed_password="not-used-by-test",
+                role="hr_manager",
+            )
+        )
+        await db.commit()
+
+
+async def _cleanup_case_actor(tenant_id: str) -> None:
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        await db.execute(delete(CaseEvent).where(CaseEvent.tenant_id == tenant_id))
+        await db.execute(delete(ToolExecution).where(ToolExecution.tenant_id == tenant_id))
+        await db.execute(delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id))
+        await db.execute(delete(CasePlan).where(CasePlan.tenant_id == tenant_id))
+        await db.execute(delete(AgentRun).where(AgentRun.tenant_id == tenant_id))
+        await db.execute(delete(HRCase).where(HRCase.tenant_id == tenant_id))
+        await db.execute(delete(User).where(User.tenant_id == tenant_id))
+        await db.commit()
+
+
+@pytest.fixture()
+def _real_db_actor(_real_db_required):
+    tenant_id, user_id = str(uuid4()), str(uuid4())
+    asyncio.run(_seed_case_actor(tenant_id, user_id))
+    try:
+        yield tenant_id, user_id
+    finally:
+        asyncio.run(_cleanup_case_actor(tenant_id))
+
+
+def test_full_case_flow_with_real_db(client, _real_db_actor):
     """Create → plan → run → approve → execute on a live database.
 
     This is the golden journey; it only runs when DATABASE_URL points at a
     disposable database (CI or local container).
     """
-    token = _make_token()
+    tenant_id, user_id = _real_db_actor
+    token = _make_token(user_id=user_id, tenant_id=tenant_id)
     headers = _auth_header(token)
 
     created = client.post(

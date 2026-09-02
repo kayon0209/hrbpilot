@@ -1,9 +1,11 @@
 """HRBP AI Workbench — Chat session and message models.
 
-RLS enabled via tenant_id.
+RLS enabled via tenant_id.  ChatSession.user_id is a composite (tenant_id,
+user_id) FK (020); chat_messages carries no tenant_id by design (it is always
+reached through its session).
 """
 
-from sqlalchemy import Float, ForeignKey, String, Text
+from sqlalchemy import Float, ForeignKey, ForeignKeyConstraint, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -11,8 +13,14 @@ from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryK
 
 class ChatSession(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "chat_sessions"
-
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_chat_sessions_tenant_user",
+        ),
+    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     scenario_id: Mapped[str] = mapped_column(String(50), nullable=False)  # policy_qa | interview | ...
 
     def __repr__(self) -> str:

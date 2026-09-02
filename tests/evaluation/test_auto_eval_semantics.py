@@ -39,8 +39,13 @@ def _patch_judge(monkeypatch, reply: str | None) -> None:
 
 async def test_judge_zero_is_a_real_recorded_score(monkeypatch, recorded):
     _patch_judge(monkeypatch, "0 分。理由：回答与来源完全不符。")
-    outcome = await EVALUATOR.evaluate(output="随便编的内容", query="年假怎么休", sources=[{"content": "制度正文"}],
-                                      metrics=["faithfulness"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="随便编的内容",
+        query="年假怎么休",
+        sources=[{"content": "制度正文"}],
+        metrics=["faithfulness"],
+        tenant_id="t1",
+    )
     assert outcome.scores == {"faithfulness": 0.0}
     assert outcome.skipped_metrics == []
     assert recorded == [("faithfulness", 0.0)]
@@ -53,8 +58,9 @@ async def test_judge_exception_is_skipped_not_zero(monkeypatch, recorded):
         raise RuntimeError("provider down")
 
     monkeypatch.setattr("app.rag.llm.orchestrator.get_llm_client", broken_client)
-    outcome = await EVALUATOR.evaluate(output="答案", query="问题", sources=[{"content": "来源"}],
-                                       metrics=["faithfulness"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="答案", query="问题", sources=[{"content": "来源"}], metrics=["faithfulness"], tenant_id="t1"
+    )
     assert outcome.scores == {}
     assert [s.reason for s in outcome.skipped_metrics] == [SKIP_JUDGE_UNAVAILABLE]
     assert recorded == []
@@ -62,8 +68,9 @@ async def test_judge_exception_is_skipped_not_zero(monkeypatch, recorded):
 
 async def test_unparseable_judge_output_is_skipped(monkeypatch, recorded):
     _patch_judge(monkeypatch, "抱歉，我无法评估这段内容。")
-    outcome = await EVALUATOR.evaluate(output="答案", query="问题", sources=[{"content": "来源"}],
-                                       metrics=["answer_relevance"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="答案", query="问题", sources=[{"content": "来源"}], metrics=["answer_relevance"], tenant_id="t1"
+    )
     assert outcome.scores == {}
     assert [s.reason for s in outcome.skipped_metrics] == [SKIP_UNPARSEABLE]
     assert recorded == []
@@ -71,8 +78,9 @@ async def test_unparseable_judge_output_is_skipped(monkeypatch, recorded):
 
 async def test_no_sources_scores_zero_without_judge(monkeypatch, recorded):
     _patch_judge(monkeypatch, None)  # judge must not even be called
-    outcome = await EVALUATOR.evaluate(output="无引用的回答", query="问题", sources=[],
-                                       metrics=["citation_accuracy"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="无引用的回答", query="问题", sources=[], metrics=["citation_accuracy"], tenant_id="t1"
+    )
     assert outcome.scores == {"citation_accuracy": 0.0}
     assert outcome.skipped_metrics == []
     assert recorded == [("citation_accuracy", 0.0)]
@@ -80,8 +88,9 @@ async def test_no_sources_scores_zero_without_judge(monkeypatch, recorded):
 
 async def test_unknown_metric_is_skipped_and_not_aggregated(monkeypatch, recorded):
     _patch_judge(monkeypatch, "0.9 分。")
-    outcome = await EVALUATOR.evaluate(output="答案", query="问题", sources=[{"content": "来源"}],
-                                       metrics=["made_up_metric"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="答案", query="问题", sources=[{"content": "来源"}], metrics=["made_up_metric"], tenant_id="t1"
+    )
     assert outcome.scores == {}
     assert [s.reason for s in outcome.skipped_metrics] == [SKIP_UNKNOWN_METRIC]
     assert recorded == []
@@ -94,16 +103,20 @@ async def test_aggregator_failure_does_not_break_evaluation(monkeypatch, recorde
         raise RuntimeError("db down")
 
     monkeypatch.setattr(auto_eval.metrics_aggregator, "record", broken_record)
-    outcome = await EVALUATOR.evaluate(output="答案", query="问题", sources=[{"content": "来源"}],
-                                       metrics=["faithfulness"], tenant_id="t1")
+    outcome = await EVALUATOR.evaluate(
+        output="答案", query="问题", sources=[{"content": "来源"}], metrics=["faithfulness"], tenant_id="t1"
+    )
     assert outcome.scores == {"faithfulness": 0.8}
 
 
 async def test_mixed_metrics_split_scores_and_skips(monkeypatch, recorded):
     _patch_judge(monkeypatch, "1.0 分。")
     outcome = await EVALUATOR.evaluate(
-        output="答案", query="问题", sources=[{"content": "来源"}],
-        metrics=["faithfulness", "answer_relevance", "nope"], tenant_id="t1",
+        output="答案",
+        query="问题",
+        sources=[{"content": "来源"}],
+        metrics=["faithfulness", "answer_relevance", "nope"],
+        tenant_id="t1",
     )
     assert outcome.scores == {"faithfulness": 1.0, "answer_relevance": 1.0}
     assert [s.metric for s in outcome.skipped_metrics] == ["nope"]

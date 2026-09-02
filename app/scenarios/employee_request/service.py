@@ -12,6 +12,8 @@ one user can never enumerate another's requests even inside the same tenant.
 from __future__ import annotations
 
 from datetime import UTC
+from hashlib import sha256
+from typing import cast
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +34,12 @@ REQUEST_TYPE_LABELS = {
     "certificate": "证明开具",
     "process_help": "流程协助",
     "other": "其他事项",
+}
+
+CONNECTOR_PLATFORM_LABELS = {
+    "wecom": "企业微信",
+    "feishu": "飞书",
+    "dingtalk": "钉钉",
 }
 
 
@@ -62,6 +70,18 @@ class HrTriageBody(BaseModel):
     needs_materials: str | None = Field(None, max_length=1000)
     hr_note: str | None = Field(None, max_length=2000)
     hr_owner_id: str | None = Field(None, max_length=36)
+
+
+class DeliveryAttemptView(BaseModel):
+    """HR-only projection of a local protocol simulator delivery attempt."""
+
+    attempt_id: str
+    status: str
+    attempt_count: int
+    provider_msgid: str | None = None
+    safe_message: str
+    retryable: bool
+    error: str | None = None
 
 
 def _employee_view(row) -> EmployeeRequestView:
@@ -140,6 +160,8 @@ async def hr_triage(
     actor_role: str,
     request_id: str,
     body: HrTriageBody,
+    *,
+    gateway=None,
 ) -> dict:
     """HR updates the business status and the employee-facing next step.
 
@@ -172,15 +194,7 @@ async def hr_triage(
             filters.append(EmployeeRequest.created_by.in_(visible_user_ids))
         else:
             raise NotFoundError("Request", request_id)
-        row = (
-            (
-                await db.execute(
-                    select(EmployeeRequest).where(*filters)
-                )
-            )
-            .scalars()
-            .first()
-        )
+        row = (await db.execute(select(EmployeeRequest).where(*filters))).scalars().first()
         if row is None:
             raise NotFoundError("Request", request_id)
         row.status = body.status
@@ -209,6 +223,7 @@ async def hr_triage(
         if body.status == "resolved":
             row.resolved_at = dt.now(UTC)
         row.updated_at = dt.now(UTC)
+        attempt_id = await enqueue_wecom_delivery(db, tenant_id, row, body)
         await append_security_audit_event(
             db,
             tenant_id=tenant_id,
@@ -219,18 +234,227 @@ async def hr_triage(
             details={"status": body.status, "owner_id": row.hr_owner_id},
         )
         await db.commit()
+        view = _employee_view(row)
     logger.info("employee_request_triaged", tenant_id=tenant_id, request_id=request_id, status=body.status)
     # HR sees the desensitized employee view plus the internal note (their own).
-    view = _employee_view(row)
-    return {"request": view.model_dump(), "hr_note": body.hr_note}
+    delivery = await deliver_wecom_attempt(tenant_id, attempt_id, gateway=gateway) if attempt_id else None
+    return {
+        "request": view.model_dump(),
+        "hr_note": body.hr_note,
+        "delivery": delivery.model_dump() if delivery else None,
+    }
 
 
-async def hr_list_open(tenant_id: str, actor_id: str, actor_role: str) -> list[dict]:
-    """Return only explicitly owned or manager-scoped open requests."""
+def _delivery_view(row) -> DeliveryAttemptView:
+    return DeliveryAttemptView(
+        attempt_id=row.id,
+        status=row.status,
+        attempt_count=row.attempt_count,
+        provider_msgid=row.provider_msgid,
+        safe_message=row.message_content,
+        retryable=row.status == "retryable_failed",
+        error=row.last_error,
+    )
+
+
+def _delivery_digest(*, source_id: str, recipient_ref: str, content: str, status: str) -> str:
+    """Digest employee-visible business state only, never the HR internal note."""
+    material = "\x1f".join((source_id, recipient_ref, content, status))
+    return sha256(material.encode("utf-8")).hexdigest()
+
+
+async def enqueue_wecom_delivery(db, tenant_id: str, request, body: HrTriageBody) -> str | None:
+    """Atomically insert one local-simulation outbox record with the triage change."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert
+
+    from app.data.models.connector import ConnectorDeliveryAttempt
+    from app.data.models.data_source import DataSource
+
+    if not request.connector_source_id or not request.external_sender_id:
+        return None
+    source = await db.scalar(
+        select(DataSource).where(
+            DataSource.tenant_id == tenant_id,
+            DataSource.id == request.connector_source_id,
+        )
+    )
+    if source is None or source.platform != "wecom" or source.event_route != "employee_request":
+        return None
+    content = body.needs_materials if body.status == "needs_materials" else body.next_step_for_employee
+    if not content:
+        return None
+    statement = (
+        insert(ConnectorDeliveryAttempt)
+        .values(
+            tenant_id=tenant_id,
+            employee_request_id=request.id,
+            source_id=source.id,
+            channel="wecom_simulator",
+            recipient_ref=request.external_sender_id,
+            message_content=content,
+            content_digest=_delivery_digest(
+                source_id=source.id,
+                recipient_ref=request.external_sender_id,
+                content=content,
+                status=body.status,
+            ),
+            status="queued",
+        )
+        .on_conflict_do_nothing(constraint="uq_connector_delivery_attempt_business_version")
+        .returning(ConnectorDeliveryAttempt.id)
+    )
+    return cast(str | None, await db.scalar(statement))
+
+
+async def deliver_wecom_attempt(tenant_id: str, attempt_id: str, *, gateway=None) -> DeliveryAttemptView:
+    """Run one local-only delivery attempt after the triage transaction commits."""
+    from datetime import datetime as dt
+
+    from sqlalchemy import select
+
+    from app.connectors.wecom_outbound import WeComOutboundSimulator
+    from app.data.database import get_session_factory
+    from app.data.models.connector import ConnectorDeliveryAttempt
+    from app.data.models.data_source import DataSource
+    from app.shared.errors import NotFoundError
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        attempt = await db.scalar(
+            select(ConnectorDeliveryAttempt)
+            .where(
+                ConnectorDeliveryAttempt.tenant_id == tenant_id,
+                ConnectorDeliveryAttempt.id == attempt_id,
+            )
+            .with_for_update()
+        )
+        if attempt is None:
+            raise NotFoundError("DeliveryAttempt", attempt_id)
+        if attempt.status in {"simulated_accepted", "rejected"}:
+            return _delivery_view(attempt)
+        source = await db.scalar(
+            select(DataSource).where(
+                DataSource.tenant_id == tenant_id,
+                DataSource.id == attempt.source_id,
+            )
+        )
+        now = dt.now(UTC)
+        attempt.attempt_count += 1
+        attempt.last_attempt_at = now
+
+        if source is None or source.revoked_at is not None:
+            attempt.status = "rejected"
+            attempt.last_error = "来源已撤销，不能进行本地协议模拟"
+        elif source.wecom_callback_config_encrypted is None:
+            attempt.status = "rejected"
+            attempt.last_error = "来源未配置企业微信入站回调，不能进行本地协议模拟"
+        elif "/" in attempt.recipient_ref:
+            attempt.status = "rejected"
+            attempt.last_error = "未配置可发送的企业微信内部成员 ID"
+        else:
+            simulator = gateway or WeComOutboundSimulator()
+            try:
+                # These values are synthetic.  The encrypted inbound callback
+                # bundle is intentionally never decrypted or reused as outbound
+                # authorization by the local simulator.
+                token = await simulator.get_token("local-simulator", "local-only")
+                response = await simulator.send_text(token.value, "0", attempt.recipient_ref, attempt.message_content)
+                if response.errcode == 42001:
+                    token = await simulator.get_token("local-simulator", "local-only")
+                    response = await simulator.send_text(
+                        token.value, "0", attempt.recipient_ref, attempt.message_content
+                    )
+                attempt.provider_errcode = response.errcode
+                attempt.provider_msgid = response.msgid
+                if response.errcode == 0:
+                    attempt.status = "simulated_accepted"
+                    attempt.last_error = None
+                    attempt.next_retry_at = None
+                elif response.retryable:
+                    attempt.status = "retryable_failed"
+                    attempt.last_error = "本地协议模拟暂时不可用，可重试"
+                    attempt.next_retry_at = now
+                else:
+                    attempt.status = "rejected"
+                    attempt.last_error = "模拟平台拒绝该接收者" if response.invaliduser else "本地协议模拟拒绝发送"
+            except ValueError as exc:
+                attempt.status = "rejected"
+                attempt.last_error = str(exc)
+            except Exception:
+                logger.exception("wecom_local_simulator_failed", tenant_id=tenant_id, attempt_id=attempt_id)
+                attempt.status = "retryable_failed"
+                attempt.last_error = "本地协议模拟暂时不可用，可重试"
+                attempt.next_retry_at = now
+        await db.commit()
+        return _delivery_view(attempt)
+
+
+async def retry_hr_delivery(
+    tenant_id: str,
+    actor_id: str,
+    actor_role: str,
+    request_id: str,
+    attempt_id: str,
+    *,
+    gateway=None,
+) -> DeliveryAttemptView:
+    """Retry only a transient local simulation failure visible to this HR actor."""
     from sqlalchemy import select
 
     from app.access.object_scope import resolve_visible_user_ids
     from app.data.database import get_session_factory
+    from app.data.models.connector import ConnectorDeliveryAttempt
+    from app.data.models.scenarios import EmployeeRequest
+
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, actor_id, actor_role)
+    if actor_role == "hrbp":
+        scope_filter = EmployeeRequest.hr_owner_id == actor_id
+    elif actor_role == "hr_manager":
+        if not visible_user_ids:
+            raise NotFoundError("Request", request_id)
+        scope_filter = EmployeeRequest.created_by.in_(visible_user_ids)
+    else:
+        raise NotFoundError("Request", request_id)
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        request = await db.scalar(
+            select(EmployeeRequest).where(
+                EmployeeRequest.tenant_id == tenant_id,
+                EmployeeRequest.id == request_id,
+                scope_filter,
+            )
+        )
+        if request is None:
+            raise NotFoundError("Request", request_id)
+        attempt = await db.scalar(
+            select(ConnectorDeliveryAttempt)
+            .where(
+                ConnectorDeliveryAttempt.tenant_id == tenant_id,
+                ConnectorDeliveryAttempt.id == attempt_id,
+                ConnectorDeliveryAttempt.employee_request_id == request.id,
+            )
+            .with_for_update()
+        )
+        if attempt is None:
+            raise NotFoundError("DeliveryAttempt", attempt_id)
+        if attempt.status != "retryable_failed":
+            raise ValidationError("只有本地模拟临时失败的回执可以重试")
+        await db.commit()
+    return await deliver_wecom_attempt(tenant_id, attempt_id, gateway=gateway)
+
+
+async def hr_list_open(tenant_id: str, actor_id: str, actor_role: str) -> list[dict]:
+    """Return only explicitly owned or manager-scoped open requests with source context."""
+    from sqlalchemy import and_, select
+
+    from app.access.object_scope import resolve_visible_user_ids
+    from app.data.database import get_session_factory
+    from app.data.models.connector import ConnectorDeliveryAttempt
+    from app.data.models.data_source import DataSource
     from app.data.models.scenarios import EmployeeRequest
 
     visible_user_ids = await resolve_visible_user_ids(tenant_id, actor_id, actor_role)
@@ -247,31 +471,61 @@ async def hr_list_open(tenant_id: str, actor_id: str, actor_role: str) -> list[d
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(EmployeeRequest)
-                    .where(
-                        EmployeeRequest.tenant_id == tenant_id,
-                        EmployeeRequest.status != "resolved",
-                        scope_filter,
-                    )
-                    .order_by(EmployeeRequest.updated_at.desc())
-                    .limit(100)
+            await db.execute(
+                select(EmployeeRequest, DataSource.platform, DataSource.name)
+                .outerjoin(
+                    DataSource,
+                    and_(
+                        DataSource.tenant_id == EmployeeRequest.tenant_id,
+                        DataSource.id == EmployeeRequest.connector_source_id,
+                    ),
                 )
+                .where(
+                    EmployeeRequest.tenant_id == tenant_id,
+                    EmployeeRequest.status != "resolved",
+                    scope_filter,
+                )
+                .order_by(EmployeeRequest.updated_at.desc())
+                .limit(100)
             )
-            .scalars()
-            .all()
+        ).all()
+        request_ids = [row.id for row, _platform, _source_name in rows]
+        deliveries_by_request: dict[str, object] = {}
+        if request_ids:
+            attempts = (
+                await db.execute(
+                    select(ConnectorDeliveryAttempt)
+                    .where(
+                        ConnectorDeliveryAttempt.tenant_id == tenant_id,
+                        ConnectorDeliveryAttempt.employee_request_id.in_(request_ids),
+                    )
+                    .order_by(ConnectorDeliveryAttempt.created_at.desc())
+                )
+            ).scalars()
+            for attempt in attempts:
+                deliveries_by_request.setdefault(attempt.employee_request_id, attempt)
+    views = []
+    for row, platform, source_name in rows:
+        source_label = None
+        if platform:
+            platform_label = CONNECTOR_PLATFORM_LABELS.get(platform, platform)
+            source_label = f"{platform_label} · {source_name}" if source_name else platform_label
+        views.append(
+            {
+                **_employee_view(row).model_dump(),
+                "description": row.description,
+                "hr_note": row.hr_note,
+                "hr_case_id": row.hr_case_id,
+                "hr_owner_id": row.hr_owner_id,
+                "connector_source_label": source_label,
+                "delivery": (
+                    _delivery_view(deliveries_by_request[row.id]).model_dump()
+                    if row.id in deliveries_by_request
+                    else None
+                ),
+            }
         )
-    return [
-        {
-            **_employee_view(row).model_dump(),
-            "description": row.description,
-            "hr_note": row.hr_note,
-            "hr_case_id": row.hr_case_id,
-            "hr_owner_id": row.hr_owner_id,
-        }
-        for row in rows
-    ]
+    return views
 
 
 async def hr_list_assignees(tenant_id: str, manager_id: str, manager_role: str) -> list[dict]:
@@ -296,17 +550,14 @@ async def hr_list_assignees(tenant_id: str, manager_id: str, manager_role: str) 
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(User.id, User.name, User.email).where(
-                        User.tenant_id == tenant_id,
-                        User.id.in_(visible_user_ids),
-                        User.role == "hrbp",
-                    )
+            await db.execute(
+                select(User.id, User.name, User.email).where(
+                    User.tenant_id == tenant_id,
+                    User.id.in_(visible_user_ids),
+                    User.role == "hrbp",
                 )
             )
-            .all()
-        )
+        ).all()
     return [{"user_id": r[0], "name": r[1], "email": r[2]} for r in rows]
 
 

@@ -19,6 +19,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/auth/login",
     "/api/auth/refresh",
     "/api/auth/dev-users",
+    "/api/connector-webhooks",
 )
 
 

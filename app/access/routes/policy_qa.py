@@ -98,14 +98,22 @@ async def _add_message(
 
 
 async def _save_history_async(
-    tenant_id: str, user_id: str, question: str, result: QAResponse, session_id: str | None,
+    tenant_id: str,
+    user_id: str,
+    question: str,
+    result: QAResponse,
+    session_id: str | None,
     citations_json: str | None = None,
 ) -> str | None:
     async with tenant_session(tenant_id) as db:
         chat_session = await _get_or_create_chat_session(db, tenant_id, user_id, session_id)
         await _add_message(db, chat_session.id, "user", question)
         assistant_message = await _add_message(
-            db, chat_session.id, "assistant", result.answer, confidence=result.confidence,
+            db,
+            chat_session.id,
+            "assistant",
+            result.answer,
+            confidence=result.confidence,
             citations_json=citations_json,
         )
         await db.commit()
@@ -162,7 +170,12 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                             tokens_used=done_payload.get("tokens_used"),
                         )
                         message_id = await _save_history_async(
-                            tenant_id, user_id, body.question, qa_result, body.session_id, citations_json=streamed_citations or None
+                            tenant_id,
+                            user_id,
+                            body.question,
+                            qa_result,
+                            body.session_id,
+                            citations_json=streamed_citations or None,
                         )
                         done_payload["message_id"] = message_id
                         done_payload["latency_ms"] = int((time.time() - start) * 1000)
@@ -222,14 +235,12 @@ async def list_sessions(request: Request, session: AsyncSession = Depends(get_db
     out = []
     for s in sessions:
         first_user = (
-
-                await session.execute(
-                    select(ChatMessage.content)
-                    .where(ChatMessage.session_id == s.id, ChatMessage.role == "user")
-                    .order_by(ChatMessage.created_at.asc())
-                    .limit(1)
-                )
-
+            await session.execute(
+                select(ChatMessage.content)
+                .where(ChatMessage.session_id == s.id, ChatMessage.role == "user")
+                .order_by(ChatMessage.created_at.asc())
+                .limit(1)
+            )
         ).scalar_one_or_none()
         out.append(
             {
@@ -266,9 +277,7 @@ async def get_session_messages(session_id: str, request: Request, session: Async
     messages = (
         (
             await session.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
-                .order_by(ChatMessage.created_at.asc())
+                select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
             )
         )
         .scalars()
@@ -338,7 +347,9 @@ async def list_policy_knowledge_bases(request: Request, session: AsyncSession = 
     if kbs:
         count_rows = (
             await session.execute(
-                select(Document.kb_id, func.count(Document.id)).where(Document.kb_id.in_([kb.id for kb in kbs])).group_by(Document.kb_id)
+                select(Document.kb_id, func.count(Document.id))
+                .where(Document.kb_id.in_([kb.id for kb in kbs]))
+                .group_by(Document.kb_id)
             )
         ).all()
         doc_counts = {row[0]: int(row[1]) for row in count_rows}

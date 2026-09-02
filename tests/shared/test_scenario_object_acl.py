@@ -32,15 +32,43 @@ async def test_interview_task_detail_and_history_are_owner_scoped():
         db.info["tenant_id"] = tenant_id
         db.add_all(
             [
-                User(id=actor_id, tenant_id=tenant_id, name="A", email=f"{actor_id}@example.com", hashed_password="x", role="hrbp"),
-                User(id=other_id, tenant_id=tenant_id, name="B", email=f"{other_id}@example.com", hashed_password="x", role="hrbp"),
+                User(
+                    id=actor_id,
+                    tenant_id=tenant_id,
+                    name="A",
+                    email=f"{actor_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
+                User(
+                    id=other_id,
+                    tenant_id=tenant_id,
+                    name="B",
+                    email=f"{other_id}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                ),
             ]
         )
         await db.flush()
         db.add_all(
             [
-                AsyncTask(id=actor_task_id, tenant_id=tenant_id, type="interview_digest", created_by=actor_id, status="completed", result_json="{}"),
-                AsyncTask(id=other_task_id, tenant_id=tenant_id, type="interview_digest", created_by=other_id, status="failed", error_message="hidden"),
+                AsyncTask(
+                    id=actor_task_id,
+                    tenant_id=tenant_id,
+                    type="interview_digest",
+                    created_by=actor_id,
+                    status="completed",
+                    result_json="{}",
+                ),
+                AsyncTask(
+                    id=other_task_id,
+                    tenant_id=tenant_id,
+                    type="interview_digest",
+                    created_by=other_id,
+                    status="failed",
+                    error_message="hidden",
+                ),
             ]
         )
         await db.commit()

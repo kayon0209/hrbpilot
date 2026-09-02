@@ -24,3 +24,8 @@ class TestRequest extends NativeRequest {
 }
 
 globalThis.Request = TestRequest;
+
+// React warnings (act(...), strict-mode) are deliberately NOT filtered here:
+// a test that leaves state updates outside act() is a real bug in the test's
+// waiting strategy, and swallowing the warning would hide it (FE-05).  Any
+// console.error reaching this point is surfaced to the test runner.

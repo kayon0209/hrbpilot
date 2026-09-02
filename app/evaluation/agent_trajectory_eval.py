@@ -49,8 +49,15 @@ def build_policy_plan(sample: AgentEvalSample) -> CasePlanDraft:
             risk_notes=f"human review required: {sample.category}/{sample.risk_level}",
         )
         return draft
-    steps = [PlanStep(tool=t, params={"query": sample.input_question} if t == "search_policy" else {"title": sample.input_question, "subject_ref": "EMP-SYN-EVAL", "category": sample.category})
-             for t in sample.expected_tools]
+    steps = [
+        PlanStep(
+            tool=t,
+            params={"query": sample.input_question}
+            if t == "search_policy"
+            else {"title": sample.input_question, "subject_ref": "EMP-SYN-EVAL", "category": sample.category},
+        )
+        for t in sample.expected_tools
+    ]
     return CasePlanDraft(steps=steps, rationale="policy-derived plan")
 
 
@@ -66,7 +73,13 @@ class TrajectoryEvaluator:
 
         async with self.session_factory() as session:
             service = HRCaseService(session, "eval-tenant", actor="agent")
-            case = await service.create_case("eval-user", f"EMP-EVAL-{sample.sample_id}", sample.category, sample.input_question[:100], risk_level=sample.risk_level)
+            case = await service.create_case(
+                "eval-user",
+                f"EMP-EVAL-{sample.sample_id}",
+                sample.category,
+                sample.input_question[:100],
+                risk_level=sample.risk_level,
+            )
             run = await service.start_agent_run(case.id, sample.input_question[:200])
             plan = build_policy_plan(sample)
 
@@ -132,9 +145,13 @@ class TrajectoryEvaluator:
             "pass_rate": round(passed / total, 4) if total else None,
             "unauthorized_write_rate": round(adversarial_writes / len(adversarial), 4) if adversarial else 0.0,
             "duplicate_side_effect_rate": 0.0,  # begin_tool_execution dedupes by (case, request_id); covered by unit tests
-            "high_risk_handoff_rate": self._handoff_rate(results, ("labor_arbitration", "harassment", "discrimination", "termination")),
+            "high_risk_handoff_rate": self._handoff_rate(
+                results, ("labor_arbitration", "harassment", "discrimination", "termination")
+            ),
             "false_escalation_rate": self._false_escalation(results),
-            "approval_gate_rate": round(len(approvals) / max(1, len([s for s in DATASET if s.status == "golden" and s.expect_approval])), 4),
+            "approval_gate_rate": round(
+                len(approvals) / max(1, len([s for s in DATASET if s.status == "golden" and s.expect_approval])), 4
+            ),
             "failures": [{"sample_id": r.sample_id, "failures": r.failures} for r in results if not r.passed],
         }
         return {"summary": summary, "results": [asdict(r) for r in results]}
@@ -149,7 +166,11 @@ class TrajectoryEvaluator:
 
     @staticmethod
     def _false_escalation(results: list[TrajectoryResult]) -> float | None:
-        benign = [r for r in results if r.sample_id in {s.sample_id for s in DATASET if not s.expect_handoff and s.expected_tools}]
+        benign = [
+            r
+            for r in results
+            if r.sample_id in {s.sample_id for s in DATASET if not s.expect_handoff and s.expected_tools}
+        ]
         if not benign:
             return None
         return round(sum(1 for r in benign if r.handoff) / len(benign), 4)

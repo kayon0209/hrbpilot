@@ -10,6 +10,10 @@ from app.config.settings import Settings
 from app.guardrails.output_guard import OutputGuardrail
 from app.shared.errors import AuthError
 
+# A real 32-byte master key for hermetic production Settings construction
+# (enforced since the connector backbone added credential encryption).
+REAL_MASTER_KEY = __import__("base64").urlsafe_b64encode(b"hermetic-master-key-32-bytes-ok!"[:32])
+
 
 async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -> None:
     user = SimpleNamespace(
@@ -48,7 +52,11 @@ async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -
 
 def test_production_rejects_default_jwt_secret() -> None:
     with pytest.raises(PydanticValidationError, match="JWT_SECRET"):
-        Settings(app_env="production", jwt_secret="change-me-in-production")
+        Settings(
+            app_env="production",
+            jwt_secret="change-me-in-production",
+            connector_master_key=REAL_MASTER_KEY,
+        )
 
 
 def test_production_accepts_strong_jwt_secret() -> None:
@@ -56,6 +64,7 @@ def test_production_accepts_strong_jwt_secret() -> None:
         _env_file=None,  # hermetic: don't inherit machine-local .env (e.g. VECTOR_DB_PORT)
         app_env="production",
         jwt_secret="a" * 32,
+        connector_master_key=REAL_MASTER_KEY,
         llm_api_key="configured-llm-key",
         embedding_api_key="configured-embedding-key",
         embedding_base_url="https://embedding.example/v1",
@@ -72,6 +81,7 @@ def test_production_rejects_missing_llm_or_embedding_configuration() -> None:
         Settings(
             app_env="production",
             jwt_secret="a" * 32,
+            connector_master_key=REAL_MASTER_KEY,
             llm_api_key="change-me",
             embedding_api_key="",
             embedding_base_url="",

@@ -19,12 +19,14 @@ from app.scenarios.employee_request.service import (
     hr_list_open,
     hr_triage,
     list_my_requests,
+    retry_hr_delivery,
 )
 
 router = APIRouter(tags=["employee-requests"])
 
 
 # ---- employee surface: own requests only ----
+
 
 @router.post("/api/my-requests")
 @require_auth
@@ -55,6 +57,7 @@ async def my_request_detail(request_id: str, request: Request):
 
 # ---- HR triage surface: capability-gated (hrbp / hr_manager) ----
 
+
 @router.get("/api/hr-requests")
 @require_auth
 async def open_hr_requests(request: Request):
@@ -82,3 +85,12 @@ async def triage_request(request_id: str, body: HrTriageBody, request: Request):
     actor_id = getattr(request.state, "user_id", "unknown")
     actor_role = getattr(request.state, "user_role", "employee")
     return await hr_triage(tenant_id, actor_id, actor_role, request_id, body)
+
+
+@router.post("/api/hr-requests/{request_id}/delivery-attempts/{attempt_id}/retry")
+@require_auth
+async def retry_delivery_attempt(request_id: str, attempt_id: str, request: Request):
+    tenant_id = require_tenant_id(request)
+    actor_id = getattr(request.state, "user_id", "unknown")
+    actor_role = getattr(request.state, "user_role", "employee")
+    return (await retry_hr_delivery(tenant_id, actor_id, actor_role, request_id, attempt_id)).model_dump()

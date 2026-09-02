@@ -175,7 +175,11 @@ class PolicyQAOrchestrator:
             }
             for s in context_chunks[:3]
         ]
-        yield json.dumps({"event": "sources", "data": json.dumps(sources_data)})
+        # An empty ``sources`` event is not evidence.  Omitting it lets the
+        # history writer persist ``NULL`` and lets downstream feedback detect
+        # a genuinely unsupported answer instead of the truthy string "[]".
+        if sources_data:
+            yield json.dumps({"event": "sources", "data": json.dumps(sources_data)})
 
         full_output = ""
         output_tokens: int | None = None

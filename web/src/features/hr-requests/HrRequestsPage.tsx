@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncState } from '../../components/AsyncState'
-import { listAssignees, listHrRequests, triageHrRequest, type HrRequestItem } from '../../api/hr-requests'
+import { listAssignees, listHrRequests, retryHrDelivery, triageHrRequest, type HrRequestItem } from '../../api/hr-requests'
 import { useSessionStore } from '../../app/session-store'
 import styles from './HrRequestsPage.module.css'
 
@@ -20,6 +20,10 @@ export function HrRequestsPage() {
   const assignees = useQuery({ queryKey: ['hr-request-assignees'], queryFn: listAssignees, enabled: role === 'hr_manager' })
   const triage = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Parameters<typeof triageHrRequest>[1] }) => triageHrRequest(id, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hr-requests'] }),
+  })
+  const retryDelivery = useMutation({
+    mutationFn: ({ requestId, attemptId }: { requestId: string; attemptId: string }) => retryHrDelivery(requestId, attemptId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['hr-requests'] }),
   })
 
@@ -58,6 +62,9 @@ export function HrRequestsPage() {
                 onTriage={triage.mutateAsync}
                 pending={triage.isPending && triage.variables?.id === request.request_id}
                 error={triage.isError && triage.variables?.id === request.request_id ? triage.error.message : null}
+                onRetry={(attemptId) => retryDelivery.mutateAsync({ requestId: request.request_id, attemptId })}
+                retrying={retryDelivery.isPending && retryDelivery.variables?.requestId === request.request_id}
+                retryError={retryDelivery.isError && retryDelivery.variables?.requestId === request.request_id ? retryDelivery.error.message : null}
               />
             ))}
           </div>
@@ -67,13 +74,16 @@ export function HrRequestsPage() {
   )
 }
 
-function RequestCard({ request, isManager, assignees, onTriage, pending, error }: {
+function RequestCard({ request, isManager, assignees, onTriage, pending, error, onRetry, retrying, retryError }: {
   request: HrRequestItem
   isManager: boolean
   assignees: { user_id: string; name: string; email: string }[]
   onTriage: (input: { id: string; body: Parameters<typeof triageHrRequest>[1] }) => Promise<unknown>
   pending: boolean
   error: string | null
+  onRetry: (attemptId: string) => Promise<unknown>
+  retrying: boolean
+  retryError: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<'needs_materials' | 'in_progress' | 'resolved'>('in_progress')
@@ -112,6 +122,8 @@ function RequestCard({ request, isManager, assignees, onTriage, pending, error }
         <time>{request.created_at?.slice(5, 16).replace('T', ' ')}</time>
       </div>
       <h3>{request.title}</h3>
+      {request.connector_source_label && <p className={styles.source}>来源：{request.connector_source_label}</p>}
+      <DeliveryStatus delivery={request.delivery} onRetry={onRetry} retrying={retrying} retryError={retryError} />
       <p className={styles.description}>{request.description}</p>
       {request.needs_materials && <p className={styles.materials}>待补充材料：{request.needs_materials}</p>}
       {request.hr_note && <p className={styles.internalNote}>内部备注（员工不可见）：{request.hr_note}</p>}
@@ -152,5 +164,33 @@ function RequestCard({ request, isManager, assignees, onTriage, pending, error }
         <button className="secondary-button" onClick={() => setOpen(true)}>处理</button>
       )}
     </article>
+  )
+}
+
+function DeliveryStatus({ delivery, onRetry, retrying, retryError }: {
+  delivery: HrRequestItem['delivery']
+  onRetry: (attemptId: string) => Promise<unknown>
+  retrying: boolean
+  retryError: string | null
+}) {
+  if (!delivery) return null
+  if (delivery.status === 'simulated_accepted') {
+    return <p className={`${styles.delivery} ${styles.deliveryAccepted}`} role="status">企微协议本地模拟：已接受（未出网）</p>
+  }
+  if (delivery.status === 'queued') {
+    return <p className={styles.delivery}>企微协议本地模拟：待发送（未出网）</p>
+  }
+  if (delivery.status === 'rejected') {
+    return <p className={`${styles.delivery} ${styles.deliveryRejected}`}>企微协议本地模拟：无法发送{delivery.error ? `；${delivery.error}` : ''}</p>
+  }
+  return (
+    <div className={`${styles.delivery} ${styles.deliveryRetryable}`}>
+      <p>企微协议本地模拟：失败，可重试</p>
+      {delivery.error && <p>{delivery.error}</p>}
+      {retryError && <p role="alert">重试未成功：{retryError}</p>}
+      <button className="secondary-button" disabled={retrying} onClick={() => void onRetry(delivery.attempt_id)}>
+        {retrying ? '正在重试…' : '重试模拟发送'}
+      </button>
+    </div>
   )
 }
