@@ -97,7 +97,13 @@ def test_employee_cannot_reach_hr_triage(client):
 
 def test_hrbp_and_manager_reach_hr_triage(client):
     for role in ("hrbp", "hr_manager"):
-        resp = client.get("/api/hr-requests", headers={**_headers(role, "10000000-0000-4000-8000-000000000009"), "Authorization": f"Bearer {_make_token(role, '10000000-0000-4000-8000-000000000009')}"})
+        resp = client.get(
+            "/api/hr-requests",
+            headers={
+                **_headers(role, "10000000-0000-4000-8000-000000000009"),
+                "Authorization": f"Bearer {_make_token(role, '10000000-0000-4000-8000-000000000009')}",
+            },
+        )
         assert resp.status_code != 403, f"{role} should reach HR triage"
 
 
@@ -151,11 +157,51 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
         await db.flush()
         db.add_all(
             [
-                User(id=manager_id, tenant_id=tenant_id, name="M", email=f"{manager_id}@example.com", hashed_password="x", role="hr_manager", org_unit_id=org_a),
-                User(id=hr_a, tenant_id=tenant_id, name="HA", email=f"{hr_a}@example.com", hashed_password="x", role="hrbp", org_unit_id=org_a),
-                User(id=hr_b, tenant_id=tenant_id, name="HB", email=f"{hr_b}@example.com", hashed_password="x", role="hrbp", org_unit_id=org_b),
-                User(id=employee_a, tenant_id=tenant_id, name="EA", email=f"{employee_a}@example.com", hashed_password="x", role="employee", org_unit_id=org_a),
-                User(id=employee_b, tenant_id=tenant_id, name="EB", email=f"{employee_b}@example.com", hashed_password="x", role="employee", org_unit_id=org_b),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="M",
+                    email=f"{manager_id}@example.com",
+                    hashed_password="x",
+                    role="hr_manager",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=hr_a,
+                    tenant_id=tenant_id,
+                    name="HA",
+                    email=f"{hr_a}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=hr_b,
+                    tenant_id=tenant_id,
+                    name="HB",
+                    email=f"{hr_b}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_b,
+                ),
+                User(
+                    id=employee_a,
+                    tenant_id=tenant_id,
+                    name="EA",
+                    email=f"{employee_a}@example.com",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=employee_b,
+                    tenant_id=tenant_id,
+                    name="EB",
+                    email=f"{employee_b}@example.com",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_b,
+                ),
             ]
         )
         await db.flush()
@@ -200,7 +246,15 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
                     connector_external_event_id="msg:source-label-test",
                     external_sender_id="wecom-employee-a",
                 ),
-                EmployeeRequest(id=request_b, tenant_id=tenant_id, created_by=employee_b, request_type="other", title="B request", description="B private", status="submitted"),
+                EmployeeRequest(
+                    id=request_b,
+                    tenant_id=tenant_id,
+                    created_by=employee_b,
+                    request_type="other",
+                    title="B request",
+                    description="B private",
+                    status="submitted",
+                ),
             ]
         )
         await db.commit()

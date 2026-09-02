@@ -40,9 +40,7 @@ class ConnectorEventLog(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
             "status IN ('received', 'processing', 'processed', 'failed')",
             name="ck_connector_event_log_status",
         ),
-        UniqueConstraint(
-            "tenant_id", "source_id", "external_event_id", name="uq_connector_event_consumed"
-        ),
+        UniqueConstraint("tenant_id", "source_id", "external_event_id", name="uq_connector_event_consumed"),
         ForeignKeyConstraint(
             ["tenant_id", "source_id"],
             ["data_sources.tenant_id", "data_sources.id"],
@@ -124,9 +122,7 @@ class ConnectorIdentityBinding(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin
 
     __tablename__ = "connector_identity_bindings"
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "source_id", "external_user_id", name="uq_connector_identity_binding"
-        ),
+        UniqueConstraint("tenant_id", "source_id", "external_user_id", name="uq_connector_identity_binding"),
         ForeignKeyConstraint(
             ["tenant_id", "source_id"],
             ["data_sources.tenant_id", "data_sources.id"],
@@ -154,9 +150,7 @@ class ConnectorIntakeEvent(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
             "status IN ('pending_identity', 'materialized')",
             name="ck_connector_intake_event_status",
         ),
-        UniqueConstraint(
-            "tenant_id", "source_id", "external_event_id", name="uq_connector_intake_event"
-        ),
+        UniqueConstraint("tenant_id", "source_id", "external_event_id", name="uq_connector_intake_event"),
         ForeignKeyConstraint(
             ["tenant_id", "source_id", "external_event_id"],
             [

@@ -23,18 +23,14 @@ async def test_simulator_returns_wecom_style_success_with_msgid() -> None:
 async def test_simulator_marks_invalid_user_terminal_and_timeout_retryable() -> None:
     invalid_user_gateway = WeComOutboundSimulator(invalid_users={"invalid-user"})
     invalid_token = await invalid_user_gateway.get_token("simulated-corp", "local-only")
-    invalid = await invalid_user_gateway.send_text(
-        invalid_token.value, "1000002", "invalid-user", "请补充材料"
-    )
+    invalid = await invalid_user_gateway.send_text(invalid_token.value, "1000002", "invalid-user", "请补充材料")
     assert invalid.errcode == 60111
     assert invalid.invaliduser == "invalid-user"
     assert invalid.retryable is False
 
     timeout_gateway = WeComOutboundSimulator(fault_mode="timeout")
     timeout_token = await timeout_gateway.get_token("simulated-corp", "local-only")
-    timeout = await timeout_gateway.send_text(
-        timeout_token.value, "1000002", "employee-a", "请补充材料"
-    )
+    timeout = await timeout_gateway.send_text(timeout_token.value, "1000002", "employee-a", "请补充材料")
     assert timeout.errcode == -1
     assert timeout.retryable is True
 

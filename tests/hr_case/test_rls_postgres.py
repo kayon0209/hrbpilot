@@ -46,10 +46,7 @@ async def test_tenant_tables_force_row_level_security() -> None:
 
     async with get_engine().connect() as connection:
         rows = await connection.execute(
-            text(
-                "SELECT relname, relforcerowsecurity FROM pg_class "
-                "WHERE relname = ANY(:names) ORDER BY relname"
-            ),
+            text("SELECT relname, relforcerowsecurity FROM pg_class WHERE relname = ANY(:names) ORDER BY relname"),
             {"names": list(_TABLES_REQUIRING_FORCED_RLS)},
         )
 

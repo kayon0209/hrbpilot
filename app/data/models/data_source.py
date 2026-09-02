@@ -43,13 +43,17 @@ class DataSource(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    platform: Mapped[str] = mapped_column(String(50), nullable=False)  # wecom | feishu | dingtalk | wps365 | exchange | oa | hris
+    platform: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # wecom | feishu | dingtalk | wps365 | exchange | oa | hris
     purpose: Mapped[str] = mapped_column(Text, nullable=False)  # 用途
     authorized_scope: Mapped[str] = mapped_column(Text, nullable=False)  # 授权范围
     content_types: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
     data_destination: Mapped[str] = mapped_column(Text, nullable=False)  # 数据去向
     certification_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 1..4 (spec §10.3)
-    sync_status: Mapped[str] = mapped_column(String(20), nullable=False, default="never_run")  # never_run | ok | failed | paused
+    sync_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="never_run"
+    )  # never_run | ok | failed | paused
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     next_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
@@ -81,7 +85,5 @@ class DataSource(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     authorized_scope_json: Mapped[dict | None] = mapped_column(JSONB, default=None)
     # Explicit downstream contract for incoming platform events.  Free-text
     # purpose/data-destination fields must never select a business workflow.
-    event_route: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="none", server_default="none"
-    )
+    event_route: Mapped[str] = mapped_column(String(32), nullable=False, default="none", server_default="none")
     created_by: Mapped[str] = mapped_column(String(36), nullable=False)

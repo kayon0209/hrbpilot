@@ -26,9 +26,7 @@ pytestmark = pytest.mark.integration
 
 
 def _require_db() -> None:
-    if not os.environ.get("HRBP_RUN_CONCURRENCY_TESTS") and not os.environ.get(
-        "HRBP_RUN_DB_SECURITY_TESTS"
-    ):
+    if not os.environ.get("HRBP_RUN_CONCURRENCY_TESTS") and not os.environ.get("HRBP_RUN_DB_SECURITY_TESTS"):
         pytest.skip("set HRBP_RUN_CONCURRENCY_TESTS=true (or DB_SECURITY) for PG verification")
 
 
@@ -90,9 +88,7 @@ async def test_retry_after_claim_does_not_repeat_external_side_effect() -> None:
         # committed first, then the side effect runs, then completion commits.
         # This call returns successfully, but models "side effect ran; we then
         # faked a crash before completion" by noting the external call count.
-        outcome = await execute_approved_write(
-            service, case.id, approval.id, request_id, counting_executor
-        )
+        outcome = await execute_approved_write(service, case.id, approval.id, request_id, counting_executor)
         assert outcome["status"] == "done"
         assert len(side_effect_calls) == 1
 
@@ -105,9 +101,7 @@ async def test_retry_after_claim_does_not_repeat_external_side_effect() -> None:
         try:
             actor = f"user:{user_id}|role:hr_manager"
             service2 = HRCaseService(setup2, tenant_id, actor=actor)
-            retry = await execute_approved_write(
-                service2, case.id, approval.id, request_id, counting_executor
-            )
+            retry = await execute_approved_write(service2, case.id, approval.id, request_id, counting_executor)
             assert retry["status"] == "already_done", retry
             await setup2.rollback()
         finally:

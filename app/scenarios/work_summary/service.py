@@ -52,9 +52,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-async def _collect_async_tasks(
-    tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]
-) -> None:
+async def _collect_async_tasks(tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]) -> None:
     """Interview / voice async tasks (spec §5.4): stage words, no fake percentages."""
     from sqlalchemy import select
 
@@ -126,9 +124,7 @@ async def _collect_async_tasks(
             )
 
 
-async def _collect_weekly_reports(
-    tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]
-) -> None:
+async def _collect_weekly_reports(tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]) -> None:
     """Weekly reports: unpublished = 草稿 awaiting confirmation; published = done (spec §7.6)."""
     from sqlalchemy import select
 
@@ -212,14 +208,12 @@ async def _collect_policy_sessions(tenant_id: str, user_id: str, summaries: list
         )
         for s in sessions:
             first_user = (
-
-                    await db.execute(
-                        select(ChatMessage.content)
-                        .where(ChatMessage.session_id == s.id, ChatMessage.role == "user")
-                        .order_by(ChatMessage.created_at.asc())
-                        .limit(1)
-                    )
-
+                await db.execute(
+                    select(ChatMessage.content)
+                    .where(ChatMessage.session_id == s.id, ChatMessage.role == "user")
+                    .order_by(ChatMessage.created_at.asc())
+                    .limit(1)
+                )
             ).scalar_one_or_none()
             summaries.append(
                 WorkSummary(
@@ -234,7 +228,9 @@ async def _collect_policy_sessions(tenant_id: str, user_id: str, summaries: list
             )
 
 
-async def _collect_employee_requests(tenant_id: str, actor_id: str, actor_role: str, summaries: list[WorkSummary]) -> None:
+async def _collect_employee_requests(
+    tenant_id: str, actor_id: str, actor_role: str, summaries: list[WorkSummary]
+) -> None:
     """Open employee requests this actor must handle (spec §5.4, audit P1-5).
 
     hrbp sees requests explicitly assigned to them; hr_manager sees requests
@@ -263,17 +259,14 @@ async def _collect_employee_requests(tenant_id: str, actor_id: str, actor_role: 
                 return
             filters.append(EmployeeRequest.created_by.in_(visible_user_ids))
         rows = (
-            (
-                await db.execute(
-                    select(EmployeeRequest, User.name)
-                    .outerjoin(User, User.id == EmployeeRequest.hr_owner_id)
-                    .where(*filters)
-                    .order_by(EmployeeRequest.updated_at.desc())
-                    .limit(20)
-                )
+            await db.execute(
+                select(EmployeeRequest, User.name)
+                .outerjoin(User, User.id == EmployeeRequest.hr_owner_id)
+                .where(*filters)
+                .order_by(EmployeeRequest.updated_at.desc())
+                .limit(20)
             )
-            .all()
-        )
+        ).all()
 
     status_labels = {"submitted": "待处理", "needs_materials": "待补充", "in_progress": "处理中"}
     for row, owner_name in rows:
@@ -292,7 +285,9 @@ async def _collect_employee_requests(tenant_id: str, actor_id: str, actor_role: 
         )
 
 
-async def _collect_knowledge_feedback(tenant_id: str, actor_id: str, actor_role: str, summaries: list[WorkSummary]) -> None:
+async def _collect_knowledge_feedback(
+    tenant_id: str, actor_id: str, actor_role: str, summaries: list[WorkSummary]
+) -> None:
     """Open knowledge-feedback candidates awaiting a manager decision (spec §7.7)."""
     from sqlalchemy import select
 
@@ -344,9 +339,7 @@ async def _collect_knowledge_feedback(tenant_id: str, actor_id: str, actor_role:
         )
 
 
-async def _collect_work_tasks(
-    tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]
-) -> None:
+async def _collect_work_tasks(tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]) -> None:
     """User-managed multi-day tasks, including independently completable subtasks."""
     from sqlalchemy import or_, select
 
@@ -440,7 +433,9 @@ async def collect_work_summaries(tenant_id: str, user_id: str, user_role: str) -
     # they only ever appear under 需要你处理.
     service_types = {"employee_request", "knowledge_feedback"}
     resumable = [
-        s for s in summaries if s.business_status in ("可继续", "待确认", "处理中", "失败") and s.work_type not in service_types
+        s
+        for s in summaries
+        if s.business_status in ("可继续", "待确认", "处理中", "失败") and s.work_type not in service_types
     ]
     continue_work = resumable[0] if resumable else None
     # Mutually exclusive buckets (audit P1-3): the continue card IS the newest

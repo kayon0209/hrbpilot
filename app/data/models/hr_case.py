@@ -41,11 +41,13 @@ class HRCase(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_hr_cases_tenant_id"),
         ForeignKeyConstraint(
-            ["tenant_id", "created_by"], ["users.tenant_id", "users.id"],
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
             name="fk_hr_cases_tenant_creator",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "owner_id"], ["users.tenant_id", "users.id"],
+            ["tenant_id", "owner_id"],
+            ["users.tenant_id", "users.id"],
             name="fk_hr_cases_tenant_owner",
         ),
     )
@@ -70,11 +72,13 @@ class CasePlan(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_case_plans_tenant_id"),
         ForeignKeyConstraint(
-            ["tenant_id", "case_id"], ["hr_cases.tenant_id", "hr_cases.id"],
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
             name="fk_case_plans_tenant_case",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "agent_run_id"], ["agent_runs.tenant_id", "agent_runs.id"],
+            ["tenant_id", "agent_run_id"],
+            ["agent_runs.tenant_id", "agent_runs.id"],
             name="fk_case_plans_tenant_run",
         ),
     )
@@ -97,15 +101,18 @@ class ApprovalRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_approval_requests_tenant_id"),
         ForeignKeyConstraint(
-            ["tenant_id", "case_id"], ["hr_cases.tenant_id", "hr_cases.id"],
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
             name="fk_approval_requests_tenant_case",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "plan_id"], ["case_plans.tenant_id", "case_plans.id"],
+            ["tenant_id", "plan_id"],
+            ["case_plans.tenant_id", "case_plans.id"],
             name="fk_approval_requests_tenant_plan",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "approver_id"], ["users.tenant_id", "users.id"],
+            ["tenant_id", "approver_id"],
+            ["users.tenant_id", "users.id"],
             name="fk_approval_requests_tenant_approver",
         ),
     )
@@ -115,7 +122,9 @@ class ApprovalRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     tool_name: Mapped[str] = mapped_column(String(50), nullable=False)
     params_json: Mapped[str] = mapped_column(Text, nullable=False)
     input_hash: Mapped[str | None] = mapped_column(String(64), default=None)  # sha256 of tool+params
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING"
+    )  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
     requested_by: Mapped[str | None] = mapped_column(String(36), default=None)  # agent run
     approver_id: Mapped[str | None] = mapped_column(String(36), default=None)
     decision_reason: Mapped[str | None] = mapped_column(Text, default=None)
@@ -133,15 +142,18 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),
         ForeignKeyConstraint(
-            ["tenant_id", "case_id"], ["hr_cases.tenant_id", "hr_cases.id"],
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
             name="fk_tool_executions_tenant_case",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "approval_id"], ["approval_requests.tenant_id", "approval_requests.id"],
+            ["tenant_id", "approval_id"],
+            ["approval_requests.tenant_id", "approval_requests.id"],
             name="fk_tool_executions_tenant_approval",
         ),
         ForeignKeyConstraint(
-            ["tenant_id", "agent_run_id"], ["agent_runs.tenant_id", "agent_runs.id"],
+            ["tenant_id", "agent_run_id"],
+            ["agent_runs.tenant_id", "agent_runs.id"],
             name="fk_tool_executions_tenant_run",
         ),
     )
@@ -169,7 +181,8 @@ class CaseEvent(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("case_id", "seq", name="uq_case_events_case_seq"),
         ForeignKeyConstraint(
-            ["tenant_id", "case_id"], ["hr_cases.tenant_id", "hr_cases.id"],
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
             name="fk_case_events_tenant_case",
         ),
     )
@@ -192,14 +205,17 @@ class AgentRun(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_agent_runs_tenant_id"),
         ForeignKeyConstraint(
-            ["tenant_id", "case_id"], ["hr_cases.tenant_id", "hr_cases.id"],
+            ["tenant_id", "case_id"],
+            ["hr_cases.tenant_id", "hr_cases.id"],
             name="fk_agent_runs_tenant_case",
         ),
     )
 
     case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="RUNNING")  # RUNNING|COMPLETED|STOPPED_LIMIT|HANDED_OFF|FAILED
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="RUNNING"
+    )  # RUNNING|COMPLETED|STOPPED_LIMIT|HANDED_OFF|FAILED
     steps_taken: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     handoff_reason: Mapped[str | None] = mapped_column(Text, default=None)

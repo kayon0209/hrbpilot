@@ -88,23 +88,17 @@ def test_wecom_external_id_binds_events_to_sender_event_and_time() -> None:
 
     # No MsgId on events → bind to sender+event+key+time. Same payload is stable
     # (replay detected), a different event from a different sender is distinct.
-    a = _wecom_external_id(
-        {"Event": "subscribe", "FromUserName": "u-1", "EventKey": "", "CreateTime": 1700000000}
-    )
+    a = _wecom_external_id({"Event": "subscribe", "FromUserName": "u-1", "EventKey": "", "CreateTime": 1700000000})
     assert a == _wecom_external_id(
         {"Event": "subscribe", "FromUserName": "u-1", "EventKey": "", "CreateTime": 1700000000}
     )
-    b = _wecom_external_id(
-        {"Event": "click", "FromUserName": "u-2", "EventKey": "k", "CreateTime": 1700000000}
-    )
+    b = _wecom_external_id({"Event": "click", "FromUserName": "u-2", "EventKey": "k", "CreateTime": 1700000000})
     assert a != b
 
 
 def test_feishu_signature_must_match() -> None:
     body = '{"type":"url_verification","challenge":"ch-1"}'
-    good = __import__("hmac").new(
-        TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256
-    ).hexdigest()
+    good = __import__("hmac").new(TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256).hexdigest()
     verify_feishu_signature(good, TOKEN, "1700000000", "n1", body)
     with pytest.raises(WebhookRejected):
         verify_feishu_signature("bad", TOKEN, "1700000000", "n1", body)
@@ -138,9 +132,7 @@ async def _seed_and_cleanup(tenant_id: str, source_id: str):
                     ConnectorEventLog.source_id == source_id,
                 )
             )
-            await db.execute(
-                delete(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-            )
+            await db.execute(delete(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
             await db.commit()
 
     return cleanup
@@ -156,16 +148,28 @@ async def test_wecom_callback_ingest_is_idempotent() -> None:
         signature = _sign_wecom(TOKEN, "1700000000", "nonce-1", encrypted)
 
         first = await ingest_wecom_callback(
-            tenant_id, source_id,
-            msg_signature=signature, timestamp="1700000000", nonce="nonce-1",
-            encrypted=encrypted, token=TOKEN, aes_key_b64=AES_KEY, corpid=CORPID,
+            tenant_id,
+            source_id,
+            msg_signature=signature,
+            timestamp="1700000000",
+            nonce="nonce-1",
+            encrypted=encrypted,
+            token=TOKEN,
+            aes_key_b64=AES_KEY,
+            corpid=CORPID,
         )
         assert first is not None and first.payload["Event"] == "subscribe"
 
         replay = await ingest_wecom_callback(
-            tenant_id, source_id,
-            msg_signature=signature, timestamp="1700000000", nonce="nonce-1",
-            encrypted=encrypted, token=TOKEN, aes_key_b64=AES_KEY, corpid=CORPID,
+            tenant_id,
+            source_id,
+            msg_signature=signature,
+            timestamp="1700000000",
+            nonce="nonce-1",
+            encrypted=encrypted,
+            token=TOKEN,
+            aes_key_b64=AES_KEY,
+            corpid=CORPID,
         )
         assert replay is None, "replayed callback must be dropped"
     finally:
@@ -190,9 +194,15 @@ async def test_wecom_distinct_messages_same_second_are_both_consumed() -> None:
             encrypted = _encrypt_wecom(message, AES_KEY, CORPID)
             signature = _sign_wecom(TOKEN, "1700000000", f"nonce-{msg_id}", encrypted)
             result = await ingest_wecom_callback(
-                tenant_id, source_id,
-                msg_signature=signature, timestamp="1700000000", nonce=f"nonce-{msg_id}",
-                encrypted=encrypted, token=TOKEN, aes_key_b64=AES_KEY, corpid=CORPID,
+                tenant_id,
+                source_id,
+                msg_signature=signature,
+                timestamp="1700000000",
+                nonce=f"nonce-{msg_id}",
+                encrypted=encrypted,
+                token=TOKEN,
+                aes_key_b64=AES_KEY,
+                corpid=CORPID,
             )
             assert result is not None
             # distinct msgid ⇒ distinct idempotency key, even within the same second
@@ -211,13 +221,17 @@ async def test_feishu_url_verification_handshake() -> None:
     cleanup = await _seed_and_cleanup(tenant_id, source_id)
     try:
         body = json.dumps({"type": "url_verification", "challenge": "answer-42"})
-        signature = __import__("hmac").new(
-            TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256
-        ).hexdigest()
+        signature = (
+            __import__("hmac").new(TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256).hexdigest()
+        )
         result = await ingest_feishu_event(
-            tenant_id, source_id,
-            authorization=signature, verification_token=TOKEN,
-            timestamp="1700000000", nonce="n1", body=body,
+            tenant_id,
+            source_id,
+            authorization=signature,
+            verification_token=TOKEN,
+            timestamp="1700000000",
+            nonce="n1",
+            body=body,
         )
         assert result == {"challenge": "answer-42"}
     finally:
@@ -235,9 +249,9 @@ async def test_feishu_event_replay_is_dropped() -> None:
                 "event": {"message": {}},
             }
         )
-        signature = __import__("hmac").new(
-            TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256
-        ).hexdigest()
+        signature = (
+            __import__("hmac").new(TOKEN.encode(), ("1700000000" + "n1" + body).encode(), hashlib.sha256).hexdigest()
+        )
         kwargs = dict(
             authorization=signature,
             verification_token=TOKEN,

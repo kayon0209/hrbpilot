@@ -195,6 +195,7 @@ def test_forbidden_response_does_not_leak_internals(client):
 # Fake-progress regressions (spec §9.1 / Phase 0: 伪百分比任务 = 0)
 # ---------------------------------------------------------------------------
 
+
 def test_status_schemas_have_no_progress_field():
     from app.scenarios.interview_digest.schemas import DigestStatus
     from app.scenarios.voice_insight.schemas import TaskStatusResponse

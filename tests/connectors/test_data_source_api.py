@@ -84,9 +84,7 @@ async def _cleanup(tenant_id: str) -> None:
         # OAuth nonces carry an FK to data_sources; delete them first so the
         # FK from oauth_nonces -> data_sources does not reject the teardown.
         await db.execute(delete(OAuthNonce).where(OAuthNonce.tenant_id == tenant_id))
-        await db.execute(
-            delete(ConnectorIdentityBinding).where(ConnectorIdentityBinding.tenant_id == tenant_id)
-        )
+        await db.execute(delete(ConnectorIdentityBinding).where(ConnectorIdentityBinding.tenant_id == tenant_id))
         await db.execute(delete(DataSource).where(DataSource.tenant_id == tenant_id))
         await db.execute(delete(User).where(User.tenant_id == tenant_id))
         await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
@@ -120,9 +118,7 @@ def test_credential_is_registered_but_never_returned(client: TestClient) -> None
             factory = get_session_factory()
             async with factory() as db:
                 db.info["tenant_id"] = tenant_id
-                return (
-                    await db.execute(select(DataSource.credential_encrypted))
-                ).scalar()
+                return (await db.execute(select(DataSource.credential_encrypted))).scalar()
 
         ciphertext = asyncio.run(load_ciphertext())
         assert ciphertext is not None and secret.encode() not in ciphertext
@@ -219,10 +215,17 @@ def test_admin_stores_wecom_callback_configuration_without_secret_leak(client: T
 
         listed = client.get("/api/data-sources", headers=headers)
         assert listed.status_code == 200, listed.text
-        for secret in (configuration["corp_secret"], configuration["callback_token"], configuration["encoding_aes_key"]):
+        for secret in (
+            configuration["corp_secret"],
+            configuration["callback_token"],
+            configuration["encoding_aes_key"],
+        ):
             assert secret not in listed.text
             assert secret not in stored.text
-        assert listed.json()["sources"][0]["wecom_callback_path"] == f"/api/connector-webhooks/wecom/{tenant_id}/{source_id}"
+        assert (
+            listed.json()["sources"][0]["wecom_callback_path"]
+            == f"/api/connector-webhooks/wecom/{tenant_id}/{source_id}"
+        )
     finally:
         asyncio.run(_cleanup(tenant_id))
 

@@ -177,9 +177,7 @@ def _add_composite_fk(child: str, constraint: str, parent: str, column: str, *, 
 def upgrade() -> None:
     # Phase 1: parent (tenant_id, id) unique constraints (work_tasks exists).
     for parent, constraint in _PARENT_UNIQUE.items():
-        op.execute(
-            f"ALTER TABLE {parent} ADD CONSTRAINT {constraint} UNIQUE (tenant_id, id)"
-        )
+        op.execute(f"ALTER TABLE {parent} ADD CONSTRAINT {constraint} UNIQUE (tenant_id, id)")
 
     # Phase 2: drop the replaced single-column FKs, then add composite child
     # FKs.  NO FORCE while validating so the FK scan can read existing rows
@@ -196,7 +194,10 @@ def upgrade() -> None:
             touched.add(child)
             touched.add(parent)
             _add_composite_fk(
-                child, constraint, parent, column,
+                child,
+                constraint,
+                parent,
+                column,
                 ondelete="CASCADE" if constraint == "fk_document_chunks_tenant_document" else None,
             )
     finally:

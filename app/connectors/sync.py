@@ -274,9 +274,7 @@ async def mark_event_processed(tenant_id: str, source_id: str, external_event_id
     return completed_id is not None
 
 
-async def mark_event_failed(
-    tenant_id: str, source_id: str, external_event_id: str, error: str
-) -> bool:
+async def mark_event_failed(tenant_id: str, source_id: str, external_event_id: str, error: str) -> bool:
     """Persist a downstream processing failure without falsely completing it."""
     from sqlalchemy import update
 

@@ -98,8 +98,12 @@ async def test_approve_vs_reject_exactly_one_wins() -> None:
             actor = f"user:{user_id}|role:hr_manager"
             service = HRCaseService(session, tenant_id, actor=actor)
             ap = await service.decide_approval(
-                case_id, approval_id, approver_id=user_id, decision=decision,
-                reason="concurrent", role="hr_manager",
+                case_id,
+                approval_id,
+                approver_id=user_id,
+                decision=decision,
+                reason="concurrent",
+                role="hr_manager",
             )
             await session.commit()
             return ap.status
@@ -118,12 +122,16 @@ async def test_approve_vs_reject_exactly_one_wins() -> None:
     verify = await make_tenant_session(tenant_id)
     try:
         row = (
-            await verify.execute(
-                select(ApprovalRequest).where(
-                    ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+            (
+                await verify.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert row.status in ("APPROVED", "REJECTED")
     finally:
         await verify.close()
@@ -145,8 +153,12 @@ async def test_approve_after_expiry_is_rejected_and_durably_expired() -> None:
             actor = f"user:{user_id}|role:hr_manager"
             service = HRCaseService(session, tenant_id, actor=actor)
             await service.decide_approval(
-                case_id, approval_id, approver_id=user_id, decision="approve",
-                reason="too late", role="hr_manager",
+                case_id,
+                approval_id,
+                approver_id=user_id,
+                decision="approve",
+                reason="too late",
+                role="hr_manager",
             )
             await session.commit()
             return "APPROVED"
@@ -162,12 +174,16 @@ async def test_approve_after_expiry_is_rejected_and_durably_expired() -> None:
     verify = await make_tenant_session(tenant_id)
     try:
         row = (
-            await verify.execute(
-                select(ApprovalRequest).where(
-                    ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+            (
+                await verify.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert row.status == "EXPIRED", f"expiration must be persisted, got {row.status}"
     finally:
         await verify.close()
@@ -183,7 +199,12 @@ async def test_repeat_decision_on_decided_approval_is_rejected() -> None:
         actor = f"user:{user_id}|role:hr_manager"
         service = HRCaseService(session, tenant_id, actor=actor)
         ap = await service.decide_approval(
-            case_id, approval_id, approver_id=user_id, decision="approve", reason="first", role="hr_manager",
+            case_id,
+            approval_id,
+            approver_id=user_id,
+            decision="approve",
+            reason="first",
+            role="hr_manager",
         )
         await session.commit()
         assert ap.status == "APPROVED"
@@ -198,19 +219,28 @@ async def test_repeat_decision_on_decided_approval_is_rejected() -> None:
         service = HRCaseService(session2, tenant_id, actor=actor)
         with pytest.raises(ApprovalError) as exc_info:
             await service.decide_approval(
-                case_id, approval_id, approver_id=user_id, decision="reject", reason="second", role="hr_manager",
+                case_id,
+                approval_id,
+                approver_id=user_id,
+                decision="reject",
+                reason="second",
+                role="hr_manager",
             )
         assert exc_info.value.status_code == 409
 
         verify = await make_tenant_session(tenant_id)
         try:
             row = (
-                await verify.execute(
-                    select(ApprovalRequest).where(
-                        ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+                (
+                    await verify.execute(
+                        select(ApprovalRequest).where(
+                            ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.id == approval_id
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             assert row.status == "APPROVED", "a decided approval must not be re-decided"
         finally:
             await verify.close()

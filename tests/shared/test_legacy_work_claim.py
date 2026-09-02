@@ -285,6 +285,7 @@ def test_admin_claims_unscoped_candidate_by_assigning_source_user(client: TestCl
     admin_id, candidate_id, _ = asyncio.run(_seed_unscoped_candidates_and_ownerless_content(tenant_id))
     hrbp_id = str(uuid4())
     try:
+
         async def ensure_hrbp() -> None:
             factory = get_session_factory()
             async with factory() as db:
@@ -333,6 +334,7 @@ def test_admin_claims_ownerless_culture_draft(client: TestClient) -> None:
     admin_id, _, content_id = asyncio.run(_seed_unscoped_candidates_and_ownerless_content(tenant_id))
     hrbp_id = str(uuid4())
     try:
+
         async def ensure_hrbp() -> None:
             factory = get_session_factory()
             async with factory() as db:

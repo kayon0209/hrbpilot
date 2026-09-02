@@ -51,9 +51,7 @@ DECIDER_ROLES = frozenset({"hr_manager", "admin"})
 
 # Phase 5 tool whitelist: write tools ALWAYS require an approval request;
 # read tools do not. begin_tool_execution enforces this split.
-WRITE_TOOLS = frozenset(
-    {"create_hr_case", "assign_case_owner", "send_case_notification", "update_case_status"}
-)
+WRITE_TOOLS = frozenset({"create_hr_case", "assign_case_owner", "send_case_notification", "update_case_status"})
 READ_TOOLS = frozenset({"search_policy", "get_policy_source"})
 
 
@@ -145,7 +143,9 @@ class HRCaseService:
 
     # --- events (append-only) ---
 
-    async def _append_event(self, case_id: str, event_type: str, payload: dict, agent_run_id: str | None = None) -> None:
+    async def _append_event(
+        self, case_id: str, event_type: str, payload: dict, agent_run_id: str | None = None
+    ) -> None:
         # HRCASE-01: compute the per-case seq under a transaction-scoped
         # advisory lock so two concurrent appends cannot observe the same
         # max(seq) and both write seq N (unique constraint blow-up or lost
@@ -180,12 +180,16 @@ class HRCaseService:
     async def list_events(self, case_id: str) -> list[CaseEvent]:
         await self.get_case(case_id)  # tenant check
         rows = (
-            await self.session.execute(
-                select(CaseEvent)
-                .where(CaseEvent.tenant_id == self.tenant_id, CaseEvent.case_id == case_id)
-                .order_by(CaseEvent.seq.asc())
+            (
+                await self.session.execute(
+                    select(CaseEvent)
+                    .where(CaseEvent.tenant_id == self.tenant_id, CaseEvent.case_id == case_id)
+                    .order_by(CaseEvent.seq.asc())
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return list(rows)
 
     # --- plans ---
@@ -202,9 +206,14 @@ class HRCaseService:
         # Drive any pre-plan states first: NEW → TRIAGED → EVIDENCE_READY.
         while case.status != case_state.EVIDENCE_READY:
             previous = case.status
-            case.status = case_state.transition(previous, case_state.TRIAGED if previous == case_state.NEW else case_state.EVIDENCE_READY)
+            case.status = case_state.transition(
+                previous, case_state.TRIAGED if previous == case_state.NEW else case_state.EVIDENCE_READY
+            )
             await self._append_event(
-                case_id, "STATUS_CHANGED", {"from": previous, "to": case.status, "reason": "plan created"}, agent_run_id=agent_run_id
+                case_id,
+                "STATUS_CHANGED",
+                {"from": previous, "to": case.status, "reason": "plan created"},
+                agent_run_id=agent_run_id,
             )
         plan = CasePlan(
             tenant_id=self.tenant_id,
@@ -278,14 +287,18 @@ class HRCaseService:
             raise CasePermissionDeniedError(f"Role {role} cannot decide approvals")
         await self.get_case(case_id)
         approval = (
-            await self.session.execute(
-                select(ApprovalRequest).where(
-                    ApprovalRequest.id == approval_id,
-                    ApprovalRequest.case_id == case_id,
-                    ApprovalRequest.tenant_id == self.tenant_id,
+            (
+                await self.session.execute(
+                    select(ApprovalRequest).where(
+                        ApprovalRequest.id == approval_id,
+                        ApprovalRequest.case_id == case_id,
+                        ApprovalRequest.tenant_id == self.tenant_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if approval is None:
             raise NotFoundError("Approval request", approval_id)
 
@@ -349,14 +362,18 @@ class HRCaseService:
             # A racer already moved the approval (approved/rejected/consumed).
             await self.session.rollback()
             current = (
-                await self.session.execute(
-                    select(ApprovalRequest).where(
-                        ApprovalRequest.id == approval_id,
-                        ApprovalRequest.case_id == case_id,
-                        ApprovalRequest.tenant_id == self.tenant_id,
+                (
+                    await self.session.execute(
+                        select(ApprovalRequest).where(
+                            ApprovalRequest.id == approval_id,
+                            ApprovalRequest.case_id == case_id,
+                            ApprovalRequest.tenant_id == self.tenant_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             state = current.status if current else "missing"
             raise ApprovalError(f"Approval {approval_id} is {state}, not PENDING")
 
@@ -387,14 +404,18 @@ class HRCaseService:
         """
         await self.get_case(case_id)
         existing = (
-            await self.session.execute(
-                select(ToolExecution).where(
-                    ToolExecution.case_id == case_id,
-                    ToolExecution.request_id == request_id,
-                    ToolExecution.tenant_id == self.tenant_id,
+            (
+                await self.session.execute(
+                    select(ToolExecution).where(
+                        ToolExecution.case_id == case_id,
+                        ToolExecution.request_id == request_id,
+                        ToolExecution.tenant_id == self.tenant_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             # Only a SUCCEEDED execution is truly done. A FAILED row under a
             # CONSUMED approval must not be silently re-executed — retrying
@@ -421,19 +442,22 @@ class HRCaseService:
             if approval_id is None:
                 raise ApprovalError(f"Write tool {tool_name} requires an approval request")
             approval = (
-                await self.session.execute(
-                    select(ApprovalRequest).where(
-                        ApprovalRequest.id == approval_id,
-                        ApprovalRequest.case_id == case_id,
-                        ApprovalRequest.tenant_id == self.tenant_id,
+                (
+                    await self.session.execute(
+                        select(ApprovalRequest).where(
+                            ApprovalRequest.id == approval_id,
+                            ApprovalRequest.case_id == case_id,
+                            ApprovalRequest.tenant_id == self.tenant_id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if approval is None:
                 raise NotFoundError("Approval request", approval_id)
             if approval.status == "EXPIRED" or (
-                approval.expires_at is not None
-                and datetime.now(UTC) > approval.expires_at.replace(tzinfo=UTC)
+                approval.expires_at is not None and datetime.now(UTC) > approval.expires_at.replace(tzinfo=UTC)
             ):
                 raise ApprovalError(f"Approval {approval_id} expired")
             if approval.status != "APPROVED":
@@ -480,14 +504,25 @@ class HRCaseService:
         )
         return execution
 
-    async def finish_tool_execution(self, execution_id: str, ok: bool, result_summary: str | None = None, error_code: str | None = None, error_message: str | None = None) -> ToolExecution:
+    async def finish_tool_execution(
+        self,
+        execution_id: str,
+        ok: bool,
+        result_summary: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> ToolExecution:
         execution = (
-            await self.session.execute(
-                select(ToolExecution).where(
-                    ToolExecution.id == execution_id, ToolExecution.tenant_id == self.tenant_id
+            (
+                await self.session.execute(
+                    select(ToolExecution).where(
+                        ToolExecution.id == execution_id, ToolExecution.tenant_id == self.tenant_id
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if execution is None:
             raise NotFoundError("Tool execution", execution_id)
         await self.get_case(execution.case_id)
@@ -511,12 +546,18 @@ class HRCaseService:
         await self.session.flush()
         return run
 
-    async def finish_agent_run(self, run_id: str, status: str, steps_taken: int, tokens_used: int, handoff_reason: str | None = None) -> AgentRun:
+    async def finish_agent_run(
+        self, run_id: str, status: str, steps_taken: int, tokens_used: int, handoff_reason: str | None = None
+    ) -> AgentRun:
         run = (
-            await self.session.execute(
-                select(AgentRun).where(AgentRun.id == run_id, AgentRun.tenant_id == self.tenant_id)
+            (
+                await self.session.execute(
+                    select(AgentRun).where(AgentRun.id == run_id, AgentRun.tenant_id == self.tenant_id)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if run is None:
             raise NotFoundError("Agent run", run_id)
         await self.get_case(run.case_id)

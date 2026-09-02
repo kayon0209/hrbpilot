@@ -49,9 +49,7 @@ async def _load_source(tenant_id: str, source_id: str) -> DataSource:
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
     if row is None:
         raise AppError("数据源不存在", code="NOT_FOUND", status_code=404)
     return row
@@ -87,8 +85,10 @@ async def run_connector_sync(tenant_id: str, source_id: str) -> str:
             if platform == "wecom" and "messages" in content_types and credential and app_id:
                 scope = getattr(row, "authorized_scope_json", None)
                 chat_ids = scope.get("chat_ids") if isinstance(scope, dict) else None
-                if not isinstance(chat_ids, list) or not chat_ids or not all(
-                    isinstance(chat_id, str) and chat_id for chat_id in chat_ids
+                if (
+                    not isinstance(chat_ids, list)
+                    or not chat_ids
+                    or not all(isinstance(chat_id, str) and chat_id for chat_id in chat_ids)
                 ):
                     raise AppError(
                         "企业微信消息同步需要登记非空的结构化 chat_ids 授权范围",

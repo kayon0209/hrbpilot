@@ -107,7 +107,9 @@ async def test_concurrent_collect_materializes_one_candidate_per_scope() -> None
             db.info["tenant_id"] = tenant_id
             total = (
                 await db.execute(
-                    select(func.count()).select_from(KnowledgeFeedbackCandidate).where(
+                    select(func.count())
+                    .select_from(KnowledgeFeedbackCandidate)
+                    .where(
                         KnowledgeFeedbackCandidate.tenant_id == tenant_id,
                         KnowledgeFeedbackCandidate.question == question,
                     )
@@ -138,9 +140,32 @@ async def test_same_question_in_different_orgs_materializes_two_candidates() -> 
             [
                 OrgUnit(id=org_a_id, tenant_id=tenant_id, name="并发组织A"),
                 OrgUnit(id=org_b_id, tenant_id=tenant_id, name="并发组织B"),
-                User(id=manager_id, tenant_id=tenant_id, name="经理", email=f"{manager_id}@example.invalid", hashed_password="x", role="hr_manager"),
-                User(id=employee_a_id, tenant_id=tenant_id, name="A员工", email=f"{employee_a_id}@example.invalid", hashed_password="x", role="employee", org_unit_id=org_a_id),
-                User(id=employee_b_id, tenant_id=tenant_id, name="B员工", email=f"{employee_b_id}@example.invalid", hashed_password="x", role="employee", org_unit_id=org_b_id),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="经理",
+                    email=f"{manager_id}@example.invalid",
+                    hashed_password="x",
+                    role="hr_manager",
+                ),
+                User(
+                    id=employee_a_id,
+                    tenant_id=tenant_id,
+                    name="A员工",
+                    email=f"{employee_a_id}@example.invalid",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_a_id,
+                ),
+                User(
+                    id=employee_b_id,
+                    tenant_id=tenant_id,
+                    name="B员工",
+                    email=f"{employee_b_id}@example.invalid",
+                    hashed_password="x",
+                    role="employee",
+                    org_unit_id=org_b_id,
+                ),
             ]
         )
         await db.commit()
@@ -164,13 +189,17 @@ async def test_same_question_in_different_orgs_materializes_two_candidates() -> 
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             rows = (
-                await db.execute(
-                    select(KnowledgeFeedbackCandidate.org_unit_id).where(
-                        KnowledgeFeedbackCandidate.tenant_id == tenant_id,
-                        KnowledgeFeedbackCandidate.question == question,
+                (
+                    await db.execute(
+                        select(KnowledgeFeedbackCandidate.org_unit_id).where(
+                            KnowledgeFeedbackCandidate.tenant_id == tenant_id,
+                            KnowledgeFeedbackCandidate.question == question,
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert sorted(rows) == sorted([org_a_id, org_b_id]), f"expected one candidate per org, got {rows!r}"
     finally:
         factory = get_session_factory()

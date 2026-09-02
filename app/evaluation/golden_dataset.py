@@ -795,13 +795,13 @@ for i in range(1, 26):
 WEEKLY_REPORT_GOLDEN: list[GoldenSample] = []
 for i in range(1, 51):
     WEEKLY_REPORT_GOLDEN.append(
-            GoldenSample(
-                scenario_id="weekly_report",
-                input=f"生成本周周报，周期2026-W{i:02d}，包含访谈2场、入职1人、离职0人",
-                expected_output_contains=["摘要", "进展", "风险", "计划", "数据来源"],
-                notes=f"w{i:02d}",
-                sample_source="parameterized",
-            ),
+        GoldenSample(
+            scenario_id="weekly_report",
+            input=f"生成本周周报，周期2026-W{i:02d}，包含访谈2场、入职1人、离职0人",
+            expected_output_contains=["摘要", "进展", "风险", "计划", "数据来源"],
+            notes=f"w{i:02d}",
+            sample_source="parameterized",
+        ),
     )
 
 # ============================================================

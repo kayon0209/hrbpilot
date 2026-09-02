@@ -86,9 +86,7 @@ def _candidate_scope_filter(model, visible_user_ids: set[str], org_unit_ids: set
     return or_(*clauses) if clauses else false()
 
 
-async def collect_candidates(
-    tenant_id: str, actor_id: str, actor_role: str
-) -> list[FeedbackCandidate]:
+async def collect_candidates(tenant_id: str, actor_id: str, actor_role: str) -> list[FeedbackCandidate]:
     """Materialize candidates from real usage signals and merge stored decisions.
 
     Signals (spec §7.7):
@@ -120,21 +118,19 @@ async def collect_candidates(
 
         # Fetch user/assistant pairs per session, ordered, in one pass.
         rows = (
-
-                await db.execute(
-                    select(ChatSession.id, ChatSession.user_id, User.org_unit_id, ChatMessage)
-                    .join(User, User.id == ChatSession.user_id)
-                    .join(ChatMessage, ChatMessage.session_id == ChatSession.id)
-                    .where(
-                        ChatSession.tenant_id == tenant_id,
-                        ChatSession.user_id.in_(visible_user_ids),
-                        ChatSession.scenario_id == "policy_qa",
-                        ChatMessage.role.in_(("user", "assistant")),
-                    )
-                    .order_by(ChatSession.created_at.asc(), ChatMessage.created_at.asc())
-                    .limit(500)
+            await db.execute(
+                select(ChatSession.id, ChatSession.user_id, User.org_unit_id, ChatMessage)
+                .join(User, User.id == ChatSession.user_id)
+                .join(ChatMessage, ChatMessage.session_id == ChatSession.id)
+                .where(
+                    ChatSession.tenant_id == tenant_id,
+                    ChatSession.user_id.in_(visible_user_ids),
+                    ChatSession.scenario_id == "policy_qa",
+                    ChatMessage.role.in_(("user", "assistant")),
                 )
-
+                .order_by(ChatSession.created_at.asc(), ChatMessage.created_at.asc())
+                .limit(500)
+            )
         ).all()
 
         pairs: dict[str, tuple[str | None, str, list]] = {}
@@ -307,9 +303,7 @@ async def collect_candidates(
     return out[:50]
 
 
-async def decide_candidate(
-    tenant_id: str, user_id: str, user_role: str, body: DecideBody
-) -> FeedbackCandidate:
+async def decide_candidate(tenant_id: str, user_id: str, user_role: str, body: DecideBody) -> FeedbackCandidate:
     """Apply a human decision — the ONLY way a candidate closes (spec §7.7).
 
     Atomicity: the decision is a conditional UPDATE ... WHERE status='open'.
@@ -366,18 +360,22 @@ async def decide_candidate(
             # Distinguish "not found / not visible / already decided" so the
             # caller gets a clear, actionable conflict, not a silent pass.
             current = (
-                await db.execute(
-                    select(KnowledgeFeedbackCandidate).where(
-                        KnowledgeFeedbackCandidate.tenant_id == tenant_id,
-                        KnowledgeFeedbackCandidate.id == body.candidate_id,
-                        _candidate_scope_filter(
-                            KnowledgeFeedbackCandidate,
-                            visible_user_ids,
-                            visible_org_unit_ids,
-                        ),
+                (
+                    await db.execute(
+                        select(KnowledgeFeedbackCandidate).where(
+                            KnowledgeFeedbackCandidate.tenant_id == tenant_id,
+                            KnowledgeFeedbackCandidate.id == body.candidate_id,
+                            _candidate_scope_filter(
+                                KnowledgeFeedbackCandidate,
+                                visible_user_ids,
+                                visible_org_unit_ids,
+                            ),
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if current is None:
                 raise NotFoundError("Feedback candidate", body.candidate_id)
             raise AppError(
@@ -398,13 +396,17 @@ async def decide_candidate(
         await db.commit()
 
         row = (
-            await db.execute(
-                select(KnowledgeFeedbackCandidate).where(
-                    KnowledgeFeedbackCandidate.tenant_id == tenant_id,
-                    KnowledgeFeedbackCandidate.id == body.candidate_id,
+            (
+                await db.execute(
+                    select(KnowledgeFeedbackCandidate).where(
+                        KnowledgeFeedbackCandidate.tenant_id == tenant_id,
+                        KnowledgeFeedbackCandidate.id == body.candidate_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         decided = _from_row(row) if row is not None else None
         assert decided is not None
     logger.info(

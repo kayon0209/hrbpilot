@@ -43,13 +43,17 @@ async def persist_ledger_entry(
     """
     try:
         existing = (
-            await session.execute(
-                select(TokenLedgerEntry).where(
-                    TokenLedgerEntry.tenant_id == tenant_id,
-                    TokenLedgerEntry.request_id == request_id,
+            (
+                await session.execute(
+                    select(TokenLedgerEntry).where(
+                        TokenLedgerEntry.tenant_id == tenant_id,
+                        TokenLedgerEntry.request_id == request_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             return existing
 
@@ -86,17 +90,26 @@ async def settle_reservation(
     """Settle a RESERVE row to SETTLED with actual usage (idempotent)."""
     try:
         entry = (
-            await session.execute(
-                select(TokenLedgerEntry).where(
-                    TokenLedgerEntry.tenant_id == tenant_id,
-                    TokenLedgerEntry.request_id == request_id,
+            (
+                await session.execute(
+                    select(TokenLedgerEntry).where(
+                        TokenLedgerEntry.tenant_id == tenant_id,
+                        TokenLedgerEntry.request_id == request_id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if entry is None:
             return await persist_ledger_entry(
-                session, tenant_id, request_id, actual_total,
-                input_tokens=input_tokens, output_tokens=output_tokens, measured=measured,
+                session,
+                tenant_id,
+                request_id,
+                actual_total,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                measured=measured,
             )
         if entry.settlement_state == "SETTLED":
             return entry  # already settled — no double settlement

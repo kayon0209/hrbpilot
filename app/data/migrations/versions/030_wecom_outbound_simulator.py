@@ -23,9 +23,7 @@ def upgrade() -> None:
     # primary key is id alone, so add the tenant-scoped parent key first.
     op.execute("ALTER TABLE employee_requests NO FORCE ROW LEVEL SECURITY")
     try:
-        op.create_unique_constraint(
-            "uq_employee_requests_tenant_id", "employee_requests", ["tenant_id", "id"]
-        )
+        op.create_unique_constraint("uq_employee_requests_tenant_id", "employee_requests", ["tenant_id", "id"])
     finally:
         op.execute("ALTER TABLE employee_requests FORCE ROW LEVEL SECURITY")
 
@@ -54,7 +52,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("attempt_count >= 0", name="ck_connector_delivery_attempt_count"),
         sa.UniqueConstraint(
-            "tenant_id", "employee_request_id", "content_digest",
+            "tenant_id",
+            "employee_request_id",
+            "content_digest",
             name="uq_connector_delivery_attempt_business_version",
         ),
         sa.ForeignKeyConstraint(
@@ -69,16 +69,13 @@ def upgrade() -> None:
             name="fk_connector_delivery_attempt_tenant_source",
         ),
     )
-    op.create_index(
-        "ix_connector_delivery_attempts_tenant_id", "connector_delivery_attempts", ["tenant_id"]
-    )
+    op.create_index("ix_connector_delivery_attempts_tenant_id", "connector_delivery_attempts", ["tenant_id"])
     op.create_index(
         "ix_connector_delivery_attempts_employee_request_id",
-        "connector_delivery_attempts", ["employee_request_id"],
+        "connector_delivery_attempts",
+        ["employee_request_id"],
     )
-    op.create_index(
-        "ix_connector_delivery_attempts_source_id", "connector_delivery_attempts", ["source_id"]
-    )
+    op.create_index("ix_connector_delivery_attempts_source_id", "connector_delivery_attempts", ["source_id"])
     op.execute("ALTER TABLE connector_delivery_attempts ENABLE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY connector_delivery_attempts_tenant_isolation ON connector_delivery_attempts "
@@ -89,9 +86,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "DROP POLICY IF EXISTS connector_delivery_attempts_tenant_isolation ON connector_delivery_attempts"
-    )
+    op.execute("DROP POLICY IF EXISTS connector_delivery_attempts_tenant_isolation ON connector_delivery_attempts")
     op.execute("ALTER TABLE connector_delivery_attempts NO FORCE ROW LEVEL SECURITY")
     op.drop_index("ix_connector_delivery_attempts_source_id", table_name="connector_delivery_attempts")
     op.drop_index("ix_connector_delivery_attempts_employee_request_id", table_name="connector_delivery_attempts")

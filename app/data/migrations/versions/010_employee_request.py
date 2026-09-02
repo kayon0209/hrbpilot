@@ -40,7 +40,9 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("tenant_id", sa.String(length=36), nullable=False, index=True),
         sa.Column("created_by", sa.String(length=36), nullable=False, index=True),
-        sa.Column("request_type", sa.String(length=50), nullable=False),  # policy_check | certificate | process_help | other
+        sa.Column(
+            "request_type", sa.String(length=50), nullable=False
+        ),  # policy_check | certificate | process_help | other
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("description", sa.Text, nullable=False),
         # employee-visible business status (spec §7.9): 已提交 | 待补充材料 | 处理中 | 已解决

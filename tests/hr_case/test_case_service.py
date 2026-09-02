@@ -113,10 +113,10 @@ async def test_full_lifecycle_through_service(session_factory):
 
         execution = await service.begin_tool_execution(
             case_id,
-                "create_hr_case",
-                {"title": "加班费争议", "subject_ref": "S1", "category": "overtime"},
-                request_id="req-1",
-                approval_id=approval.id,
+            "create_hr_case",
+            {"title": "加班费争议", "subject_ref": "S1", "category": "overtime"},
+            request_id="req-1",
+            approval_id=approval.id,
         )
         await service.finish_tool_execution(execution.id, ok=True, result_summary="case created")
         events = await service.list_events(case_id)
@@ -189,7 +189,9 @@ async def test_duplicate_request_id_is_idempotent(session_factory):
         service = HRCaseService(session, "t1")
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
-        plan = await service.save_plan(case_id, steps=[{"tool": "update_case_status", "params": {"status": "RESOLVED"}}])
+        plan = await service.save_plan(
+            case_id, steps=[{"tool": "update_case_status", "params": {"status": "RESOLVED"}}]
+        )
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )
@@ -205,8 +207,8 @@ async def test_duplicate_request_id_is_idempotent(session_factory):
         )
         assert first.id == second.id
         rows = (
-            await session.execute(select(ToolExecution).where(ToolExecution.request_id == "req-dup"))
-        ).scalars().all()
+            (await session.execute(select(ToolExecution).where(ToolExecution.request_id == "req-dup"))).scalars().all()
+        )
         assert len(rows) == 1
 
 
@@ -218,9 +220,7 @@ async def test_write_tool_without_approval_is_rejected(session_factory):
         await service.transition_case(case_id, "EVIDENCE_READY")
         await service.save_plan(case_id, steps=[{"tool": "create_hr_case", "params": {}}])
         with pytest.raises(ApprovalError):
-            await service.begin_tool_execution(
-                case_id, "create_hr_case", {"title": "x"}, request_id="req-2"
-            )
+            await service.begin_tool_execution(case_id, "create_hr_case", {"title": "x"}, request_id="req-2")
 
 
 async def test_rejected_approval_cannot_execute(session_factory):
@@ -248,7 +248,11 @@ async def test_expired_approval_rejected(session_factory):
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
         approval = await service.request_approval(
-            case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id, ttl_seconds=-1
+            case_id,
+            "create_hr_case",
+            {"title": "x", "subject_ref": "S1", "category": "overtime"},
+            plan_id=plan.id,
+            ttl_seconds=-1,
         )
         with pytest.raises(ApprovalError):
             await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
@@ -324,7 +328,9 @@ async def test_failed_execution_cannot_rerun_under_consumed_approval(session_fac
         service = HRCaseService(session, "t1")
         await service.transition_case(case_id, "TRIAGED")
         await service.transition_case(case_id, "EVIDENCE_READY")
-        plan = await service.save_plan(case_id, steps=[{"tool": "update_case_status", "params": {"status": "RESOLVED"}}])
+        plan = await service.save_plan(
+            case_id, steps=[{"tool": "update_case_status", "params": {"status": "RESOLVED"}}]
+        )
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )

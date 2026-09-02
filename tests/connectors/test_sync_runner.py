@@ -105,7 +105,11 @@ async def test_wecom_message_stream_pages_until_drained(monkeypatch: pytest.Monk
     await _set_fetch(
         records,
         [
-            ([{"external_id": "msg1", "chat": "chat-default"}, {"external_id": "msg2", "chat": "chat-default"}], "2", True),
+            (
+                [{"external_id": "msg1", "chat": "chat-default"}, {"external_id": "msg2", "chat": "chat-default"}],
+                "2",
+                True,
+            ),
             ([{"external_id": "msg3", "chat": "chat-default"}], "3", False),
         ],
     )

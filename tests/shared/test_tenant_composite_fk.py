@@ -17,9 +17,7 @@ pytestmark = pytest.mark.integration
 
 
 def _require() -> None:
-    if not os.environ.get("HRBP_RUN_DB_SECURITY_TESTS") and not os.environ.get(
-        "HRBP_RUN_CONCURRENCY_TESTS"
-    ):
+    if not os.environ.get("HRBP_RUN_DB_SECURITY_TESTS") and not os.environ.get("HRBP_RUN_CONCURRENCY_TESTS"):
         pytest.skip("set HRBP_RUN_DB_SECURITY_TESTS=true for PostgreSQL FK verification")
 
 
@@ -29,9 +27,11 @@ async def _expect_fk_violation(session, sql: str) -> None:
     import asyncpg
 
     cause = exc_info.value.__cause__
-    assert isinstance(cause, asyncpg.exceptions.ForeignKeyViolationError) or (
-        cause is not None and "ForeignKeyViolation" in type(cause).__name__
-    ) or ("violates foreign key" in str(exc_info.value)), f"expected a foreign-key violation, got {exc_info.value}"
+    assert (
+        isinstance(cause, asyncpg.exceptions.ForeignKeyViolationError)
+        or (cause is not None and "ForeignKeyViolation" in type(cause).__name__)
+        or ("violates foreign key" in str(exc_info.value))
+    ), f"expected a foreign-key violation, got {exc_info.value}"
 
 
 @pytest.mark.asyncio

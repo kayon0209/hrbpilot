@@ -295,9 +295,7 @@ async def configure_wecom_callback(
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = await db.scalar(
-            select(DataSource)
-            .where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-            .with_for_update()
+            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id).with_for_update()
         )
         if row is None:
             raise NotFoundError("Data source", source_id)
@@ -342,9 +340,7 @@ async def load_wecom_callback_config(tenant_id: str, source_id: str) -> WeComCal
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
     if row is None:
         raise NotFoundError("Data source", source_id)
     if row.platform != "wecom" or row.event_route != "employee_request" or row.revoked_at is not None:
@@ -395,17 +391,13 @@ async def bind_platform_identity(
         # materializes immediately, or it is first persisted as pending and
         # then materialized below; there is no lost middle window.
         source = await db.scalar(
-            select(DataSource)
-            .where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-            .with_for_update()
+            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id).with_for_update()
         )
         if source is None:
             raise NotFoundError("Data source", source_id)
         if source.event_route != "employee_request":
             raise ValidationError("该数据源未配置为员工请求入口")
-        user = await db.scalar(
-            select(User).where(User.tenant_id == tenant_id, User.id == user_id)
-        )
+        user = await db.scalar(select(User).where(User.tenant_id == tenant_id, User.id == user_id))
         if user is None:
             raise NotFoundError("User", user_id)
         if user.role != "employee":
@@ -487,11 +479,7 @@ async def pause_data_source(tenant_id: str, actor_id: str, source_id: str) -> Da
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = (
-            (
-                await db.execute(
-                    select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-                )
-            )
+            (await db.execute(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)))
             .scalars()
             .first()
         )
@@ -525,11 +513,7 @@ async def resume_data_source(tenant_id: str, actor_id: str, source_id: str) -> D
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = (
-            (
-                await db.execute(
-                    select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-                )
-            )
+            (await db.execute(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)))
             .scalars()
             .first()
         )
@@ -581,11 +565,7 @@ async def revoke_data_source(tenant_id: str, actor_id: str, source_id: str, reas
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = (
-            (
-                await db.execute(
-                    select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-                )
-            )
+            (await db.execute(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)))
             .scalars()
             .first()
         )
@@ -623,11 +603,7 @@ async def revoke_data_source(tenant_id: str, actor_id: str, source_id: str, reas
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = (
-            (
-                await db.execute(
-                    select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-                )
-            )
+            (await db.execute(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)))
             .scalars()
             .first()
         )
@@ -700,9 +676,7 @@ async def start_oauth(tenant_id: str, actor_id: str, source_id: str, redirect_ur
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         if row is None:
             raise NotFoundError("Data source", source_id)
         if row.revoked_at is not None:
@@ -787,9 +761,7 @@ async def complete_oauth(
     app_id: str | None = None
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         if row is None:
             raise NotFoundError("Data source", source_id)
         if row.revoked_at is not None:
@@ -907,9 +879,7 @@ async def complete_oauth(
         )
         await db.commit()
 
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         if row is None:
             raise NotFoundError("Data source", source_id)
         view = _view(row)
@@ -935,9 +905,7 @@ async def trigger_sync(tenant_id: str, actor_id: str, source_id: str) -> DataSou
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         if row is None:
             raise NotFoundError("Data source", source_id)
         if row.revoked_at is not None:
@@ -969,9 +937,7 @@ async def trigger_sync(tenant_id: str, actor_id: str, source_id: str) -> DataSou
     # Re-read after the runner committed its own status write-back.
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         if row is None:
             raise NotFoundError("Data source", source_id)
         view = _view(row)

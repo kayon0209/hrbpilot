@@ -81,9 +81,7 @@ async def _oauth_state(tenant_id: str, source_id: str) -> str:
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         return row.oauth_state if row else ""
 
 
@@ -120,9 +118,7 @@ async def test_callback_in_flight_cannot_restore_revoked_source(monkeypatch: pyt
 
     async def run_callback() -> None:
         try:
-            await complete_oauth(
-                tenant_id, actor_id, source_id, code="code-1", state=state
-            )
+            await complete_oauth(tenant_id, actor_id, source_id, code="code-1", state=state)
         except Exception as exc:
             # A stale callback after revoke SHOULD be rejected (never connects).
             errs.append(exc)
@@ -147,9 +143,7 @@ async def test_callback_in_flight_cannot_restore_revoked_source(monkeypatch: pyt
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        row = await db.scalar(
-            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         assert row.oauth_state == "revoked"
         assert row.oauth_encrypted_token is None
         assert row.oauth_refresh_encrypted is None

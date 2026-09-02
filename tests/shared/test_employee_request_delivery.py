@@ -17,9 +17,7 @@ pytestmark = pytest.mark.integration
 
 
 def _require_db_security_tests() -> None:
-    if not os.environ.get("HRBP_RUN_DB_RLS_TESTS") and not os.environ.get(
-        "HRBP_RUN_CONCURRENCY_TESTS"
-    ):
+    if not os.environ.get("HRBP_RUN_DB_RLS_TESTS") and not os.environ.get("HRBP_RUN_CONCURRENCY_TESTS"):
         pytest.skip("set HRBP_RUN_DB_RLS_TESTS=true for isolated PostgreSQL delivery verification")
 
 
@@ -28,10 +26,9 @@ async def _expect_constraint_violation(session, statement: str, params: dict[str
         await session.execute(text(statement), params)
     message = str(exc_info.value).lower()
     cause = exc_info.value.__cause__
-    assert (
-        "violates" in message
-        or (cause is not None and "Violation" in type(cause).__name__)
-    ), f"expected a database constraint violation, got {exc_info.value}"
+    assert "violates" in message or (cause is not None and "Violation" in type(cause).__name__), (
+        f"expected a database constraint violation, got {exc_info.value}"
+    )
 
 
 async def _seed_request_and_source(session, tenant_id: str, user_id: str) -> tuple[str, str]:
@@ -141,8 +138,22 @@ async def test_triage_commits_request_and_one_delivery_snapshot_without_internal
             db.info["tenant_id"] = tenant_id
             db.add_all(
                 [
-                    User(id=hr_id, tenant_id=tenant_id, name="HR", email=f"{hr_id}@delivery.invalid", hashed_password="x", role="hrbp"),
-                    User(id=employee_id, tenant_id=tenant_id, name="Employee", email=f"{employee_id}@delivery.invalid", hashed_password="x", role="employee"),
+                    User(
+                        id=hr_id,
+                        tenant_id=tenant_id,
+                        name="HR",
+                        email=f"{hr_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="hrbp",
+                    ),
+                    User(
+                        id=employee_id,
+                        tenant_id=tenant_id,
+                        name="Employee",
+                        email=f"{employee_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="employee",
+                    ),
                     DataSource(
                         id=source_id,
                         tenant_id=tenant_id,
@@ -203,13 +214,17 @@ async def test_triage_commits_request_and_one_delivery_snapshot_without_internal
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             attempts = (
-                await db.execute(
-                    select(ConnectorDeliveryAttempt).where(
-                        ConnectorDeliveryAttempt.tenant_id == tenant_id,
-                        ConnectorDeliveryAttempt.employee_request_id == request_id,
+                (
+                    await db.execute(
+                        select(ConnectorDeliveryAttempt).where(
+                            ConnectorDeliveryAttempt.tenant_id == tenant_id,
+                            ConnectorDeliveryAttempt.employee_request_id == request_id,
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(attempts) == 1
         assert attempts[0].message_content == "明天上午前回复"
         assert "内部排班备注" not in attempts[0].message_content
@@ -289,14 +304,64 @@ async def test_retryable_delivery_can_be_retried_by_visible_hr_only() -> None:
             db.info["tenant_id"] = tenant_id
             db.add_all(
                 [
-                    User(id=hr_id, tenant_id=tenant_id, name="HR", email=f"{hr_id}@delivery.invalid", hashed_password="x", role="hrbp"),
-                    User(id=employee_id, tenant_id=tenant_id, name="Employee", email=f"{employee_id}@delivery.invalid", hashed_password="x", role="employee"),
-                    DataSource(id=source_id, tenant_id=tenant_id, name="WeCom intake", platform="wecom", purpose="employee request", authorized_scope="direct messages", content_types="[]", data_destination="employee requests", event_route="employee_request", created_by=hr_id, wecom_callback_config_encrypted=b"configured-local-simulator"),
+                    User(
+                        id=hr_id,
+                        tenant_id=tenant_id,
+                        name="HR",
+                        email=f"{hr_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="hrbp",
+                    ),
+                    User(
+                        id=employee_id,
+                        tenant_id=tenant_id,
+                        name="Employee",
+                        email=f"{employee_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="employee",
+                    ),
+                    DataSource(
+                        id=source_id,
+                        tenant_id=tenant_id,
+                        name="WeCom intake",
+                        platform="wecom",
+                        purpose="employee request",
+                        authorized_scope="direct messages",
+                        content_types="[]",
+                        data_destination="employee requests",
+                        event_route="employee_request",
+                        created_by=hr_id,
+                        wecom_callback_config_encrypted=b"configured-local-simulator",
+                    ),
                 ]
             )
             await db.flush()
-            db.add(ConnectorEventLog(tenant_id=tenant_id, source_id=source_id, external_event_id="msg:delivery-retry", event_type="text", payload_digest="r" * 64, received_at=datetime.now(UTC), status="processed"))
-            db.add(EmployeeRequest(id=request_id, tenant_id=tenant_id, created_by=employee_id, request_type="other", title="Connector request", description="employee question", status="submitted", hr_owner_id=hr_id, connector_source_id=source_id, connector_external_event_id="msg:delivery-retry", external_sender_id="wecom-employee-a"))
+            db.add(
+                ConnectorEventLog(
+                    tenant_id=tenant_id,
+                    source_id=source_id,
+                    external_event_id="msg:delivery-retry",
+                    event_type="text",
+                    payload_digest="r" * 64,
+                    received_at=datetime.now(UTC),
+                    status="processed",
+                )
+            )
+            db.add(
+                EmployeeRequest(
+                    id=request_id,
+                    tenant_id=tenant_id,
+                    created_by=employee_id,
+                    request_type="other",
+                    title="Connector request",
+                    description="employee question",
+                    status="submitted",
+                    hr_owner_id=hr_id,
+                    connector_source_id=source_id,
+                    connector_external_event_id="msg:delivery-retry",
+                    external_sender_id="wecom-employee-a",
+                )
+            )
             await db.commit()
 
         failed = await hr_triage(
@@ -309,9 +374,7 @@ async def test_retryable_delivery_can_be_retried_by_visible_hr_only() -> None:
         )
         assert failed["delivery"]["status"] == "retryable_failed"
 
-        retried = await retry_hr_delivery(
-            tenant_id, hr_id, "hrbp", request_id, failed["delivery"]["attempt_id"]
-        )
+        retried = await retry_hr_delivery(tenant_id, hr_id, "hrbp", request_id, failed["delivery"]["attempt_id"])
         assert retried.status == "simulated_accepted"
         assert retried.attempt_count == 2
 
@@ -352,19 +415,77 @@ async def test_concurrent_same_triage_version_creates_one_delivery_attempt() -> 
     try:
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
-            db.add_all([
-                User(id=hr_id, tenant_id=tenant_id, name="HR", email=f"{hr_id}@delivery.invalid", hashed_password="x", role="hrbp"),
-                User(id=employee_id, tenant_id=tenant_id, name="Employee", email=f"{employee_id}@delivery.invalid", hashed_password="x", role="employee"),
-                DataSource(id=source_id, tenant_id=tenant_id, name="WeCom intake", platform="wecom", purpose="employee request", authorized_scope="direct messages", content_types="[]", data_destination="employee requests", event_route="employee_request", created_by=hr_id, wecom_callback_config_encrypted=b"configured-local-simulator"),
-            ])
+            db.add_all(
+                [
+                    User(
+                        id=hr_id,
+                        tenant_id=tenant_id,
+                        name="HR",
+                        email=f"{hr_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="hrbp",
+                    ),
+                    User(
+                        id=employee_id,
+                        tenant_id=tenant_id,
+                        name="Employee",
+                        email=f"{employee_id}@delivery.invalid",
+                        hashed_password="x",
+                        role="employee",
+                    ),
+                    DataSource(
+                        id=source_id,
+                        tenant_id=tenant_id,
+                        name="WeCom intake",
+                        platform="wecom",
+                        purpose="employee request",
+                        authorized_scope="direct messages",
+                        content_types="[]",
+                        data_destination="employee requests",
+                        event_route="employee_request",
+                        created_by=hr_id,
+                        wecom_callback_config_encrypted=b"configured-local-simulator",
+                    ),
+                ]
+            )
             await db.flush()
-            db.add(ConnectorEventLog(tenant_id=tenant_id, source_id=source_id, external_event_id="msg:delivery-concurrent", event_type="text", payload_digest="c" * 64, received_at=datetime.now(UTC), status="processed"))
-            db.add(EmployeeRequest(id=request_id, tenant_id=tenant_id, created_by=employee_id, request_type="other", title="Connector request", description="employee question", status="submitted", hr_owner_id=hr_id, connector_source_id=source_id, connector_external_event_id="msg:delivery-concurrent", external_sender_id="wecom-employee-a"))
+            db.add(
+                ConnectorEventLog(
+                    tenant_id=tenant_id,
+                    source_id=source_id,
+                    external_event_id="msg:delivery-concurrent",
+                    event_type="text",
+                    payload_digest="c" * 64,
+                    received_at=datetime.now(UTC),
+                    status="processed",
+                )
+            )
+            db.add(
+                EmployeeRequest(
+                    id=request_id,
+                    tenant_id=tenant_id,
+                    created_by=employee_id,
+                    request_type="other",
+                    title="Connector request",
+                    description="employee question",
+                    status="submitted",
+                    hr_owner_id=hr_id,
+                    connector_source_id=source_id,
+                    connector_external_event_id="msg:delivery-concurrent",
+                    external_sender_id="wecom-employee-a",
+                )
+            )
             await db.commit()
 
         tasks = [
             asyncio.create_task(
-                hr_triage(tenant_id, hr_id, "hrbp", request_id, HrTriageBody(status="in_progress", next_step_for_employee="同一处理版本"))
+                hr_triage(
+                    tenant_id,
+                    hr_id,
+                    "hrbp",
+                    request_id,
+                    HrTriageBody(status="in_progress", next_step_for_employee="同一处理版本"),
+                )
             )
             for _ in range(8)
         ]
@@ -383,8 +504,14 @@ async def test_concurrent_same_triage_version_creates_one_delivery_attempt() -> 
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             attempts = (
-                await db.execute(select(ConnectorDeliveryAttempt).where(ConnectorDeliveryAttempt.tenant_id == tenant_id))
-            ).scalars().all()
+                (
+                    await db.execute(
+                        select(ConnectorDeliveryAttempt).where(ConnectorDeliveryAttempt.tenant_id == tenant_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
         assert len(attempts) == 1
         assert attempts[0].status == "simulated_accepted"
     finally:

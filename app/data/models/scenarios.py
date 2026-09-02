@@ -152,7 +152,9 @@ class KnowledgeFeedbackCandidate(Base, UUIDPrimaryKey, TimestampMixin, TenantMix
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     source_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
-    source_type: Mapped[str] = mapped_column(String(30), nullable=False)  # no_evidence | negative_feedback | repeated_theme
+    source_type: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )  # no_evidence | negative_feedback | repeated_theme
     question: Mapped[str] = mapped_column(Text, nullable=False)
     # Normalized dedup key (whitespace-collapsed, lower-cased) maintained by
     # collect_candidates; the ORM default only serves direct inserts that do
@@ -162,7 +164,9 @@ class KnowledgeFeedbackCandidate(Base, UUIDPrimaryKey, TimestampMixin, TenantMix
     occurrences: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     evidence_summary: Mapped[str | None] = mapped_column(Text, default=None)
     suggested_kb_id: Mapped[str | None] = mapped_column(String(36), default=None)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")  # open | confirmed | rejected | assigned
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="open"
+    )  # open | confirmed | rejected | assigned
     handled_by: Mapped[str | None] = mapped_column(String(36), default=None)
     handled_reason: Mapped[str | None] = mapped_column(Text, default=None)
     assignee: Mapped[str | None] = mapped_column(String(200), default=None)
@@ -202,10 +206,14 @@ class EmployeeRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     )
 
     created_by: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    request_type: Mapped[str] = mapped_column(String(50), nullable=False)  # policy_check | certificate | process_help | other
+    request_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # policy_check | certificate | process_help | other
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="submitted")  # submitted | needs_materials | in_progress | resolved
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="submitted"
+    )  # submitted | needs_materials | in_progress | resolved
     next_step_for_employee: Mapped[str | None] = mapped_column(Text, default=None)
     needs_materials: Mapped[str | None] = mapped_column(Text, default=None)
     hr_owner_id: Mapped[str | None] = mapped_column(String(36), default=None)

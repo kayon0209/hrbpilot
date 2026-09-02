@@ -107,9 +107,7 @@ def upgrade() -> None:
         sa.Column("replay_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint(
-            "tenant_id", "source_id", "external_event_id", name="uq_connector_event_consumed"
-        ),
+        sa.UniqueConstraint("tenant_id", "source_id", "external_event_id", name="uq_connector_event_consumed"),
     )
     op.create_index(
         "ix_connector_event_log_source_id",

@@ -123,9 +123,7 @@ def test_admin_creates_an_audited_org_unit(client) -> None:
             factory = get_session_factory()
             async with factory() as db:
                 db.info["tenant_id"] = tenant_id
-                name = await db.scalar(
-                    select(OrgUnit.name).where(OrgUnit.tenant_id == tenant_id, OrgUnit.id == org_id)
-                )
+                name = await db.scalar(select(OrgUnit.name).where(OrgUnit.tenant_id == tenant_id, OrgUnit.id == org_id))
                 actions = list(
                     (
                         await db.execute(
@@ -154,9 +152,7 @@ def test_admin_inventory_lists_org_units(client) -> None:
         response = client.get("/api/admin/users", headers=headers)
 
         assert response.status_code == 200, response.text
-        assert response.json()["org_units"] == [
-            {"org_unit_id": org_id, "name": "华东事业部", "parent_id": None}
-        ]
+        assert response.json()["org_units"] == [{"org_unit_id": org_id, "name": "华东事业部", "parent_id": None}]
     finally:
         asyncio.run(_cleanup(tenant_id))
 

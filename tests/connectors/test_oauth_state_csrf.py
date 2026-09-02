@@ -224,7 +224,8 @@ def test_oauth_callback_expired_state_is_rejected(client: TestClient, monkeypatc
             async with factory() as db:
                 db.info["tenant_id"] = tenant_id
                 await db.execute(
-                    __import__("sqlalchemy").update(OAuthNonce)
+                    __import__("sqlalchemy")
+                    .update(OAuthNonce)
                     .where(OAuthNonce.tenant_id == tenant_id, OAuthNonce.source_id == source_id)
                     .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
                 )
@@ -315,12 +316,10 @@ def test_revoke_wipes_token_ciphertext_and_invalidates_nonce(client: TestClient)
                 row = await db.scalar(
                     select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
                 )
-                nonce_count = (
-                    await db.scalar(
-                        select(__import__("sqlalchemy").func.count())
-                        .select_from(OAuthNonce)
-                        .where(OAuthNonce.tenant_id == tenant_id, OAuthNonce.source_id == source_id)
-                    )
+                nonce_count = await db.scalar(
+                    select(__import__("sqlalchemy").func.count())
+                    .select_from(OAuthNonce)
+                    .where(OAuthNonce.tenant_id == tenant_id, OAuthNonce.source_id == source_id)
                 )
             return row, nonce_count
 

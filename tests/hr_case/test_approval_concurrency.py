@@ -86,13 +86,17 @@ async def test_concurrent_requests_consume_an_approval_once() -> None:
         verify = await make_tenant_session(tenant_id)
         try:
             executions = (
-                await verify.execute(
-                    select(ToolExecution).where(
-                        ToolExecution.tenant_id == tenant_id,
-                        ToolExecution.approval_id == approval_id,
+                (
+                    await verify.execute(
+                        select(ToolExecution).where(
+                            ToolExecution.tenant_id == tenant_id,
+                            ToolExecution.approval_id == approval_id,
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(executions) == 1
         finally:
             await verify.close()

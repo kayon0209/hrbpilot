@@ -24,9 +24,7 @@ pytestmark = pytest.mark.integration
 
 
 def _require() -> None:
-    if not os.environ.get("HRBP_RUN_DB_SECURITY_TESTS") and not os.environ.get(
-        "HRBP_RUN_CONCURRENCY_TESTS"
-    ):
+    if not os.environ.get("HRBP_RUN_DB_SECURITY_TESTS") and not os.environ.get("HRBP_RUN_CONCURRENCY_TESTS"):
         pytest.skip("set HRBP_RUN_DB_SECURITY_TESTS=true for PG verification")
 
 
@@ -74,13 +72,15 @@ async def _seed_source(tenant_id: str, secret: str, aes_key: str, corpid: str) -
             event_route="employee_request",
             wecom_callback_config_encrypted=encrypt_credential(
                 tenant_id,
-                json.dumps({
-                    "corp_id": corpid,
-                    "agent_id": "1000002",
-                    "corp_secret": "test-corp-secret",
-                    "callback_token": secret,
-                    "encoding_aes_key": aes_key,
-                }),
+                json.dumps(
+                    {
+                        "corp_id": corpid,
+                        "agent_id": "1000002",
+                        "corp_secret": "test-corp-secret",
+                        "callback_token": secret,
+                        "encoding_aes_key": aes_key,
+                    }
+                ),
             ),
         )
         db.add(row)

@@ -82,8 +82,7 @@ def rotate_master_key(tenant_id: str, ciphertext: bytes, new_master: bytes) -> b
 def decrypt_with_masters(tenant_id: str, ciphertext: bytes, masters: list[bytes]) -> str:
     """Decrypt trying multiple masters (rotation window)."""
     fernets = [
-        Fernet(base64.urlsafe_b64encode(hashlib.sha256(m + tenant_id.encode("utf-8")).digest()))
-        for m in masters
+        Fernet(base64.urlsafe_b64encode(hashlib.sha256(m + tenant_id.encode("utf-8")).digest())) for m in masters
     ]
     try:
         return MultiFernet(fernets).decrypt(ciphertext).decode("utf-8")

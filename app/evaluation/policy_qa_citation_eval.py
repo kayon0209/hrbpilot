@@ -62,12 +62,12 @@ class SampleResult:
 # Error taxonomy per Phase 2 step 1. One class per sample; priority order
 # matters and is documented in classify().
 ERROR_CLASSES = (
-    "no_expectation",           # sample expects no sources (injection / none)
-    "full_match",               # all expected sources retrieved and cited
-    "partial_match",            # some expected sources retrieved
-    "retrieval_miss",           # no expected source in top-k
+    "no_expectation",  # sample expects no sources (injection / none)
+    "full_match",  # all expected sources retrieved and cited
+    "partial_match",  # some expected sources retrieved
+    "retrieval_miss",  # no expected source in top-k
     "version_or_alias_mismatch",  # expected label resolves only via alias
-    "binding_loss",             # retrieved but citation binding dropped it
+    "binding_loss",  # retrieved but citation binding dropped it
 )
 
 
@@ -117,7 +117,7 @@ def retrieve_deterministic(
     query, OR semantics over terms, ranked by overlap. Returns top_k rows.
     """
     terms = [t for t in tokenize_for_query(query).split() if len(t) > 1 or t.isalnum()]
-    scored = [( _sparse_score(terms, r), r) for r in rows]
+    scored = [(_sparse_score(terms, r), r) for r in rows]
     scored = [(s, r) for s, r in scored if s > 0]
     scored.sort(key=lambda pair: (-pair[0], pair[1].chunk_id))
     return [r for _, r in scored[:top_k]]
@@ -241,9 +241,7 @@ def evaluate_policy_qa(top_k: int = 5) -> dict:
         "avg_source_recall": round(sum(scored_rec) / len(scored_rec), 4) if scored_rec else None,
         "avg_source_precision": round(sum(scored_prec) / len(scored_prec), 4) if scored_prec else None,
         "avg_completeness": round(sum(comp_values) / len(comp_values), 4) if comp_values else None,
-        "error_class_counts": {
-            cls: sum(1 for r in results if r.error_class == cls) for cls in ERROR_CLASSES
-        },
+        "error_class_counts": {cls: sum(1 for r in results if r.error_class == cls) for cls in ERROR_CLASSES},
     }
     return {"summary": summary, "results": results}
 

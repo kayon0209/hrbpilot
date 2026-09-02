@@ -33,8 +33,17 @@ async def _seed_open_candidate(tenant_id: str, manager_id: str, org_unit_id: str
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        db.add(User(id=manager_id, tenant_id=tenant_id, name="经理", email=f"{manager_id}@example.invalid",
-                    hashed_password="x", role="hr_manager", org_unit_id=org_unit_id))
+        db.add(
+            User(
+                id=manager_id,
+                tenant_id=tenant_id,
+                name="经理",
+                email=f"{manager_id}@example.invalid",
+                hashed_password="x",
+                role="hr_manager",
+                org_unit_id=org_unit_id,
+            )
+        )
         await db.flush()
         row = KnowledgeFeedbackCandidate(
             tenant_id=tenant_id,
@@ -69,11 +78,19 @@ async def test_confirm_vs_reject_exactly_one_wins() -> None:
     tenant_id, manager_id = str(uuid4()), str(uuid4())
     candidate_id = await _seed_open_candidate(tenant_id, manager_id)
     try:
+
         async def decide(decision: str) -> str:
             try:
                 result = await decide_candidate(
-                    tenant_id, manager_id, "hr_manager",
-                    DecideBody(**({"candidate_id": candidate_id, "decision": decision} | ({"assignee": "u2"} if decision == "assign" else {}))),
+                    tenant_id,
+                    manager_id,
+                    "hr_manager",
+                    DecideBody(
+                        **(
+                            {"candidate_id": candidate_id, "decision": decision}
+                            | ({"assignee": "u2"} if decision == "assign" else {})
+                        )
+                    ),
                 )
                 return result.status
             except AppError as exc:
@@ -95,14 +112,18 @@ async def test_decided_candidate_cannot_be_re_decided() -> None:
     candidate_id = await _seed_open_candidate(tenant_id, manager_id)
     try:
         first = await decide_candidate(
-            tenant_id, manager_id, "hr_manager",
+            tenant_id,
+            manager_id,
+            "hr_manager",
             DecideBody(candidate_id=candidate_id, decision="assign", assignee="u-9"),
         )
         assert first.status == "assigned"
 
         with pytest.raises(AppError) as exc_info:
             await decide_candidate(
-                tenant_id, manager_id, "hr_manager",
+                tenant_id,
+                manager_id,
+                "hr_manager",
                 DecideBody(candidate_id=candidate_id, decision="reject"),
             )
         assert exc_info.value.status_code == 409

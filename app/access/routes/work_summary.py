@@ -92,15 +92,13 @@ async def list_assignable_owners(request: Request):
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(User.id, User.name)
-                    .where(User.tenant_id == tenant_id, User.id.in_(visible_user_ids))
-                    .order_by(User.name.asc())
-                    .limit(200)
-                )
-            ).all()
-        )
+            await db.execute(
+                select(User.id, User.name)
+                .where(User.tenant_id == tenant_id, User.id.in_(visible_user_ids))
+                .order_by(User.name.asc())
+                .limit(200)
+            )
+        ).all()
     return {"owners": [{"user_id": row.id, "name": row.name} for row in rows]}
 
 

@@ -18,9 +18,7 @@ from app.scenarios.knowledge_feedback.service import collect_candidates
 pytestmark = pytest.mark.integration
 
 
-async def _seed_policy_pairs(
-    tenant_id: str, question: str, citations_json: str | None, count: int = 1
-) -> str:
+async def _seed_policy_pairs(tenant_id: str, question: str, citations_json: str | None, count: int = 1) -> str:
     """Persist one user and ordered policy-QA question/answer pairs."""
     factory = get_session_factory()
     user_id = str(uuid4())

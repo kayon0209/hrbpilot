@@ -98,9 +98,9 @@ class WeComOutboundSimulator:
             return SimulatedWeComResponse(errcode=-1, errmsg="system busy", retryable=True)
 
         self._message_sequence += 1
-        digest = sha256(
-            f"{agent_id}:{touser}:{content}:{self._message_sequence}:local-simulator".encode()
-        ).hexdigest()[:20]
+        digest = sha256(f"{agent_id}:{touser}:{content}:{self._message_sequence}:local-simulator".encode()).hexdigest()[
+            :20
+        ]
         return SimulatedWeComResponse(
             errcode=0,
             errmsg="ok",

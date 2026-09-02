@@ -151,9 +151,7 @@ async def _cleanup(tenant_id: str) -> None:
             ).scalars()
         ]
         await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
-        await db.execute(
-            delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id)
-        )
+        await db.execute(delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id))
         if session_ids:
             await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
         await db.execute(delete(ChatSession).where(ChatSession.tenant_id == tenant_id))
@@ -165,9 +163,7 @@ async def _cleanup(tenant_id: str) -> None:
 
 def test_manager_candidate_list_excludes_questions_outside_explicit_org_scope(client: TestClient) -> None:
     tenant_id = str(uuid4())
-    manager_id, _org_b_id, visible_question, hidden_question = asyncio.run(
-        _seed_scoped_questions(tenant_id)
-    )
+    manager_id, _org_b_id, visible_question, hidden_question = asyncio.run(_seed_scoped_questions(tenant_id))
     try:
         response = client.get(
             "/api/knowledge-feedback/candidates",
@@ -184,9 +180,7 @@ def test_manager_candidate_list_excludes_questions_outside_explicit_org_scope(cl
 
 def test_manager_cannot_decide_candidate_outside_explicit_org_scope(client: TestClient) -> None:
     tenant_id = str(uuid4())
-    manager_id, org_b_id, _visible_question, hidden_question = asyncio.run(
-        _seed_scoped_questions(tenant_id)
-    )
+    manager_id, org_b_id, _visible_question, hidden_question = asyncio.run(_seed_scoped_questions(tenant_id))
     candidate_id = asyncio.run(_seed_hidden_candidate(tenant_id, org_b_id, hidden_question))
     try:
         response = client.post(
@@ -202,9 +196,7 @@ def test_manager_cannot_decide_candidate_outside_explicit_org_scope(client: Test
 
 def test_work_summary_excludes_candidate_outside_explicit_org_scope(client: TestClient) -> None:
     tenant_id = str(uuid4())
-    manager_id, org_b_id, _visible_question, hidden_question = asyncio.run(
-        _seed_scoped_questions(tenant_id)
-    )
+    manager_id, org_b_id, _visible_question, hidden_question = asyncio.run(_seed_scoped_questions(tenant_id))
     asyncio.run(_seed_hidden_candidate(tenant_id, org_b_id, hidden_question))
     try:
         response = client.get(

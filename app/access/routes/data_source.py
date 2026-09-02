@@ -55,17 +55,13 @@ class IdentityBindingBody(BaseModel):
 async def bind_identity(source_id: str, body: IdentityBindingBody, request: Request):
     tenant_id = require_tenant_id(request)
     actor_id = getattr(request.state, "user_id", "unknown")
-    return await bind_platform_identity(
-        tenant_id, actor_id, source_id, body.external_user_id, body.user_id
-    )
+    return await bind_platform_identity(tenant_id, actor_id, source_id, body.external_user_id, body.user_id)
 
 
 @router.put("/{source_id}/wecom-callback-config")
 @require_auth
 @require_capability("data_source_admin")
-async def configure_wecom_callback_route(
-    source_id: str, body: WeComCallbackConfigBody, request: Request
-):
+async def configure_wecom_callback_route(source_id: str, body: WeComCallbackConfigBody, request: Request):
     tenant_id = require_tenant_id(request)
     actor_id = getattr(request.state, "user_id", "unknown")
     return await configure_wecom_callback(tenant_id, actor_id, source_id, body)

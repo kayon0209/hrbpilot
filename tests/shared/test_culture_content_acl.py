@@ -132,9 +132,33 @@ async def _seed_manager_scope(tenant_id: str) -> tuple[str, str, str]:
         await db.flush()
         db.add_all(
             [
-                User(id=manager_id, tenant_id=tenant_id, name="Manager", email=f"{manager_id}@example.test", hashed_password="x", role="hr_manager", org_unit_id=org_a_id),
-                User(id=owner_a_id, tenant_id=tenant_id, name="East HRBP", email=f"{owner_a_id}@example.test", hashed_password="x", role="hrbp", org_unit_id=org_a_id),
-                User(id=owner_b_id, tenant_id=tenant_id, name="South HRBP", email=f"{owner_b_id}@example.test", hashed_password="x", role="hrbp", org_unit_id=org_b_id),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="Manager",
+                    email=f"{manager_id}@example.test",
+                    hashed_password="x",
+                    role="hr_manager",
+                    org_unit_id=org_a_id,
+                ),
+                User(
+                    id=owner_a_id,
+                    tenant_id=tenant_id,
+                    name="East HRBP",
+                    email=f"{owner_a_id}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_a_id,
+                ),
+                User(
+                    id=owner_b_id,
+                    tenant_id=tenant_id,
+                    name="South HRBP",
+                    email=f"{owner_b_id}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_b_id,
+                ),
             ]
         )
         await db.flush()

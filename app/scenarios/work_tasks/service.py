@@ -33,9 +33,7 @@ class UpdateWorkTaskBody(BaseModel):
     owner_user_id: str | None = None
     waiting_for: str | None = Field(None, max_length=200)
     due_at: datetime | None = None
-    status: str | None = Field(
-        None, pattern="^(open|in_progress|waiting|completed|cancelled)$"
-    )
+    status: str | None = Field(None, pattern="^(open|in_progress|waiting|completed|cancelled)$")
     completed_units: int | None = Field(None, ge=0)
     total_units: int | None = Field(None, ge=1, le=10000)
 
@@ -109,9 +107,7 @@ async def _get_visible_task(db, tenant_id: str, task_id: str, visible_user_ids: 
 async def _validate_owner(db, tenant_id: str, owner_id: str, visible_user_ids: set[str]) -> None:
     if owner_id not in visible_user_ids:
         raise NotFoundError("User", owner_id)
-    exists = await db.scalar(
-        select(User.id).where(User.tenant_id == tenant_id, User.id == owner_id)
-    )
+    exists = await db.scalar(select(User.id).where(User.tenant_id == tenant_id, User.id == owner_id))
     if exists is None:
         raise NotFoundError("User", owner_id)
 

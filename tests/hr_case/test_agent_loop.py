@@ -175,7 +175,10 @@ async def test_write_tool_stops_for_approval_and_never_executes(session_factory)
                 {
                     "steps": [
                         {"tool": "search_policy", "params": {"query": "加班费标准"}},
-                        {"tool": "create_hr_case", "params": {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"}},
+                        {
+                            "tool": "create_hr_case",
+                            "params": {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"},
+                        },
                     ]
                 }
             )
@@ -201,7 +204,10 @@ async def test_approved_write_executes_exactly_once(session_factory):
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
         approval = await service.request_approval(
-            case_id, "create_hr_case", {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"}, plan_id=plan.id
+            case_id,
+            "create_hr_case",
+            {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"},
+            plan_id=plan.id,
         )
         await service.decide_approval(case_id, approval.id, "u9", "approve", "同意", role="hr_manager")
         await session.commit()

@@ -18,9 +18,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.execute("ALTER TABLE employee_requests NO FORCE ROW LEVEL SECURITY")
     op.add_column("employee_requests", sa.Column("connector_source_id", sa.String(length=36), nullable=True))
-    op.add_column(
-        "employee_requests", sa.Column("connector_external_event_id", sa.String(length=255), nullable=True)
-    )
+    op.add_column("employee_requests", sa.Column("connector_external_event_id", sa.String(length=255), nullable=True))
     op.add_column("employee_requests", sa.Column("external_sender_id", sa.String(length=255), nullable=True))
     op.create_check_constraint(
         "ck_employee_request_connector_provenance",

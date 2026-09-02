@@ -52,14 +52,10 @@ class WorkTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     )
 
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    owner_user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True
-    )
+    owner_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     # The tenant-scoped parent binding lives in __table_args__ as a composite
     # FK; the single-column ForeignKey here would defeat it.
-    parent_task_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True, index=True
-    )
+    parent_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     next_action: Mapped[str] = mapped_column(Text, nullable=False, default="")

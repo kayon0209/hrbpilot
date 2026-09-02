@@ -65,9 +65,7 @@ async def _cleanup(tenant_id: str, source_id: str) -> None:
         db.info["tenant_id"] = tenant_id
         await db.execute(delete(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))
         await db.execute(delete(ConnectorIntakeEvent).where(ConnectorIntakeEvent.tenant_id == tenant_id))
-        await db.execute(
-            delete(ConnectorIdentityBinding).where(ConnectorIdentityBinding.tenant_id == tenant_id)
-        )
+        await db.execute(delete(ConnectorIdentityBinding).where(ConnectorIdentityBinding.tenant_id == tenant_id))
         await db.execute(
             delete(ConnectorEventLog).where(
                 ConnectorEventLog.tenant_id == tenant_id, ConnectorEventLog.source_id == source_id
@@ -78,9 +76,7 @@ async def _cleanup(tenant_id: str, source_id: str) -> None:
                 ConnectorSyncCursor.tenant_id == tenant_id, ConnectorSyncCursor.source_id == source_id
             )
         )
-        await db.execute(
-            delete(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id)
-        )
+        await db.execute(delete(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
         await db.execute(delete(User).where(User.tenant_id == tenant_id))
         await db.commit()
 
@@ -114,10 +110,10 @@ async def test_event_consumed_exactly_once_replay_increments() -> None:
             from sqlalchemy import select
 
             row = (
-                await db.execute(
-                    select(ConnectorEventLog).where(ConnectorEventLog.external_event_id == "evt-1")
-                )
-            ).scalars().first()
+                (await db.execute(select(ConnectorEventLog).where(ConnectorEventLog.external_event_id == "evt-1")))
+                .scalars()
+                .first()
+            )
         # Recording an inbound delivery is not its business side effect.  A
         # newly claimed event must therefore stay processing until that effect
         # has durably succeeded; it must never be born "processed".
@@ -133,10 +129,10 @@ async def test_event_consumed_exactly_once_replay_increments() -> None:
             from sqlalchemy import select
 
             row = (
-                await db.execute(
-                    select(ConnectorEventLog).where(ConnectorEventLog.external_event_id == "evt-1")
-                )
-            ).scalars().first()
+                (await db.execute(select(ConnectorEventLog).where(ConnectorEventLog.external_event_id == "evt-1")))
+                .scalars()
+                .first()
+            )
         assert row.replay_count == 1
         # A replay cannot turn an unfinished event into a false success.
         assert getattr(row, "status", None) in {"processing", "replayed"}
@@ -212,11 +208,7 @@ async def test_bound_employee_message_creates_one_employee_request_and_completes
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             requests = list(
-                (
-                    await db.execute(
-                        select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id)
-                    )
-                ).scalars()
+                (await db.execute(select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))).scalars()
             )
             event = await db.scalar(
                 select(ConnectorEventLog).where(
@@ -253,11 +245,7 @@ async def test_unbound_employee_message_is_accepted_without_creating_a_request()
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             requests = list(
-                (
-                    await db.execute(
-                        select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id)
-                    )
-                ).scalars()
+                (await db.execute(select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))).scalars()
             )
             event = await db.scalar(
                 select(ConnectorEventLog).where(
@@ -308,22 +296,14 @@ async def test_binding_materializes_pending_employee_request_once() -> None:
             )
             await db.commit()
 
-        await bind_platform_identity(
-            tenant_id, "connector-admin", source_id, external_user_id, employee_id
-        )
+        await bind_platform_identity(tenant_id, "connector-admin", source_id, external_user_id, employee_id)
         # A repeated administrator save must be an upsert, not a second request.
-        await bind_platform_identity(
-            tenant_id, "connector-admin", source_id, external_user_id, employee_id
-        )
+        await bind_platform_identity(tenant_id, "connector-admin", source_id, external_user_id, employee_id)
 
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             requests = list(
-                (
-                    await db.execute(
-                        select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id)
-                    )
-                ).scalars()
+                (await db.execute(select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))).scalars()
             )
             intake = await db.scalar(
                 select(ConnectorIntakeEvent).where(
@@ -377,21 +357,14 @@ async def test_concurrent_bound_message_deliveries_create_one_employee_request()
 
         payload = {"sender": external_user_id, "content": "我需要确认社保缴纳情况", "chat": "chat-hr"}
         results = await asyncio.gather(
-            *(
-                consume_event(tenant_id, source_id, "msg-concurrent-1", "message.created", payload)
-                for _ in range(8)
-            )
+            *(consume_event(tenant_id, source_id, "msg-concurrent-1", "message.created", payload) for _ in range(8))
         )
         assert sum(results) == 1
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             request_count = len(
                 list(
-                    (
-                        await db.execute(
-                            select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id)
-                        )
-                    ).scalars()
+                    (await db.execute(select(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))).scalars()
                 )
             )
         assert request_count == 1

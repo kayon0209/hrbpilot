@@ -82,9 +82,33 @@ async def _seed_users(tenant_id: str) -> dict[str, str]:
             [
                 OrgUnit(id=org_a, tenant_id=tenant_id, name="华东"),
                 OrgUnit(id=org_b, tenant_id=tenant_id, name="华南"),
-                User(id=hrbp_a, tenant_id=tenant_id, name="A", email=f"{hrbp_a}@example.test", hashed_password="x", role="hrbp", org_unit_id=org_a),
-                User(id=hrbp_b, tenant_id=tenant_id, name="B", email=f"{hrbp_b}@example.test", hashed_password="x", role="hrbp", org_unit_id=org_b),
-                User(id=manager_id, tenant_id=tenant_id, name="M", email=f"{manager_id}@example.test", hashed_password="x", role="hr_manager", org_unit_id=org_a),
+                User(
+                    id=hrbp_a,
+                    tenant_id=tenant_id,
+                    name="A",
+                    email=f"{hrbp_a}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_a,
+                ),
+                User(
+                    id=hrbp_b,
+                    tenant_id=tenant_id,
+                    name="B",
+                    email=f"{hrbp_b}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_b,
+                ),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="M",
+                    email=f"{manager_id}@example.test",
+                    hashed_password="x",
+                    role="hr_manager",
+                    org_unit_id=org_a,
+                ),
             ]
         )
         await db.flush()
@@ -125,9 +149,7 @@ class _Http:
         await self._client.aclose()
 
     async def _run(self, token: str, method: str, path: str, json_body: dict | None = None):
-        return await self._client.request(
-            method, path, headers={"Authorization": f"Bearer {token}"}, json=json_body
-        )
+        return await self._client.request(method, path, headers={"Authorization": f"Bearer {token}"}, json=json_body)
 
     async def create_case(self, token: str, **payload):
         return await self._run(token, "POST", "/api/v1/hr-cases", payload)
@@ -234,9 +256,7 @@ async def test_cross_case_approval_binding_fails_closed() -> None:
             factory = get_session_factory()
             async with factory() as db:
                 db.info["tenant_id"] = tenant_id
-                status_b = await db.scalar(
-                    select(ApprovalRequest.status).where(ApprovalRequest.id == approval_b)
-                )
+                status_b = await db.scalar(select(ApprovalRequest.status).where(ApprovalRequest.id == approval_b))
             assert status_b == "PENDING", f"case B's approval must stay PENDING, got {status_b}"
     finally:
         await _cleanup(tenant_id)

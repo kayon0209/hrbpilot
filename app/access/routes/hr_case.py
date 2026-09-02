@@ -118,7 +118,9 @@ def _default_plan_proposal(case) -> str:
     if requires_human_review(case.category, case.risk_level):
         return json.dumps(
             {
-                "steps": [{"tool": "search_policy", "params": {"query": case.title}, "reason": "gather policy evidence"}],
+                "steps": [
+                    {"tool": "search_policy", "params": {"query": case.title}, "reason": "gather policy evidence"}
+                ],
                 "rationale": "high-risk category: evidence-only plan, human handoff required",
                 "risk_notes": f"category={case.category} risk={case.risk_level}",
             },
@@ -170,7 +172,11 @@ async def clarify_case(case_id: str, body: ClarifyBody, request: Request, sessio
     service = await _service(request, session)
     case = await service.get_case(case_id)
     if case.status != case_state.NEEDS_CLARIFICATION:
-        raise AppError(f"Case is {case.status}, clarification answers apply to NEEDS_CLARIFICATION", code="INVALID_STATE", status_code=409)
+        raise AppError(
+            f"Case is {case.status}, clarification answers apply to NEEDS_CLARIFICATION",
+            code="INVALID_STATE",
+            status_code=409,
+        )
     await service.transition_case(case_id, case_state.TRIAGED, reason="clarification answered")
     await session.commit()
     return {"case_id": case_id, "status": case_state.TRIAGED}
@@ -187,10 +193,16 @@ async def run_case_plan(case_id: str, request: Request, session: AsyncSession = 
     from app.data.models.hr_case import CasePlan
 
     plan = (
-        await session.execute(
-            select(CasePlan).where(CasePlan.case_id == case_id, CasePlan.tenant_id == service.tenant_id).order_by(CasePlan.created_at.desc())
+        (
+            await session.execute(
+                select(CasePlan)
+                .where(CasePlan.case_id == case_id, CasePlan.tenant_id == service.tenant_id)
+                .order_by(CasePlan.created_at.desc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if plan is None:
         raise NotFoundError("Case plan", case_id)
 
@@ -249,14 +261,18 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
     from app.data.models.hr_case import ApprovalRequest
 
     approval = (
-        await session.execute(
-            select(ApprovalRequest).where(
-                ApprovalRequest.id == body.approval_id,
-                ApprovalRequest.case_id == case_id,
-                ApprovalRequest.tenant_id == service.tenant_id,
+        (
+            await session.execute(
+                select(ApprovalRequest).where(
+                    ApprovalRequest.id == body.approval_id,
+                    ApprovalRequest.case_id == case_id,
+                    ApprovalRequest.tenant_id == service.tenant_id,
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if approval is None:
         raise NotFoundError("Approval request", body.approval_id)
 
@@ -267,7 +283,9 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
     if real_executor is None:
         # No production executor wired for this tool yet: record intent, keep
         # case AWAITING_APPROVAL-consumed state, return explicit error.
-        raise AppError(f"No executor registered for {approval.tool_name}", code="TOOL_EXECUTOR_MISSING", status_code=501)
+        raise AppError(
+            f"No executor registered for {approval.tool_name}", code="TOOL_EXECUTOR_MISSING", status_code=501
+        )
 
     try:
         outcome = await execute_approved_write(service, case_id, body.approval_id, body.request_id, real_executor)
@@ -285,7 +303,13 @@ async def case_events(case_id: str, request: Request, session: AsyncSession = De
     events = await service.list_events(case_id)
     return {
         "events": [
-            {"seq": e.seq, "type": e.event_type, "actor": e.actor, "payload": json_loads_safe(e.payload_json), "at": e.created_at.isoformat() if e.created_at else None}
+            {
+                "seq": e.seq,
+                "type": e.event_type,
+                "actor": e.actor,
+                "payload": json_loads_safe(e.payload_json),
+                "at": e.created_at.isoformat() if e.created_at else None,
+            }
             for e in events
         ]
     }
@@ -317,36 +341,60 @@ async def get_agent_run_trace(case_id: str, run_id: str, request: Request, sessi
     from app.data.models.hr_case import AgentRun, ApprovalRequest, CasePlan, ToolExecution
 
     run = (
-        await session.execute(
-            select(AgentRun).where(AgentRun.id == run_id, AgentRun.case_id == case_id, AgentRun.tenant_id == service.tenant_id)
+        (
+            await session.execute(
+                select(AgentRun).where(
+                    AgentRun.id == run_id, AgentRun.case_id == case_id, AgentRun.tenant_id == service.tenant_id
+                )
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if run is None:
         raise NotFoundError("Agent run", run_id)
 
     plan = (
-        await session.execute(
-            select(CasePlan).where(CasePlan.agent_run_id == run_id, CasePlan.tenant_id == service.tenant_id).order_by(CasePlan.created_at.desc())
+        (
+            await session.execute(
+                select(CasePlan)
+                .where(CasePlan.agent_run_id == run_id, CasePlan.tenant_id == service.tenant_id)
+                .order_by(CasePlan.created_at.desc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
     executions = (
-        await session.execute(
-            select(ToolExecution).where(ToolExecution.agent_run_id == run_id, ToolExecution.tenant_id == service.tenant_id).order_by(ToolExecution.created_at.asc())
+        (
+            await session.execute(
+                select(ToolExecution)
+                .where(ToolExecution.agent_run_id == run_id, ToolExecution.tenant_id == service.tenant_id)
+                .order_by(ToolExecution.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     approvals = (
-        await session.execute(
-            select(ApprovalRequest).where(
-                ApprovalRequest.case_id == case_id,
-                ApprovalRequest.tenant_id == service.tenant_id,
-                # HRCASE-02: only approvals this run requested are part of its
-                # trace; another run's approvals must not leak into it.
-                or_(ApprovalRequest.requested_by.is_(None), ApprovalRequest.requested_by == run_id),
-            ).order_by(ApprovalRequest.created_at.asc())
+        (
+            await session.execute(
+                select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.case_id == case_id,
+                    ApprovalRequest.tenant_id == service.tenant_id,
+                    # HRCASE-02: only approvals this run requested are part of its
+                    # trace; another run's approvals must not leak into it.
+                    or_(ApprovalRequest.requested_by.is_(None), ApprovalRequest.requested_by == run_id),
+                )
+                .order_by(ApprovalRequest.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     events = await service.list_events(case_id)
     run_events = [e for e in events if e.agent_run_id == run_id]

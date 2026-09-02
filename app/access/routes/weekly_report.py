@@ -267,6 +267,7 @@ async def get_history(
 
     reports = []
     for row in rows:
+
         def _parse_list(raw: str | None) -> list:
             if not raw:
                 return []

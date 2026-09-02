@@ -15,7 +15,13 @@ PARAMETERIZED_SCENARIOS = ("voice_insight", "weekly_report", "culture_content")
 
 
 def test_five_scenarios_with_50_samples_each():
-    assert set(gd.GOLDEN_DATASETS) == {"policy_qa", "interview_digest", "voice_insight", "weekly_report", "culture_content"}
+    assert set(gd.GOLDEN_DATASETS) == {
+        "policy_qa",
+        "interview_digest",
+        "voice_insight",
+        "weekly_report",
+        "culture_content",
+    }
     for scenario_id, samples in gd.GOLDEN_DATASETS.items():
         assert len(samples) == 50, scenario_id
     assert sum(len(s) for s in gd.GOLDEN_DATASETS.values()) == 250

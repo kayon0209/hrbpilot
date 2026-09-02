@@ -27,6 +27,7 @@ router = APIRouter(tags=["employee-requests"])
 
 # ---- employee surface: own requests only ----
 
+
 @router.post("/api/my-requests")
 @require_auth
 async def file_request(body: CreateRequestBody, request: Request):
@@ -55,6 +56,7 @@ async def my_request_detail(request_id: str, request: Request):
 
 
 # ---- HR triage surface: capability-gated (hrbp / hr_manager) ----
+
 
 @router.get("/api/hr-requests")
 @require_auth
@@ -91,6 +93,4 @@ async def retry_delivery_attempt(request_id: str, attempt_id: str, request: Requ
     tenant_id = require_tenant_id(request)
     actor_id = getattr(request.state, "user_id", "unknown")
     actor_role = getattr(request.state, "user_role", "employee")
-    return (
-        await retry_hr_delivery(tenant_id, actor_id, actor_role, request_id, attempt_id)
-    ).model_dump()
+    return (await retry_hr_delivery(tenant_id, actor_id, actor_role, request_id, attempt_id)).model_dump()

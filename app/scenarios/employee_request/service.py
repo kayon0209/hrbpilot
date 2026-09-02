@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC
 from hashlib import sha256
+from typing import cast
 
 from pydantic import BaseModel, Field
 
@@ -193,15 +194,7 @@ async def hr_triage(
             filters.append(EmployeeRequest.created_by.in_(visible_user_ids))
         else:
             raise NotFoundError("Request", request_id)
-        row = (
-            (
-                await db.execute(
-                    select(EmployeeRequest).where(*filters)
-                )
-            )
-            .scalars()
-            .first()
-        )
+        row = (await db.execute(select(EmployeeRequest).where(*filters))).scalars().first()
         if row is None:
             raise NotFoundError("Request", request_id)
         row.status = body.status
@@ -311,7 +304,7 @@ async def enqueue_wecom_delivery(db, tenant_id: str, request, body: HrTriageBody
         .on_conflict_do_nothing(constraint="uq_connector_delivery_attempt_business_version")
         .returning(ConnectorDeliveryAttempt.id)
     )
-    return await db.scalar(statement)
+    return cast(str | None, await db.scalar(statement))
 
 
 async def deliver_wecom_attempt(tenant_id: str, attempt_id: str, *, gateway=None) -> DeliveryAttemptView:
@@ -367,9 +360,7 @@ async def deliver_wecom_attempt(tenant_id: str, attempt_id: str, *, gateway=None
                 # bundle is intentionally never decrypted or reused as outbound
                 # authorization by the local simulator.
                 token = await simulator.get_token("local-simulator", "local-only")
-                response = await simulator.send_text(
-                    token.value, "0", attempt.recipient_ref, attempt.message_content
-                )
+                response = await simulator.send_text(token.value, "0", attempt.recipient_ref, attempt.message_content)
                 if response.errcode == 42001:
                     token = await simulator.get_token("local-simulator", "local-only")
                     response = await simulator.send_text(
@@ -480,27 +471,24 @@ async def hr_list_open(tenant_id: str, actor_id: str, actor_role: str) -> list[d
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(EmployeeRequest, DataSource.platform, DataSource.name)
-                    .outerjoin(
-                        DataSource,
-                        and_(
-                            DataSource.tenant_id == EmployeeRequest.tenant_id,
-                            DataSource.id == EmployeeRequest.connector_source_id,
-                        ),
-                    )
-                    .where(
-                        EmployeeRequest.tenant_id == tenant_id,
-                        EmployeeRequest.status != "resolved",
-                        scope_filter,
-                    )
-                    .order_by(EmployeeRequest.updated_at.desc())
-                    .limit(100)
+            await db.execute(
+                select(EmployeeRequest, DataSource.platform, DataSource.name)
+                .outerjoin(
+                    DataSource,
+                    and_(
+                        DataSource.tenant_id == EmployeeRequest.tenant_id,
+                        DataSource.id == EmployeeRequest.connector_source_id,
+                    ),
                 )
+                .where(
+                    EmployeeRequest.tenant_id == tenant_id,
+                    EmployeeRequest.status != "resolved",
+                    scope_filter,
+                )
+                .order_by(EmployeeRequest.updated_at.desc())
+                .limit(100)
             )
-            .all()
-        )
+        ).all()
         request_ids = [row.id for row, _platform, _source_name in rows]
         deliveries_by_request: dict[str, object] = {}
         if request_ids:
@@ -562,17 +550,14 @@ async def hr_list_assignees(tenant_id: str, manager_id: str, manager_role: str) 
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(User.id, User.name, User.email).where(
-                        User.tenant_id == tenant_id,
-                        User.id.in_(visible_user_ids),
-                        User.role == "hrbp",
-                    )
+            await db.execute(
+                select(User.id, User.name, User.email).where(
+                    User.tenant_id == tenant_id,
+                    User.id.in_(visible_user_ids),
+                    User.role == "hrbp",
                 )
             )
-            .all()
-        )
+        ).all()
     return [{"user_id": r[0], "name": r[1], "email": r[2]} for r in rows]
 
 

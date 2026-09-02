@@ -61,9 +61,33 @@ async def _seed_tenant(tenant_id: str) -> dict[str, str]:
             [
                 OrgUnit(id=org_a_id, tenant_id=tenant_id, name="华东团队"),
                 OrgUnit(id=org_b_id, tenant_id=tenant_id, name="华南团队"),
-                User(id=hrbp_id, tenant_id=tenant_id, name="华东HRBP", email=f"{hrbp_id}@example.test", hashed_password="x", role="hrbp", org_unit_id=org_a_id),
-                User(id=peer_id, tenant_id=tenant_id, name="无组织HRBP", email=f"{peer_id}@example.test", hashed_password="x", role="hrbp", org_unit_id=None),
-                User(id=manager_id, tenant_id=tenant_id, name="经理", email=f"{manager_id}@example.test", hashed_password="x", role="hr_manager", org_unit_id=org_a_id),
+                User(
+                    id=hrbp_id,
+                    tenant_id=tenant_id,
+                    name="华东HRBP",
+                    email=f"{hrbp_id}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_a_id,
+                ),
+                User(
+                    id=peer_id,
+                    tenant_id=tenant_id,
+                    name="无组织HRBP",
+                    email=f"{peer_id}@example.test",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=None,
+                ),
+                User(
+                    id=manager_id,
+                    tenant_id=tenant_id,
+                    name="经理",
+                    email=f"{manager_id}@example.test",
+                    hashed_password="x",
+                    role="hr_manager",
+                    org_unit_id=org_a_id,
+                ),
             ]
         )
         await db.flush()
@@ -431,7 +455,10 @@ async def test_concurrent_completion_cannot_exceed_total_units(client: TestClien
         async def advance() -> int:
             await barrier.wait()
             return await _real_http_patch(
-                tenant_id, token, task_id, {"completed_units": 2},
+                tenant_id,
+                token,
+                task_id,
+                {"completed_units": 2},
             )
 
         codes = await _asyncio.gather(*(advance() for _ in range(4)))
@@ -585,9 +612,7 @@ async def test_cross_tenant_parent_binding_is_rejected_by_the_database() -> None
     child_id = str(uuid4())
     try:
         async with engine.begin() as conn:
-            await conn.execute(
-                sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_a}
-            )
+            await conn.execute(sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_a})
             # seed a parent in tenant A
             parent_id = str(uuid4())
             await conn.execute(
@@ -599,9 +624,7 @@ async def test_cross_tenant_parent_binding_is_rejected_by_the_database() -> None
             )
         # Switch to tenant B context and try to bind a child to tenant A's parent.
         async with engine.begin() as conn:
-            await conn.execute(
-                sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_b}
-            )
+            await conn.execute(sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_b})
             try:
                 await conn.execute(
                     sa_text(
@@ -610,26 +633,19 @@ async def test_cross_tenant_parent_binding_is_rejected_by_the_database() -> None
                     ),
                     {"id": child_id, "t": tenant_b, "c": ids_b["hrbp"], "o": ids_b["hrbp"], "p": parent_id},
                 )
-                raise AssertionError(
-                    "database accepted a cross-tenant parent binding — composite FK missing"
-                )
+                raise AssertionError("database accepted a cross-tenant parent binding — composite FK missing")
             except AssertionError:
                 raise
             except Exception as exc:
                 # Expected: FK/unique violation or RLS — anything that rejects is fine.
-                assert any(
-                    token in str(exc)
-                    for token in ("fk_work_tasks_tenant_parent", "foreign key", "violates")
-                ), f"unexpected rejection reason: {exc}"
+                assert any(token in str(exc) for token in ("fk_work_tasks_tenant_parent", "foreign key", "violates")), (
+                    f"unexpected rejection reason: {exc}"
+                )
     finally:
         async with engine.begin() as conn:
-            await conn.execute(
-                sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_a}
-            )
+            await conn.execute(sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_a})
             await conn.execute(sa_text("DELETE FROM work_tasks WHERE tenant_id = :t"), {"t": tenant_a})
-            await conn.execute(
-                sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_b}
-            )
+            await conn.execute(sa_text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_b})
             await conn.execute(sa_text("DELETE FROM work_tasks WHERE tenant_id = :t"), {"t": tenant_b})
         await _cleanup(tenant_a)
         await _cleanup(tenant_b)

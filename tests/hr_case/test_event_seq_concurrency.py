@@ -29,8 +29,14 @@ async def test_concurrent_event_appends_get_distinct_monotonic_seqs() -> None:
     case_id = ""
     try:
         setup.add(
-            User(id=user_id, tenant_id=tenant_id, name="seq经理", email=f"seq-{tenant_id}@example.invalid",
-                 hashed_password="x", role="hr_manager")
+            User(
+                id=user_id,
+                tenant_id=tenant_id,
+                name="seq经理",
+                email=f"seq-{tenant_id}@example.invalid",
+                hashed_password="x",
+                role="hr_manager",
+            )
         )
         await setup.flush()
         service = HRCaseService(setup, tenant_id, actor="system")
@@ -54,11 +60,7 @@ async def test_concurrent_event_appends_get_distinct_monotonic_seqs() -> None:
 
         verify = await make_tenant_session(tenant_id)
         try:
-            seqs = (
-                await verify.execute(
-                    select(CaseEvent.seq).where(CaseEvent.case_id == case_id)
-                )
-            ).scalars().all()
+            seqs = (await verify.execute(select(CaseEvent.seq).where(CaseEvent.case_id == case_id))).scalars().all()
             assert len(seqs) == len(set(seqs)), "duplicate seq under concurrency"
             assert sorted(seqs) == list(range(1, len(seqs) + 1))
         finally:

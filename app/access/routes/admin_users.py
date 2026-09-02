@@ -62,13 +62,7 @@ async def list_users(request: Request):
             )
         ).all()
         org_rows = (
-            (
-                await db.execute(
-                    select(OrgUnit)
-                    .where(OrgUnit.tenant_id == tenant_id)
-                    .order_by(OrgUnit.name, OrgUnit.id)
-                )
-            )
+            (await db.execute(select(OrgUnit).where(OrgUnit.tenant_id == tenant_id).order_by(OrgUnit.name, OrgUnit.id)))
             .scalars()
             .all()
         )
@@ -90,10 +84,7 @@ async def list_users(request: Request):
             }
             for user, org_name in rows
         ],
-        "org_units": [
-            {"org_unit_id": org.id, "name": org.name, "parent_id": org.parent_id}
-            for org in org_rows
-        ],
+        "org_units": [{"org_unit_id": org.id, "name": org.name, "parent_id": org.parent_id} for org in org_rows],
     }
 
 
@@ -395,9 +386,7 @@ async def replace_manager_scopes(manager_id: str, body: ReplaceManagerScopesBody
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        manager = await db.scalar(
-            select(User).where(User.tenant_id == tenant_id, User.id == manager_id)
-        )
+        manager = await db.scalar(select(User).where(User.tenant_id == tenant_id, User.id == manager_id))
         if manager is None:
             raise NotFoundError("User", manager_id)
         if manager.role != "hr_manager":

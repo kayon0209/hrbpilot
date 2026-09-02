@@ -98,9 +98,7 @@ class Settings(BaseSettings):
                     "JWT_SECRET must be a non-default value of at least 32 characters in production or staging"
                 )
             if self.connector_master_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=":
-                raise ValueError(
-                    "CONNECTOR_MASTER_KEY must be a real 32-byte base64 key in production or staging"
-                )
+                raise ValueError("CONNECTOR_MASTER_KEY must be a real 32-byte base64 key in production or staging")
             if not self.llm_api_key or self.llm_api_key == "change-me":
                 raise ValueError("LLM_API_KEY must be configured in production or staging")
             if not self.effective_embedding_api_key or not self.embedding_base_url:

@@ -12,7 +12,7 @@ from app.shared.errors import AuthError
 
 # A real 32-byte master key for hermetic production Settings construction
 # (enforced since the connector backbone added credential encryption).
-REAL_MASTER_KEY = __import__('base64').urlsafe_b64encode(b'hermetic-master-key-32-bytes-ok!'[:32])
+REAL_MASTER_KEY = __import__("base64").urlsafe_b64encode(b"hermetic-master-key-32-bytes-ok!"[:32])
 
 
 async def test_database_login_returns_tokens_on_valid_credentials(monkeypatch) -> None:

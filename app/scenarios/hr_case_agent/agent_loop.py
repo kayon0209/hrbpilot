@@ -161,12 +161,16 @@ async def execute_approved_write(
     from app.data.models.hr_case import ApprovalRequest
 
     approval = (
-        await service.session.execute(
-            __import__("sqlalchemy").select(ApprovalRequest).where(
-                ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == service.tenant_id
+        (
+            await service.session.execute(
+                __import__("sqlalchemy")
+                .select(ApprovalRequest)
+                .where(ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == service.tenant_id)
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if approval is None:
         raise NotFoundError("Approval request", approval_id)
 
@@ -198,9 +202,7 @@ async def execute_approved_write(
         return {"status": "failed", "error_code": e.code, "execution_id": execution.id}
 
     # ---- Step 3b: success recorded in a second transaction. ----
-    await service.finish_tool_execution(
-        execution.id, ok=True, result_summary=str(outcome.get("summary", ""))[:500]
-    )
+    await service.finish_tool_execution(execution.id, ok=True, result_summary=str(outcome.get("summary", ""))[:500])
     await service.transition_case(case_id, case_state.RESOLVED, reason=f"{approval.tool_name} done")
     await service.session.commit()
     return {"status": "done", "execution_id": execution.id, "summary": outcome.get("summary", "")}

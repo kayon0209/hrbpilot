@@ -92,7 +92,9 @@ class TokenLedgerEntry(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     measured: Mapped[bool] = mapped_column(nullable=False, default=False)  # True = real usage, False = estimate
-    settlement_state: Mapped[str] = mapped_column(String(12), nullable=False, default="SETTLED")  # RESERVE|SETTLED|REFUNDED
+    settlement_state: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="SETTLED"
+    )  # RESERVE|SETTLED|REFUNDED
 
     def __repr__(self) -> str:
         return f"<TokenLedgerEntry id={self.id} req={self.request_id} total={self.total_tokens}>"
