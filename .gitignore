@@ -61,6 +61,11 @@ _shot_*.png
 remove_secret.py
 replace-secrets.txt
 
+# --- Local scratch / personal build artifacts (resume production, etc.) ---
+tmp/
+output/
+err.txt
+
 # --- Local agent/tooling config (machine-specific paths; not shared) ---
 .ignore
 AGENTS.md

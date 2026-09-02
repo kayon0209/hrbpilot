@@ -298,8 +298,12 @@ async def _collect_knowledge_feedback(tenant_id: str, actor_id: str, actor_role:
 
     from app.data.database import get_session_factory
     from app.data.models.scenarios import KnowledgeFeedbackCandidate
+    from app.scenarios.knowledge_feedback.service import _candidate_scope_filter, _visible_scope
 
     if actor_role != "hr_manager":
+        return
+    visible_user_ids, visible_org_unit_ids = await _visible_scope(tenant_id, actor_id, actor_role)
+    if not visible_user_ids:
         return
     factory = get_session_factory()
     async with factory() as db:
@@ -311,6 +315,11 @@ async def _collect_knowledge_feedback(tenant_id: str, actor_id: str, actor_role:
                     .where(
                         KnowledgeFeedbackCandidate.tenant_id == tenant_id,
                         KnowledgeFeedbackCandidate.status == "open",
+                        _candidate_scope_filter(
+                            KnowledgeFeedbackCandidate,
+                            visible_user_ids,
+                            visible_org_unit_ids,
+                        ),
                     )
                     .order_by(KnowledgeFeedbackCandidate.updated_at.desc())
                     .limit(10)
@@ -335,6 +344,64 @@ async def _collect_knowledge_feedback(tenant_id: str, actor_id: str, actor_role:
         )
 
 
+async def _collect_work_tasks(
+    tenant_id: str, visible_user_ids: set[str], summaries: list[WorkSummary]
+) -> None:
+    """User-managed multi-day tasks, including independently completable subtasks."""
+    from sqlalchemy import or_, select
+
+    from app.data.database import get_session_factory
+    from app.data.models.user import User
+    from app.data.models.work_task import WorkTask
+
+    if not visible_user_ids:
+        return
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        rows = (
+            await db.execute(
+                select(WorkTask, User.name)
+                .join(User, User.id == WorkTask.owner_user_id)
+                .where(
+                    WorkTask.tenant_id == tenant_id,
+                    WorkTask.status != "cancelled",
+                    or_(
+                        WorkTask.created_by.in_(visible_user_ids),
+                        WorkTask.owner_user_id.in_(visible_user_ids),
+                    ),
+                )
+                .order_by(WorkTask.updated_at.desc())
+                .limit(100)
+            )
+        ).all()
+
+    status_labels = {
+        "open": "处理中",
+        "in_progress": "处理中",
+        "waiting": "待确认",
+        "completed": "已完成",
+    }
+    for row, owner_name in rows:
+        summaries.append(
+            WorkSummary(
+                work_id=row.id,
+                work_type="work_task",
+                title=row.title,
+                business_status=status_labels.get(row.status, "处理中"),
+                next_action=row.next_action or ("回看完成结果" if row.status == "completed" else "继续处理"),
+                resume_target="/tasks",
+                updated_at=_iso(row.completed_at or row.updated_at),
+                due_at=_iso(row.due_at),
+                owner=owner_name,
+                waiting_for=row.waiting_for,
+                progress_mode=row.progress_mode,
+                completed_units=row.completed_units if row.progress_mode == "units" else None,
+                total_units=row.total_units if row.progress_mode == "units" else None,
+            )
+        )
+
+
 async def collect_work_summaries(tenant_id: str, user_id: str, user_role: str) -> WorkSummaries:
     """Aggregate the user's work across scenario tables, newest first."""
     from app.access.object_scope import resolve_visible_user_ids
@@ -347,6 +414,7 @@ async def collect_work_summaries(tenant_id: str, user_id: str, user_role: str) -
     await _collect_policy_sessions(tenant_id, user_id, summaries)
     await _collect_employee_requests(tenant_id, user_id, user_role, summaries)
     await _collect_knowledge_feedback(tenant_id, user_id, user_role, summaries)
+    await _collect_work_tasks(tenant_id, visible_user_ids, summaries)
 
     summaries.sort(key=lambda s: s.updated_at or "", reverse=True)
 
@@ -355,16 +423,17 @@ async def collect_work_summaries(tenant_id: str, user_id: str, user_role: str) -
     seen_types: set[str] = set()
     deduped: list[WorkSummary] = []
     for s in summaries:
-        if s.work_type in seen_types:
+        if s.work_type != "work_task" and s.work_type in seen_types:
             continue
-        seen_types.add(s.work_type)
+        if s.work_type != "work_task":
+            seen_types.add(s.work_type)
         deduped.append(s)
     summaries = deduped
 
     today = datetime.now(UTC).date().isoformat()
     completed_today = [
         s for s in summaries if s.updated_at and s.updated_at[:10] == today and s.business_status == "已完成"
-    ][:5]
+    ][:20]
     # 继续上次工作: 最近一个可继续且属于当前用户的事项 (方案 §7.2 唯一主按钮).
     # Service queues (employee requests, knowledge feedback) are NOT resumable
     # drafts — they are new judgements waiting in their own action centers, so
@@ -382,7 +451,7 @@ async def collect_work_summaries(tenant_id: str, user_id: str, user_role: str) -
         for s in summaries
         if s.business_status in ("失败", "待确认", "处理中")
         and (continue_work is None or s.work_id != continue_work.work_id)
-    ][:6]
+    ][:50]
 
     return WorkSummaries(
         continue_work=continue_work,

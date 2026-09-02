@@ -82,11 +82,27 @@ async def test_knowledge_decision_is_durably_audited():
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        db.add(KnowledgeFeedbackCandidate(id=candidate_id, tenant_id=tenant_id, source_type="no_evidence", question="Q", occurrences=1, status="open"))
+        db.add(
+            User(
+                id=manager_id,
+                tenant_id=tenant_id,
+                name="Manager",
+                email=f"{manager_id}@example.com",
+                hashed_password="x",
+                role="hr_manager",
+            )
+        )
+        await db.flush()
+        db.add(KnowledgeFeedbackCandidate(id=candidate_id, tenant_id=tenant_id, source_user_id=manager_id, source_type="no_evidence", question="Q", occurrences=1, status="open"))
         await db.commit()
 
     try:
-        await decide_candidate(tenant_id, manager_id, DecideBody(candidate_id=candidate_id, decision="confirm", reason="制度缺口"))
+        await decide_candidate(
+            tenant_id,
+            manager_id,
+            "hr_manager",
+            DecideBody(candidate_id=candidate_id, decision="confirm", reason="制度缺口"),
+        )
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             event = (
@@ -108,4 +124,5 @@ async def test_knowledge_decision_is_durably_audited():
             db.info["tenant_id"] = tenant_id
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
             await db.execute(delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id))
+            await db.execute(delete(User).where(User.tenant_id == tenant_id))
             await db.commit()

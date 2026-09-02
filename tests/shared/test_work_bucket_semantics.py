@@ -148,6 +148,7 @@ async def test_open_employee_requests_reach_the_attention_list():
 async def test_open_knowledge_feedback_reaches_manager_attention():
     from app.data.database import get_session_factory
     from app.data.models.scenarios import KnowledgeFeedbackCandidate
+    from app.data.models.user import User
     from app.scenarios.work_summary.service import collect_work_summaries
 
     tenant_id = str(uuid4())
@@ -158,9 +159,21 @@ async def test_open_knowledge_feedback_reaches_manager_attention():
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         db.add(
+            User(
+                id=manager_id,
+                tenant_id=tenant_id,
+                name="Manager",
+                email=f"{manager_id}@example.com",
+                hashed_password="x",
+                role="hr_manager",
+            )
+        )
+        await db.flush()
+        db.add(
             KnowledgeFeedbackCandidate(
                 id=candidate_id,
                 tenant_id=tenant_id,
+                source_user_id=manager_id,
                 source_type="no_evidence",
                 question="试用期多久？",
                 occurrences=2,
@@ -181,4 +194,5 @@ async def test_open_knowledge_feedback_reaches_manager_attention():
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
             await db.execute(delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id))
+            await db.execute(delete(User).where(User.tenant_id == tenant_id))
             await db.commit()

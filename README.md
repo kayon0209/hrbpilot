@@ -297,7 +297,7 @@ docker compose up -d --build
 
 启动后访问：
 
-- Web 工作台：`http://localhost:3000`
+- Web 工作台：`http://localhost:3001`
 - FastAPI / OpenAPI：`http://localhost:8001/docs`
 - MinIO 控制台：`http://localhost:9001`
 

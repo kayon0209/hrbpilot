@@ -136,6 +136,7 @@ class CultureContentOrchestrator:
                 db.info["tenant_id"] = tenant_id
                 record = CultureContent(
                     tenant_id=tenant_id,
+                    created_by=user_id,
                     keywords_json=json.dumps(content.keywords_used, ensure_ascii=False),
                     news_article=content.news_article,
                     group_notice=content.group_notice,

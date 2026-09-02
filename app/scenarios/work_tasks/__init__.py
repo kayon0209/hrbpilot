@@ -1,0 +1,1 @@
+"""Persistent work-task scenario."""

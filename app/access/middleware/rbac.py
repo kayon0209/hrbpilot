@@ -122,6 +122,9 @@ PUBLIC_PATHS = [
     "/api/auth/login",
     "/api/auth/refresh",
     "/api/auth/dev-users",
+    # Provider callbacks carry their own platform signature (SHA1/HMAC) and
+    # are verified inside the route before any state is touched.
+    "/api/connector-webhooks",
 ]
 
 
@@ -155,7 +158,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        if path in PUBLIC_PATHS or path.startswith("/docs"):
+        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks"):
             return await call_next(request)
 
         role = self._resolve_role(request)

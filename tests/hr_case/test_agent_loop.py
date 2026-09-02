@@ -203,7 +203,7 @@ async def test_approved_write_executes_exactly_once(session_factory):
         approval = await service.request_approval(
             case_id, "create_hr_case", {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"}, plan_id=plan.id
         )
-        await service.decide_approval(approval.id, "u9", "approve", "同意", role="hr_manager")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", "同意", role="hr_manager")
         await session.commit()
 
         async def executor(params: dict) -> dict:

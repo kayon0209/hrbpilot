@@ -8,7 +8,7 @@ All have tenant_id for RLS.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -16,11 +16,17 @@ from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryK
 
 class AsyncTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "async_tasks"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_async_tasks_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
+            name="fk_async_tasks_tenant_creator",
+        ),
+    )
 
     type: Mapped[str] = mapped_column(String(50), nullable=False)  # voice_insight_analysis | document_ingestion | ...
-    created_by: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True, index=True
-    )
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="pending"
     )  # pending(排队中) | running(正在分析) | completed | partial | failed — stage words only, never fake percentages

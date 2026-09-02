@@ -72,7 +72,7 @@ async def make_case(session_factory, tenant="t1", **overrides):
     async with session_factory() as session:
         service = HRCaseService(session, tenant)
         case = await service.create_case(
-            created_by="u1",
+            created_by=overrides.get("created_by", "u1"),
             subject_ref=overrides.get("subject_ref", "EMP-SYN-001"),
             category=overrides.get("category", "overtime"),
             title=overrides.get("title", "加班费争议"),
@@ -107,7 +107,7 @@ async def test_full_lifecycle_through_service(session_factory):
             plan_id=plan.id,
         )
         decided = await service.decide_approval(
-            approval.id, approver_id="u9", decision="approve", reason="ok", role="hr_manager"
+            case_id, approval.id, approver_id="u9", decision="approve", reason="ok", role="hr_manager"
         )
         assert decided.status == "APPROVED"
 
@@ -134,6 +134,47 @@ async def test_cross_tenant_access_is_not_found(session_factory):
             await other.list_events(case_id)
 
 
+async def test_same_tenant_hrbp_cannot_load_another_users_case(session_factory):
+    """Removing the creator-scope predicate would expose a peer's HR case."""
+    case_id = await make_case(session_factory, created_by="u1")
+
+    async with session_factory() as session:
+        peer = HRCaseService(session, "t1", actor="user:u2|role:hrbp")
+
+        with pytest.raises(NotFoundError):
+            await peer.get_case(case_id)
+
+
+async def test_approval_decision_rejects_an_approval_from_another_case(session_factory):
+    """Removing the path-case binding would let Case A decide Case B's approval."""
+    case_a_id = await make_case(session_factory, created_by="u1")
+    case_b_id = await make_case(session_factory, created_by="u1")
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1", actor="user:u1|role:hr_manager")
+        await service.transition_case(case_b_id, "TRIAGED")
+        await service.transition_case(case_b_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_b_id, steps=[])
+        approval = await service.request_approval(
+            case_b_id,
+            "create_hr_case",
+            {"title": "x", "subject_ref": "S1", "category": "overtime"},
+            plan_id=plan.id,
+        )
+
+        with pytest.raises(NotFoundError):
+            await service.decide_approval(
+                case_a_id,
+                approval.id,
+                approver_id="u1",
+                decision="approve",
+                reason=None,
+                role="hr_manager",
+            )
+
+        assert approval.status == "PENDING"
+
+
 async def test_transition_rejected_by_state_machine(session_factory):
     case_id = await make_case(session_factory)
     async with session_factory() as session:
@@ -152,7 +193,7 @@ async def test_duplicate_request_id_is_idempotent(session_factory):
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )
-        await service.decide_approval(approval.id, "u9", "approve", None, role="admin")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
 
         first = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-dup", approval_id=approval.id
@@ -192,7 +233,7 @@ async def test_rejected_approval_cannot_execute(session_factory):
         approval = await service.request_approval(
             case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
         )
-        await service.decide_approval(approval.id, "u9", "reject", "不需要建单", role="hr_manager")
+        await service.decide_approval(case_id, approval.id, "u9", "reject", "不需要建单", role="hr_manager")
         with pytest.raises(ApprovalError):
             await service.begin_tool_execution(
                 case_id, "create_hr_case", {"title": "x"}, request_id="req-3", approval_id=approval.id
@@ -210,7 +251,7 @@ async def test_expired_approval_rejected(session_factory):
             case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id, ttl_seconds=-1
         )
         with pytest.raises(ApprovalError):
-            await service.decide_approval(approval.id, "u9", "approve", None, role="admin")
+            await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
 
 
 async def test_employee_cannot_decide_approvals(session_factory):
@@ -224,7 +265,7 @@ async def test_employee_cannot_decide_approvals(session_factory):
             case_id, "create_hr_case", {"title": "x", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
         )
         with pytest.raises(CasePermissionDeniedError):
-            await service.decide_approval(approval.id, "u2", "approve", None, role="employee")
+            await service.decide_approval(case_id, approval.id, "u2", "approve", None, role="employee")
 
 
 async def test_params_mismatch_between_approval_and_execution(session_factory):
@@ -237,7 +278,7 @@ async def test_params_mismatch_between_approval_and_execution(session_factory):
         approval = await service.request_approval(
             case_id, "create_hr_case", {"title": "真标题", "subject_ref": "S1", "category": "overtime"}, plan_id=plan.id
         )
-        await service.decide_approval(approval.id, "u9", "approve", None, role="hr_manager")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="hr_manager")
         with pytest.raises(ApprovalError):
             await service.begin_tool_execution(
                 case_id,
@@ -287,7 +328,7 @@ async def test_failed_execution_cannot_rerun_under_consumed_approval(session_fac
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )
-        await service.decide_approval(approval.id, "u9", "approve", None, role="admin")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
 
         first = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-f", approval_id=approval.id

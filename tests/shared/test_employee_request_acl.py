@@ -131,6 +131,8 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
 
     from app.data.database import get_engine, get_session_factory
     from app.data.models.access_scope import ManagerOrgScope, OrgUnit
+    from app.data.models.connector import ConnectorEventLog
+    from app.data.models.data_source import DataSource
     from app.data.models.scenarios import EmployeeRequest
     from app.data.models.user import User
     from app.scenarios.employee_request.service import HrTriageBody, hr_list_open, hr_triage
@@ -140,7 +142,7 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
     tenant_id = str(uuid4())
     org_a, org_b = str(uuid4()), str(uuid4())
     manager_id, hr_a, hr_b, employee_a, employee_b = [str(uuid4()) for _ in range(5)]
-    request_a, request_b = str(uuid4()), str(uuid4())
+    request_a, request_b, source_id = str(uuid4()), str(uuid4()), str(uuid4())
     factory = get_session_factory()
 
     async with factory() as db:
@@ -158,9 +160,46 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
         )
         await db.flush()
         db.add(ManagerOrgScope(tenant_id=tenant_id, manager_user_id=manager_id, org_unit_id=org_a))
+        db.add(
+            DataSource(
+                id=source_id,
+                tenant_id=tenant_id,
+                name="WeCom employee service",
+                platform="wecom",
+                purpose="Receive employee requests",
+                authorized_scope="Direct messages",
+                content_types='["messages"]',
+                data_destination="Employee requests",
+                event_route="employee_request",
+                created_by=manager_id,
+            )
+        )
+        await db.flush()
+        db.add(
+            ConnectorEventLog(
+                tenant_id=tenant_id,
+                source_id=source_id,
+                external_event_id="msg:source-label-test",
+                event_type="text",
+                payload_digest="0" * 64,
+                received_at=datetime.now(UTC),
+                status="processed",
+            )
+        )
         db.add_all(
             [
-                EmployeeRequest(id=request_a, tenant_id=tenant_id, created_by=employee_a, request_type="other", title="A request", description="A private", status="submitted"),
+                EmployeeRequest(
+                    id=request_a,
+                    tenant_id=tenant_id,
+                    created_by=employee_a,
+                    request_type="other",
+                    title="A request",
+                    description="A private",
+                    status="submitted",
+                    connector_source_id=source_id,
+                    connector_external_event_id="msg:source-label-test",
+                    external_sender_id="wecom-employee-a",
+                ),
                 EmployeeRequest(id=request_b, tenant_id=tenant_id, created_by=employee_b, request_type="other", title="B request", description="B private", status="submitted"),
             ]
         )
@@ -172,6 +211,7 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
         except TypeError:
             pytest.fail("HR request queries must receive actor identity and role")
         assert {row["request_id"] for row in manager_rows} == {request_a}
+        assert manager_rows[0]["connector_source_label"] == "企业微信 · WeCom employee service"
         assert await hr_list_open(tenant_id, hr_a, "hrbp") == []
 
         await hr_triage(
@@ -230,6 +270,8 @@ async def test_triage_queue_requires_assignment_or_explicit_manager_scope():
 
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
             await db.execute(delete(EmployeeRequest).where(EmployeeRequest.tenant_id == tenant_id))
+            await db.execute(delete(ConnectorEventLog).where(ConnectorEventLog.tenant_id == tenant_id))
+            await db.execute(delete(DataSource).where(DataSource.tenant_id == tenant_id))
             await db.execute(delete(ManagerOrgScope).where(ManagerOrgScope.tenant_id == tenant_id))
             await db.execute(delete(User).where(User.tenant_id == tenant_id))
             await db.execute(delete(OrgUnit).where(OrgUnit.tenant_id == tenant_id))

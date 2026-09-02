@@ -17,10 +17,12 @@ import json
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
+from app.access.object_scope import resolve_visible_user_ids
 from app.data.database import get_db
 from app.scenarios.hr_case_agent import state as case_state
 from app.scenarios.hr_case_agent.agent_loop import execute_approved_write, run_plan
@@ -64,17 +66,23 @@ class ExecuteBody(BaseModel):
     request_id: str = Field(..., min_length=1, max_length=64)
 
 
-def _service(request: Request, session: AsyncSession) -> HRCaseService:
+async def _service(request: Request, session: AsyncSession) -> HRCaseService:
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     role = getattr(request.state, "user_role", "employee")
-    return HRCaseService(session, tenant_id, actor=f"user:{user_id}|role:{role}")
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, user_id, role)
+    return HRCaseService(
+        session,
+        tenant_id,
+        actor=f"user:{user_id}|role:{role}",
+        visible_user_ids=visible_user_ids,
+    )
 
 
 @router.post("")
 @require_auth
 async def create_case(body: CreateCaseBody, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     case = await service.create_case(
         created_by=getattr(request.state, "user_id", "unknown"),
         subject_ref=body.subject_ref,
@@ -90,7 +98,7 @@ async def create_case(body: CreateCaseBody, request: Request, session: AsyncSess
 @router.get("/{case_id}")
 @require_auth
 async def get_case(case_id: str, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     case = await service.get_case(case_id)
     return {
         "case_id": case.id,
@@ -128,7 +136,7 @@ def _default_plan_proposal(case) -> str:
 @router.post("/{case_id}/plan")
 @require_auth
 async def plan_case(case_id: str, body: PlanBody, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     case = await service.get_case(case_id)
     if requires_human_review(case.category, case.risk_level):
         # high risk: run evidence gathering then hand off — no write approval
@@ -159,7 +167,7 @@ async def plan_case(case_id: str, body: PlanBody, request: Request, session: Asy
 @router.post("/{case_id}/clarify")
 @require_auth
 async def clarify_case(case_id: str, body: ClarifyBody, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     case = await service.get_case(case_id)
     if case.status != case_state.NEEDS_CLARIFICATION:
         raise AppError(f"Case is {case.status}, clarification answers apply to NEEDS_CLARIFICATION", code="INVALID_STATE", status_code=409)
@@ -172,7 +180,7 @@ async def clarify_case(case_id: str, body: ClarifyBody, request: Request, sessio
 @require_auth
 async def run_case_plan(case_id: str, request: Request, session: AsyncSession = Depends(get_db)):
     """Execute the current plan: reads run now; a write step stops for approval."""
-    service = _service(request, session)
+    service = await _service(request, session)
     plan_row = await service.get_case(case_id)
     from sqlalchemy import select
 
@@ -206,10 +214,17 @@ async def run_case_plan(case_id: str, request: Request, session: AsyncSession = 
 @router.post("/{case_id}/approve")
 @require_auth
 async def approve_case(case_id: str, body: ApproveBody, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     role = getattr(request.state, "user_role", "employee")
     user_id = getattr(request.state, "user_id", "unknown")
-    approval = await service.decide_approval(body.approval_id, approver_id=user_id, decision=body.decision, reason=body.reason, role=role)
+    approval = await service.decide_approval(
+        case_id,
+        body.approval_id,
+        approver_id=user_id,
+        decision=body.decision,
+        reason=body.reason,
+        role=role,
+    )
     if body.decision == "reject":
         await service.transition_case(case_id, case_state.PLAN_READY, reason="approval rejected")
     await session.commit()
@@ -227,7 +242,7 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
         from app.scenarios.hr_case_agent.service import CasePermissionDeniedError
 
         raise CasePermissionDeniedError(f"Role {role} cannot execute write tools")
-    service = _service(request, session)
+    service = await _service(request, session)
 
     from sqlalchemy import select
 
@@ -235,7 +250,11 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
 
     approval = (
         await session.execute(
-            select(ApprovalRequest).where(ApprovalRequest.id == body.approval_id, ApprovalRequest.tenant_id == service.tenant_id)
+            select(ApprovalRequest).where(
+                ApprovalRequest.id == body.approval_id,
+                ApprovalRequest.case_id == case_id,
+                ApprovalRequest.tenant_id == service.tenant_id,
+            )
         )
     ).scalars().first()
     if approval is None:
@@ -262,7 +281,7 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
 @router.get("/{case_id}/events")
 @require_auth
 async def case_events(case_id: str, request: Request, session: AsyncSession = Depends(get_db)):
-    service = _service(request, session)
+    service = await _service(request, session)
     events = await service.list_events(case_id)
     return {
         "events": [
@@ -290,7 +309,7 @@ async def get_agent_run_trace(case_id: str, run_id: str, request: Request, sessi
     and the slice of case events belonging to this run — everything needed
     to reconstruct what the agent did and why.
     """
-    service = _service(request, session)
+    service = await _service(request, session)
     await service.get_case(case_id)  # tenant check
 
     from sqlalchemy import select
@@ -319,7 +338,13 @@ async def get_agent_run_trace(case_id: str, run_id: str, request: Request, sessi
 
     approvals = (
         await session.execute(
-            select(ApprovalRequest).where(ApprovalRequest.case_id == case_id, ApprovalRequest.tenant_id == service.tenant_id).order_by(ApprovalRequest.created_at.asc())
+            select(ApprovalRequest).where(
+                ApprovalRequest.case_id == case_id,
+                ApprovalRequest.tenant_id == service.tenant_id,
+                # HRCASE-02: only approvals this run requested are part of its
+                # trace; another run's approvals must not leak into it.
+                or_(ApprovalRequest.requested_by.is_(None), ApprovalRequest.requested_by == run_id),
+            ).order_by(ApprovalRequest.created_at.asc())
         )
     ).scalars().all()
 

@@ -93,7 +93,7 @@ async def journey_success(backend: FakeHRBackend) -> None:
         await session.commit()
         print(f"agent run → {outcome.status}, approval_id={outcome.approval_id}")
 
-        approved = await service.decide_approval(outcome.approval_id, "hr-manager-9", "approve", "情况属实，同意建单", role="hr_manager")
+        approved = await service.decide_approval(case.id, outcome.approval_id, "hr-manager-9", "approve", "情况属实，同意建单", role="hr_manager")
         await session.commit()
         print(f"HR 批准 → {approved.status}")
 
@@ -156,7 +156,7 @@ async def journey_recovery(backend: FakeHRBackend) -> None:
         await session.commit()
         print(f"agent run → {outcome.status}（写工具在审批门停下）")
 
-        approved = await service.decide_approval(outcome.approval_id, "hr-manager-9", "approve", "同意发送", role="hr_manager")
+        approved = await service.decide_approval(case.id, outcome.approval_id, "hr-manager-9", "approve", "同意发送", role="hr_manager")
         await session.commit()
         print(f"HR 批准 → {approved.status}")
 
@@ -181,7 +181,7 @@ async def journey_recovery(backend: FakeHRBackend) -> None:
         case_row = await service.get_case(case.id)
         print(f"当前状态: {case_row.status}")
         approval2 = await service.request_approval(case.id, "send_case_notification", {"channel": "in_app", "recipient_ref": "dept-hr", "template": "policy_update"})
-        await service.decide_approval(approval2.id, "hr-manager-9", "approve", "重试发送", role="hr_manager")
+        await service.decide_approval(case.id, approval2.id, "hr-manager-9", "approve", "重试发送", role="hr_manager")
         await session.commit()
         second = await agent_loop.execute_approved_write(service, case.id, approval2.id, "notify-req-2", backend.send_notification)
         await session.commit()
