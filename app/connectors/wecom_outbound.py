@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
 
-
 FaultMode = Literal["none", "timeout", "invalid_token_once"]
 
 

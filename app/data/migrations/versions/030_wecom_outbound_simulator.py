@@ -12,7 +12,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-
 revision: str = "030_wecom_outbound_simulator"
 down_revision: str | None = "029_wecom_callback_config"
 branch_labels: str | Sequence[str] | None = None

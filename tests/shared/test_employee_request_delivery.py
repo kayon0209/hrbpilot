@@ -13,7 +13,6 @@ from sqlalchemy import delete, select, text
 
 from app.data.database import make_tenant_session
 
-
 pytestmark = pytest.mark.integration
 
 
