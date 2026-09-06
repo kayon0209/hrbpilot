@@ -8,6 +8,8 @@ import styles from './PolicyQaPage.module.css'
 /**
  * 制度问答 (spec §7.3) — session history, follow-up questions with the
  * original context, and interrupted-session recovery via ?session=.
+ * The backend now actually loads structured history into the model, and the
+ * response meta shows whether this turn used prior context.
  *
  * Evidence binds to the round that produced it; no confidence percentages.
  */
@@ -22,7 +24,7 @@ export function PolicyQaPage() {
   const [sources, setSources] = useState<PolicySource[]>([])
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'done' | 'error'>('idle')
   const [error, setError] = useState('')
-  const [meta, setMeta] = useState<{ message_id?: string; has_evidence?: boolean }>({})
+  const [meta, setMeta] = useState<{ message_id?: string; has_evidence?: boolean; history_used?: boolean; history_message_count?: number }>({})
   const [feedbackSent, setFeedbackSent] = useState(false)
   const [feedbackError, setFeedbackError] = useState('')
   const [answerIncomplete, setAnswerIncomplete] = useState(false)
@@ -51,6 +53,8 @@ export function PolicyQaPage() {
         setMeta({
           message_id: lastAssistant.message_id,
           has_evidence: (lastAssistant.citations?.length ?? 0) > 0,
+          history_used: false,
+          history_message_count: 0,
         })
         setAnswerIncomplete(false)
         setPhase('done')
@@ -89,7 +93,12 @@ export function PolicyQaPage() {
           if (event.type === 'complete') {
             doneMessageId = event.data.message_id
             doneSessionId = event.data.session_id
-            setMeta({ message_id: doneMessageId, has_evidence: event.data.has_evidence })
+            setMeta({
+              message_id: doneMessageId,
+              has_evidence: event.data.has_evidence,
+              history_used: event.data.history_used,
+              history_message_count: event.data.history_message_count,
+            })
             setPhase('done')
           }
           if (event.type === 'error') {
@@ -189,7 +198,7 @@ export function PolicyQaPage() {
           <p className={styles.incompleteNote} role="status">
             回答未完整生成：以上内容可能缺少结论或下一步，请重新提问补全后再采用。
           </p>
-        )}{phase === 'done' && <div className={styles.feedback}>{feedbackError && <p role="alert">{feedbackError}</p>}{feedbackSent ? <span className={styles.feedbackThanks}>谢谢，已记录你的判断。</span> : correcting ? <><span>哪里需要改进？（可留空）</span><textarea rows={3} value={correction} onChange={e => setCorrection(e.target.value)} placeholder="例如：正确的处理流程应该是…" /><div><button className="primary-button" onClick={submitCorrection}>提交反馈</button><button className="secondary-button" onClick={() => { setCorrecting(false); setCorrection('') }}>取消</button></div></> : <><span>{meta.has_evidence === false ? '依据较少，建议结合其他来源判断。' : '这个回答有帮助吗？'}</span><button className="primary-button" onClick={() => sendFeedback('up')}>有帮助</button><button className="secondary-button" onClick={() => { setCorrecting(true); setCorrection('') }}>需改进</button></>}</div>}</section>
+        )}{answer && (meta.history_used || meta.history_message_count ? <p className={styles.historyNote} role="status">本轮已接入 {meta.history_message_count ?? 0} 条历史消息。</p> : <p className={styles.historyNote} role="status">本轮未使用历史消息。</p>)}{phase === 'done' && <div className={styles.feedback}>{feedbackError && <p role="alert">{feedbackError}</p>}{feedbackSent ? <span className={styles.feedbackThanks}>谢谢，已记录你的判断。</span> : correcting ? <><span>哪里需要改进？（可留空）</span><textarea rows={3} value={correction} onChange={e => setCorrection(e.target.value)} placeholder="例如：正确的处理流程应该是…" /><div><button className="primary-button" onClick={submitCorrection}>提交反馈</button><button className="secondary-button" onClick={() => { setCorrecting(false); setCorrection('') }}>取消</button></div></> : <><span>{meta.has_evidence === false ? '依据较少，建议结合其他来源判断。' : '这个回答有帮助吗？'}</span><button className="primary-button" onClick={() => sendFeedback('up')}>有帮助</button><button className="secondary-button" onClick={() => { setCorrecting(true); setCorrection('') }}>需改进</button></>}</div>}</section>
       </div>
     </div><EvidencePanel sources={sources} asked={phase !== 'idle' || !!answer} pending={phase === 'streaming'} />
   </main>

@@ -26,6 +26,7 @@ router = APIRouter(tags=["employee-requests"])
 
 # ---- employee surface: own requests only ----
 
+
 @router.post("/api/my-requests")
 @require_auth
 async def file_request(body: CreateRequestBody, request: Request):
@@ -54,6 +55,7 @@ async def my_request_detail(request_id: str, request: Request):
 
 
 # ---- HR triage surface: capability-gated (hrbp / hr_manager) ----
+
 
 @router.get("/api/hr-requests")
 @require_auth

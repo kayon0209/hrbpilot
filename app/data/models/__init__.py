@@ -3,6 +3,13 @@
 from app.data.models.access_scope import ManagerOrgScope, OrgUnit
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 from app.data.models.chat import ChatMessage, ChatSession
+from app.data.models.connector import (
+    ConnectorEventLog,
+    ConnectorIdentityBinding,
+    ConnectorIntakeEvent,
+    ConnectorSyncCursor,
+    OAuthNonce,
+)
 from app.data.models.data_source import DataSource
 from app.data.models.hr_case import (
     AgentRun,
@@ -38,6 +45,10 @@ __all__ = [
     "CasePlan",
     "ChatMessage",
     "ChatSession",
+    "ConnectorEventLog",
+    "ConnectorIdentityBinding",
+    "ConnectorIntakeEvent",
+    "ConnectorSyncCursor",
     "CultureContent",
     "DataSource",
     "Document",
@@ -52,6 +63,7 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
+    "OAuthNonce",
     "OrgUnit",
     "OutboxMessage",
     "Tenant",

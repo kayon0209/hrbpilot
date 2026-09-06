@@ -37,7 +37,7 @@ def normalize_doc_name(name: str | None) -> str:
     text = text.strip(_STRIP_CHARS)
     # Strip file extension only after punctuation stripping, e.g. ".pdf" / ".docx"
     dot = text.rfind(".")
-    if dot > 0 and (len(text) - dot) <= 5 and text[dot + 1:].isalnum():
+    if dot > 0 and (len(text) - dot) <= 5 and text[dot + 1 :].isalnum():
         text = text[:dot]
     return text.strip(_STRIP_CHARS)
 
@@ -101,10 +101,7 @@ def citation_completeness(citations: list[dict]) -> float | None:
     complete = 0
     for c in citations:
         has_doc = bool(normalize_doc_name(c.get("document_name") or c.get("doc") or ""))
-        has_binding = bool(
-            (c.get("section") or "").strip()
-            or (c.get("chunk_id") or "").strip()
-        )
+        has_binding = bool((c.get("section") or "").strip() or (c.get("chunk_id") or "").strip())
         has_snippet = bool((c.get("content_snippet") or c.get("quote") or "").strip())
         if has_doc and has_binding and has_snippet:
             complete += 1

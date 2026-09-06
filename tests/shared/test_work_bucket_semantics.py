@@ -29,7 +29,16 @@ async def test_continue_work_and_attention_are_mutually_exclusive():
 
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        db.add(User(id=actor_id, tenant_id=tenant_id, name="A", email=f"{actor_id}@example.com", hashed_password="x", role="hrbp"))
+        db.add(
+            User(
+                id=actor_id,
+                tenant_id=tenant_id,
+                name="A",
+                email=f"{actor_id}@example.com",
+                hashed_password="x",
+                role="hrbp",
+            )
+        )
         await db.flush()
         db.add(
             WeeklyReport(
@@ -130,7 +139,17 @@ async def test_open_employee_requests_reach_the_attention_list():
         other_hrbp = str(uuid4())
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
-            db.add(User(id=other_hrbp, tenant_id=tenant_id, name="H", email=f"{other_hrbp}@example.com", hashed_password="x", role="hrbp", org_unit_id=org_id))
+            db.add(
+                User(
+                    id=other_hrbp,
+                    tenant_id=tenant_id,
+                    name="H",
+                    email=f"{other_hrbp}@example.com",
+                    hashed_password="x",
+                    role="hrbp",
+                    org_unit_id=org_id,
+                )
+            )
             await db.commit()
         hrbp_view = await collect_work_summaries(tenant_id, other_hrbp, "hrbp")
         assert request_id not in [i.work_id for i in hrbp_view.attention]
@@ -148,6 +167,7 @@ async def test_open_employee_requests_reach_the_attention_list():
 async def test_open_knowledge_feedback_reaches_manager_attention():
     from app.data.database import get_session_factory
     from app.data.models.scenarios import KnowledgeFeedbackCandidate
+    from app.data.models.user import User
     from app.scenarios.work_summary.service import collect_work_summaries
 
     tenant_id = str(uuid4())
@@ -158,9 +178,21 @@ async def test_open_knowledge_feedback_reaches_manager_attention():
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         db.add(
+            User(
+                id=manager_id,
+                tenant_id=tenant_id,
+                name="Manager",
+                email=f"{manager_id}@example.com",
+                hashed_password="x",
+                role="hr_manager",
+            )
+        )
+        await db.flush()
+        db.add(
             KnowledgeFeedbackCandidate(
                 id=candidate_id,
                 tenant_id=tenant_id,
+                source_user_id=manager_id,
                 source_type="no_evidence",
                 question="试用期多久？",
                 occurrences=2,
@@ -180,5 +212,8 @@ async def test_open_knowledge_feedback_reaches_manager_attention():
     finally:
         async with factory() as db:
             db.info["tenant_id"] = tenant_id
-            await db.execute(delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id))
+            await db.execute(
+                delete(KnowledgeFeedbackCandidate).where(KnowledgeFeedbackCandidate.tenant_id == tenant_id)
+            )
+            await db.execute(delete(User).where(User.tenant_id == tenant_id))
             await db.commit()

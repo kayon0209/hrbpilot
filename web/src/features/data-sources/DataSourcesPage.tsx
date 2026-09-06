@@ -1,7 +1,8 @@
 import { type FormEvent, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncState } from '../../components/AsyncState'
-import { createDataSource, listDataSources, pauseDataSource, resumeDataSource, revokeDataSource, PLATFORMS, type DataSourceView } from '../../api/data-sources'
+import { listAdminUsers, type AdminUserView } from '../../api/admin-users'
+import { bindPlatformIdentity, createDataSource, listDataSources, pauseDataSource, resumeDataSource, revokeDataSource, PLATFORMS, type DataSourceView } from '../../api/data-sources'
 import styles from './DataSourcesPage.module.css'
 
 /**
@@ -12,16 +13,24 @@ import styles from './DataSourcesPage.module.css'
 export function DataSourcesPage() {
   const queryClient = useQueryClient()
   const sources = useQuery({ queryKey: ['data-sources'], queryFn: listDataSources })
+  const users = useQuery({ queryKey: ['admin-users'], queryFn: listAdminUsers })
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['data-sources'] })
   const pause = useMutation({ mutationFn: pauseDataSource, onSuccess: invalidate })
   const resume = useMutation({ mutationFn: resumeDataSource, onSuccess: invalidate })
   const revoke = useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => revokeDataSource(id, reason), onSuccess: invalidate })
   const create = useMutation({ mutationFn: createDataSource, onSuccess: invalidate })
+  const bindIdentity = useMutation({
+    mutationFn: ({ sourceId, externalUserId, userId }: { sourceId: string; externalUserId: string; userId: string }) => (
+      bindPlatformIdentity(sourceId, { external_user_id: externalUserId, user_id: userId })
+    ),
+  })
 
   const [name, setName] = useState('')
   const [platform, setPlatform] = useState('feishu')
   const [purpose, setPurpose] = useState('')
   const [scope, setScope] = useState('')
+  const [chatIds, setChatIds] = useState('')
+  const [eventRoute, setEventRoute] = useState<'none' | 'employee_request'>('none')
   const [destination, setDestination] = useState('')
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [revokeReason, setRevokeReason] = useState('')
@@ -35,10 +44,14 @@ export function DataSourcesPage() {
       platform,
       purpose: purpose.trim(),
       authorized_scope: scope.trim(),
-      content_types: ['documents', 'attachments'],
+      authorized_scope_json: platform === 'wecom' && chatIds.trim()
+        ? { chat_ids: chatIds.split(',').map(value => value.trim()).filter(Boolean), folder_ids: [] }
+        : undefined,
+      event_route: eventRoute,
+      content_types: eventRoute === 'employee_request' ? ['messages'] : ['documents', 'attachments'],
       data_destination: destination.trim(),
     })
-    setName(''); setPurpose(''); setScope(''); setDestination('')
+    setName(''); setPurpose(''); setScope(''); setChatIds(''); setEventRoute('none'); setDestination('')
   }
 
   return (
@@ -57,12 +70,24 @@ export function DataSourcesPage() {
         <form onSubmit={submit} className={styles.form}>
           <label>名称<input value={name} onChange={e => setName(e.target.value)} maxLength={200} required placeholder="例如：飞书制度文档" /></label>
           <label>来源平台
-            <select value={platform} onChange={e => setPlatform(e.target.value)}>
+            <select value={platform} onChange={e => {
+              const next = e.target.value
+              setPlatform(next)
+              if (next !== 'wecom' && next !== 'feishu') setEventRoute('none')
+            }}>
               {PLATFORMS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
           <label>用途<input value={purpose} onChange={e => setPurpose(e.target.value)} maxLength={2000} required placeholder="接入后材料用于什么工作" /></label>
+          <label>入站处理
+            <select value={eventRoute} onChange={e => setEventRoute(e.target.value as 'none' | 'employee_request')}>
+              <option value="none">仅同步授权材料，不自动创建工作</option>
+              <option value="employee_request" disabled={platform !== 'wecom' && platform !== 'feishu'}>把员工消息登记为员工请求</option>
+            </select>
+            {eventRoute === 'employee_request' && <small>仅在平台账号已与员工身份显式绑定后，消息才会生成员工请求；未绑定消息会等待管理员确认，绝不按昵称猜测。</small>}
+          </label>
           <label>授权范围<input value={scope} onChange={e => setScope(e.target.value)} maxLength={2000} required placeholder="仅授权哪些文件夹、群组或规则" /></label>
+          {platform === 'wecom' && <label>企业微信群 ID（逗号分隔）<input value={chatIds} onChange={e => setChatIds(e.target.value)} maxLength={2000} required={eventRoute === 'employee_request'} placeholder="chat_hr, chat_east" /><small>只有这里列出的群消息会被后端消费；员工请求入口至少需要一个群 ID。</small></label>}
           <label>数据去向<input value={destination} onChange={e => setDestination(e.target.value)} maxLength={2000} required placeholder="材料进入哪个工作区，谁可见" /></label>
           <p className={styles.note}>完成企业授权后，本页会显示实际可同步范围。个人微信不做任何聊天抓取。</p>
           <div className={styles.actions}>
@@ -83,7 +108,18 @@ export function DataSourcesPage() {
         )}
         <div className={styles.list}>
           {(sources.data?.sources ?? []).map(source => (
-            <SourceCard key={source.source_id} source={source} onPause={pause.mutate} onResume={resume.mutate} onRevoke={setRevokingId} busy={pause.isPending || resume.isPending || revoke.isPending} />
+            <SourceCard
+              key={source.source_id}
+              source={source}
+              employees={(users.data?.users ?? []).filter(user => user.role === 'employee')}
+              employeesLoading={users.isPending}
+              bindingError={bindIdentity.isError ? bindIdentity.error.message : null}
+              onBindIdentity={(externalUserId, userId) => bindIdentity.mutateAsync({ sourceId: source.source_id, externalUserId, userId })}
+              onPause={pause.mutate}
+              onResume={resume.mutate}
+              onRevoke={setRevokingId}
+              busy={pause.isPending || resume.isPending || revoke.isPending || bindIdentity.isPending}
+            />
           ))}
         </div>
       </section>
@@ -105,8 +141,12 @@ export function DataSourcesPage() {
   )
 }
 
-function SourceCard({ source, onPause, onResume, onRevoke, busy }: {
+function SourceCard({ source, employees, employeesLoading, bindingError, onBindIdentity, onPause, onResume, onRevoke, busy }: {
   source: DataSourceView
+  employees: AdminUserView[]
+  employeesLoading: boolean
+  bindingError: string | null
+  onBindIdentity: (externalUserId: string, userId: string) => Promise<unknown>
   onPause: (id: string) => void
   onResume: (id: string) => void
   onRevoke: (id: string) => void
@@ -126,6 +166,7 @@ function SourceCard({ source, onPause, onResume, onRevoke, busy }: {
       <dl className={styles.meta}>
         <div><dt>认证状态</dt><dd>{certLabel}{operational ? '' : '（尚未完成企业授权，暂不读取任何数据）'}</dd></div>
         <div><dt>用途</dt><dd>{source.purpose}</dd></div>
+        <div><dt>入站处理</dt><dd>{source.event_route === 'employee_request' ? '员工消息登记为员工请求' : '仅同步授权材料'}</dd></div>
         <div><dt>授权范围</dt><dd>{source.authorized_scope}</dd></div>
         <div><dt>数据去向</dt><dd>{source.data_destination}</dd></div>
         <div><dt>上次同步</dt><dd>{source.last_sync_at ? new Date(source.last_sync_at).toLocaleString('zh-CN') : '尚未同步'}</dd></div>
@@ -134,15 +175,64 @@ function SourceCard({ source, onPause, onResume, onRevoke, busy }: {
       {revoked ? (
         <p className={styles.revokedNote}>已于 {source.revoked_at?.slice(0, 10)} 撤销：{source.revoked_reason}。如需再次使用，请新建接入并重新授权。</p>
       ) : (
-        <div className={styles.cardActions}>
-          {source.paused ? (
-            <button className="secondary-button" disabled={busy} onClick={() => onResume(source.source_id)}>恢复同步</button>
-          ) : (
-            <button className="secondary-button" disabled={busy} onClick={() => onPause(source.source_id)}>暂停同步</button>
-          )}
-          <button className="secondary-button" disabled={busy} onClick={() => onRevoke(source.source_id)}>撤销授权</button>
-        </div>
+        <>
+          {source.event_route === 'employee_request' && <IdentityBindingForm
+            employees={employees}
+            employeesLoading={employeesLoading}
+            bindingError={bindingError}
+            busy={busy}
+            onBind={onBindIdentity}
+          />}
+          <div className={styles.cardActions}>
+            {source.paused ? (
+              <button className="secondary-button" disabled={busy} onClick={() => onResume(source.source_id)}>恢复同步</button>
+            ) : (
+              <button className="secondary-button" disabled={busy} onClick={() => onPause(source.source_id)}>暂停同步</button>
+            )}
+            <button className="secondary-button" disabled={busy} onClick={() => onRevoke(source.source_id)}>撤销授权</button>
+          </div>
+        </>
       )}
     </article>
   )
+}
+
+function IdentityBindingForm({ employees, employeesLoading, bindingError, busy, onBind }: {
+  employees: AdminUserView[]
+  employeesLoading: boolean
+  bindingError: string | null
+  busy: boolean
+  onBind: (externalUserId: string, userId: string) => Promise<unknown>
+}) {
+  const [externalUserId, setExternalUserId] = useState('')
+  const [userId, setUserId] = useState('')
+  const [notice, setNotice] = useState('')
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    const external = externalUserId.trim()
+    if (!external || !userId) return
+    setNotice('')
+    await onBind(external, userId)
+    setExternalUserId('')
+    setUserId('')
+    setNotice('账号已绑定；同一账号此前等待确认的消息将登记为该员工的请求。')
+  }
+
+  return <section className={styles.identityBinding} aria-label="确认平台员工身份">
+    <h2>确认平台员工身份</h2>
+    <p>仅在核验实际账号归属后操作。系统不会按昵称、姓名或邮箱自动匹配。</p>
+    {employeesLoading ? <p>正在读取员工名单…</p> : employees.length === 0 ? <p>尚无可绑定员工，请先在“用户与权限”中建立员工账号。</p> : <form onSubmit={submit} className={styles.form}>
+      <label>平台账号 ID<input value={externalUserId} onChange={event => setExternalUserId(event.target.value)} maxLength={200} required placeholder="例如：ou_123 或 userid" /></label>
+      <label>HRBPilot 员工
+        <select value={userId} onChange={event => setUserId(event.target.value)} required>
+          <option value="">请选择已核验的员工</option>
+          {employees.map(employee => <option key={employee.user_id} value={employee.user_id}>{employee.name}（{employee.email}）</option>)}
+        </select>
+      </label>
+      <div className={styles.actions}><button className="secondary-button" type="submit" disabled={busy}>{busy ? '正在确认…' : '确认并绑定'}</button></div>
+      {notice && <p role="status">{notice}</p>}
+      {bindingError && <p className={styles.error} role="alert">绑定失败：{bindingError}</p>}
+    </form>}
+  </section>
 }

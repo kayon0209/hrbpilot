@@ -55,9 +55,7 @@ def verify_wecom_signature(msg_signature: str, token: str, timestamp: str, nonce
         raise WebhookRejectedError("企业微信回调签名校验失败")
 
 
-def decrypt_wecom_payload(
-    encrypted_b64: str, aes_key_b64: str, corpid: str
-) -> dict:
+def decrypt_wecom_payload(encrypted_b64: str, aes_key_b64: str, corpid: str) -> dict:
     """Decrypt a WeCom callback body (AES-256-CBC, key derived from base64)."""
     try:
         key = base64.b64decode(aes_key_b64 + "=")

@@ -41,21 +41,27 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("tenant_id", sa.String(length=36), nullable=False, index=True),
         sa.Column("name", sa.String(length=200), nullable=False),  # business-language display name
-        sa.Column("platform", sa.String(length=50), nullable=False),  # wecom | feishu | dingtalk | wps365 | exchange | oa | hris
+        sa.Column(
+            "platform", sa.String(length=50), nullable=False
+        ),  # wecom | feishu | dingtalk | wps365 | exchange | oa | hris
         sa.Column("purpose", sa.Text, nullable=False),  # 用途 — shown to admin before authorization
         sa.Column("authorized_scope", sa.Text, nullable=False),  # 授权范围: which folders/chats/rules
         sa.Column("content_types", sa.Text, nullable=False),  # JSON: documents | messages | approvals | attachments...
         sa.Column("data_destination", sa.Text, nullable=False),  # 数据去向: which scenario tables / workspaces
         # 4-level certification (spec §10.3): only level 4 may be called 可使用
         sa.Column("certification_level", sa.Integer, nullable=False, server_default="1"),  # 1..4
-        sa.Column("sync_status", sa.String(length=20), nullable=False, server_default="never_run"),  # never_run | ok | failed | paused
+        sa.Column(
+            "sync_status", sa.String(length=20), nullable=False, server_default="never_run"
+        ),  # never_run | ok | failed | paused
         sa.Column("last_sync_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("next_sync_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error", sa.Text, nullable=True),
         sa.Column("paused", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_reason", sa.Text, nullable=True),
-        sa.Column("credential_ref", sa.String(length=500), nullable=True),  # encrypted blob ref or KMS key id — never the secret itself
+        sa.Column(
+            "credential_ref", sa.String(length=500), nullable=True
+        ),  # encrypted blob ref or KMS key id — never the secret itself
         sa.Column("credential_encrypted", sa.LargeBinary, nullable=True),  # tenant-key encrypted credential blob
         sa.Column("created_by", sa.String(length=36), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),

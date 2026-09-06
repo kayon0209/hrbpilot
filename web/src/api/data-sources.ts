@@ -7,6 +7,8 @@ export interface DataSourceView {
   platform_label: string
   purpose: string
   authorized_scope: string
+  authorized_scope_json: { chat_ids?: string[]; folder_ids?: string[] } | null
+  event_route: 'none' | 'employee_request'
   content_types: string[]
   data_destination: string
   certification_level: number
@@ -41,10 +43,19 @@ export function createDataSource(body: {
   platform: string
   purpose: string
   authorized_scope: string
+  authorized_scope_json?: { chat_ids?: string[]; folder_ids?: string[] }
+  event_route?: 'none' | 'employee_request'
   content_types: string[]
   data_destination: string
 }) {
   return apiClient.request<DataSourceView>('/api/data-sources', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function bindPlatformIdentity(sourceId: string, body: { external_user_id: string; user_id: string }) {
+  return apiClient.request<{ source_id: string; external_user_id: string; user_id: string }>(
+    `/api/data-sources/${sourceId}/identity-bindings`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
 }
 
 export function pauseDataSource(sourceId: string) {

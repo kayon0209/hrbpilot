@@ -32,7 +32,11 @@ class MetricsAggregator:
         self._entries: list[MetricEntry] = []
 
     async def record(self, tenant_id: str, scenario_id: str, metric: str, score: float) -> None:
-        """Record a metric — persists to PostgreSQL, falls back to memory."""
+        """Record a real measured metric — persists to PostgreSQL, falls back to memory.
+
+        Only genuinely measured scores are recorded; ``is_stub`` is always
+        False so placeholder rows can never be produced through this path.
+        """
         self._entries.append(MetricEntry(scenario_id=scenario_id, metric=metric, score=score))
         try:
             from app.data.database import get_db_session
@@ -45,6 +49,7 @@ class MetricsAggregator:
                         scenario_id=scenario_id,
                         metric=metric,
                         score=score,
+                        is_stub=False,
                     )
                 )
                 await db.commit()
@@ -80,6 +85,8 @@ class MetricsAggregator:
             from app.data.database import get_db_session
             from app.data.models.infra import EvalResult
 
+            _measured = EvalResult.is_stub.is_(False)
+
             async for db in get_db_session():
                 rows = (
                     await db.execute(
@@ -90,18 +97,18 @@ class MetricsAggregator:
                             func.max(EvalResult.score).label("max"),
                             func.count(EvalResult.id).label("count"),
                         )
-                        .where(EvalResult.scenario_id == scenario_id)
+                        .where(EvalResult.scenario_id == scenario_id, _measured)
                         .group_by(EvalResult.metric)
                     )
                 ).all()
                 if not rows:
                     return self.get_scenario_metrics(scenario_id)
 
-                # Fetch latest scores per metric
+                # Fetch latest scores per metric (only measured rows)
                 latest_rows = (
                     await db.execute(
                         select(EvalResult.metric, EvalResult.score)
-                        .where(EvalResult.scenario_id == scenario_id)
+                        .where(EvalResult.scenario_id == scenario_id, _measured)
                         .order_by(EvalResult.created_at.desc())
                     )
                 ).all()
@@ -135,12 +142,17 @@ class MetricsAggregator:
             from app.data.models.infra import EvalResult
 
             async for db in get_db_session():
-                scenario_ids = (await db.execute(select(EvalResult.scenario_id).distinct())).scalars().all()
+                _measured = EvalResult.is_stub.is_(False)
+                scenario_ids = (
+                    (await db.execute(select(EvalResult.scenario_id).distinct().where(_measured))).scalars().all()
+                )
                 results = []
                 for sid in sorted(scenario_ids):
                     metrics = await self.get_scenario_metrics_async(sid)
                     count_rows = (
-                        await db.execute(select(func.count(EvalResult.id)).where(EvalResult.scenario_id == sid))
+                        await db.execute(
+                            select(func.count(EvalResult.id)).where(EvalResult.scenario_id == sid, _measured)
+                        )
                     ).scalar()
                     results.append(
                         {
@@ -185,6 +197,7 @@ class MetricsAggregator:
                             EvalResult.scenario_id == scenario_id,
                             EvalResult.metric == metric,
                             EvalResult.created_at >= cutoff,
+                            EvalResult.is_stub.is_(False),
                         )
                         .order_by(EvalResult.created_at.asc())
                     )

@@ -90,9 +90,7 @@ async def test_knowledge_bases_returns_tenant_scoped_list():
 
     result = await routes.list_policy_knowledge_bases(_request(), session)
 
-    assert result["knowledge_bases"] == [
-        {"id": "kb1", "name": "员工手册库", "document_count": 3, "status": "active"}
-    ]
+    assert result["knowledge_bases"] == [{"id": "kb1", "name": "员工手册库", "document_count": 3, "status": "active"}]
 
 
 async def test_knowledge_bases_empty_is_empty_not_error():

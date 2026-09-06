@@ -38,12 +38,16 @@ def upgrade() -> None:
         "knowledge_feedback_candidates",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("tenant_id", sa.String(length=36), nullable=False, index=True),
-        sa.Column("source_type", sa.String(length=30), nullable=False),  # no_evidence | negative_feedback | repeated_theme
+        sa.Column(
+            "source_type", sa.String(length=30), nullable=False
+        ),  # no_evidence | negative_feedback | repeated_theme
         sa.Column("question", sa.Text, nullable=False),
         sa.Column("occurrences", sa.Integer, nullable=False, server_default="1"),
         sa.Column("evidence_summary", sa.Text, nullable=True),
         sa.Column("suggested_kb_id", sa.String(length=36), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="open"),  # open | confirmed | rejected | assigned
+        sa.Column(
+            "status", sa.String(length=20), nullable=False, server_default="open"
+        ),  # open | confirmed | rejected | assigned
         sa.Column("handled_by", sa.String(length=36), nullable=True),
         sa.Column("handled_reason", sa.Text, nullable=True),
         sa.Column("assignee", sa.String(length=200), nullable=True),

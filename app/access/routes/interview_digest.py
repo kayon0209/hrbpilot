@@ -151,9 +151,7 @@ async def get_progress(
 ):
     """Poll async task progress."""
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
@@ -184,9 +182,7 @@ async def get_result(
 ):
     """Get completed interview digest result."""
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     status = await orchestrator.get_task_status(task_id, tenant_id, visible_user_ids)
     if not status:
         raise NotFoundError("Task", task_id)
@@ -211,9 +207,7 @@ async def get_history(
     ``async_tasks``; this endpoint returns the most recent completed results.
     """
     tenant_id = require_tenant_id(request)
-    visible_user_ids = await resolve_visible_user_ids(
-        tenant_id, request.state.user_id, request.state.user_role
-    )
+    visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     rows = (
         (
             await session.execute(

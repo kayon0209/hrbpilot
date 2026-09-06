@@ -19,7 +19,9 @@ async def list_candidates(request: Request):
     RBACMiddleware) decides (spec §7.7).
     """
     tenant_id = require_tenant_id(request)
-    candidates = await collect_candidates(tenant_id)
+    user_id = getattr(request.state, "user_id", "unknown")
+    user_role = getattr(request.state, "user_role", "employee")
+    candidates = await collect_candidates(tenant_id, user_id, user_role)
     return {"candidates": [c.model_dump() for c in candidates]}
 
 
@@ -29,5 +31,6 @@ async def decide(request: Request, body: DecideBody):
     """Confirm / assign / reject a candidate — the only way one closes."""
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
-    decided = await decide_candidate(tenant_id, user_id, body)
+    user_role = getattr(request.state, "user_role", "employee")
+    decided = await decide_candidate(tenant_id, user_id, user_role, body)
     return decided.model_dump()

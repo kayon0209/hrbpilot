@@ -60,7 +60,9 @@ def preview_xlsx(content: bytes, filename: str) -> StructuredFilePreview:
     quality_notes: list[str] = []
 
     if workbook.sheetnames:
-        quality_notes.append(f"包含 {len(workbook.sheetnames)} 个工作表：{'、'.join(workbook.sheetnames[:8])}{'…' if len(workbook.sheetnames) > 8 else ''}")
+        quality_notes.append(
+            f"包含 {len(workbook.sheetnames)} 个工作表：{'、'.join(workbook.sheetnames[:8])}{'…' if len(workbook.sheetnames) > 8 else ''}"
+        )
 
     for sheet_name in workbook.sheetnames[:MAX_SHEETS]:
         worksheet = workbook[sheet_name]

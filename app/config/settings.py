@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     redis_session_ttl: int = 900
 
     jwt_secret: str = "change-me-in-production"
+    # Envelope-encryption master key for connector credentials (base64 of 32
+    # bytes). The default only works in development; production/staging must
+    # set a real key — enforced in validate_environment.
+    connector_master_key: str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     jwt_access_expires_minutes: int = 15
     jwt_refresh_expires_days: int = 7
     jwt_algorithm: str = "HS256"
@@ -93,6 +97,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "JWT_SECRET must be a non-default value of at least 32 characters in production or staging"
                 )
+            if self.connector_master_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=":
+                raise ValueError("CONNECTOR_MASTER_KEY must be a real 32-byte base64 key in production or staging")
             if not self.llm_api_key or self.llm_api_key == "change-me":
                 raise ValueError("LLM_API_KEY must be configured in production or staging")
             if not self.effective_embedding_api_key or not self.embedding_base_url:

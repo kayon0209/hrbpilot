@@ -26,8 +26,14 @@ def session_factory():
             await conn.run_sync(
                 lambda c: Base.metadata.create_all(
                     c,
-                    tables=[H.HRCase.__table__, H.CasePlan.__table__, H.ApprovalRequest.__table__,
-                            H.ToolExecution.__table__, H.CaseEvent.__table__, H.AgentRun.__table__],
+                    tables=[
+                        H.HRCase.__table__,
+                        H.CasePlan.__table__,
+                        H.ApprovalRequest.__table__,
+                        H.ToolExecution.__table__,
+                        H.CaseEvent.__table__,
+                        H.AgentRun.__table__,
+                    ],
                 )
             )
 

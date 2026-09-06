@@ -5,7 +5,8 @@
 > 质量分、真实 token 成本）。与 MindGraph 不同，本项目**没有检索阶段延迟/Recall
 > 消融**（无已提交 CSV），所以不声称"检索成本效率"。凡涉及数字，本文件**一律
 > 不编造**——下面所有 %/token 均来自 `golden_eval_20260730T213019Z.json` 实测。
-> 仅线上异步 `auto_eval` 的质量分仍是占位 stub（已明确标注，不混入真实数字）。
+> 线上异步 `auto_eval` 已于 2026-08-27 切换为真实 LLM-as-judge（失败→skipped, 不写入库），
+> 不再产生占位 stub。
 
 ---
 
@@ -16,8 +17,8 @@
 | Token 预算治理 | ✅ **真实落地、接进生产路径** | `token_budget.py` 已被 `rag/pipeline.py` 调用 |
 | 黄金评测集 | ✅ **真实存在、可数** | 250 样本 / 5 场景各 50 |
 | 质量评测执行（黄金集离线） | ✅ **真实数字已出（2026-07-30 真实运行）** | `golden_metrics.py` 的 keyword/citation recall 跑出真实分（见 §6） |
-| 质量评测（线上异步 auto_eval） | ⚠️ **框架接好，数值仍是占位 stub** | `auto_eval.py` 返回 0.7/0.5 常量，未接真实实现；与黄金集离线评测是两回事 |
-| 指标聚合器 | ⚠️ **框架真实，内存起步为空** | `metrics.py` 无预录数据 |
+| 质量评测（线上异步 auto_eval） | ✅ **真实 LLM-as-judge，已接真实实现** | `auto_eval.py` 用 LLM judge 评估；judge 失败→skipped 不写入库（c7b9462 修复）；与黄金集离线评测是两回事 |
+| 指标聚合器 | ✅ **框架真实，过滤历史 stub** | `metrics.py` 聚合前过滤 `is_stub=true` 的占位行（PR-00A），stub 不参与均值/趋势/发布判断 |
 | 黄金集评测运行器 | ✅ **已落地、已真实跑通** | `evaluation/run_golden_eval.py`：REAL-LLM 模式产出真实分 + 真实 token |
 | 真实 token 消耗 | ✅ **真实（224,640 token，占月度预算 2.25%）** | 2026-07-30 真实运行记录（见 §6） |
 | 成本效率（token 预算视角） | ✅ **真实** | 单次全量 sweep = 2.25% 预算 → ~44 次/租户月（见 §6 指标 1） |
@@ -103,33 +104,35 @@ CRITICAL_THRESHOLD    = 0.90          # 90% 严重告警
 
 ---
 
-## 3. 质量评测执行（框架真实，数值是占位）
+## 3. 质量评测执行（真实 LLM-as-judge）
 
-来源：`app/evaluation/auto_eval.py`（调用点 `rag/pipeline.py:136`、
-`scenarios/policy_qa/orchestrator.py:130`）。
+来源：`app/evaluation/auto_eval.py`（调用点 `rag/pipeline.py`、
+`scenarios/policy_qa/orchestrator.py`）。
 
 ### 3.1 真实接入情况
 
-- `AutoEvaluator.evaluate()` 在 RAG 管线第 7 步**异步、非阻塞**调用（✅ 真接了）
+- `AutoEvaluator.evaluate()` 在 RAG 管线中**异步、非阻塞**调用（✅ 真接了）
 - `policy_qa` orchestrator 也调用（✅ 真接了）
-- 指标维度：Faithfulness / Answer Relevance / Citation Accuracy（+ 若干占位维度）
+- 指标维度：Citation Accuracy / Answer Relevance / Faithfulness /
+  extraction_completeness / topic_coverage / information_completeness / content_diversity
 
-### 3.2 当前数值是 stub（必须如实说明）
+### 3.2 评分语义（2026-08-27 c7b9462 起）
 
 ```python
-def _citation_accuracy(...) -> float:   return 0.7   # TODO: 真实实现
-def _answer_relevance(...) -> float:    return 0.7   # TODO: 真实实现
-def _faithfulness(...) -> float:        return 0.7   # TODO: 真实实现
-# extraction_completeness / topic_coverage / ... : return 0.5  # 占位
+# judge 调用成功且可解析 → 记录真实分数（包括合法的 0.0）
+# judge 失败 / 输出不可解析 / 未知指标 → 记入 skipped_metrics，不写入 eval_results
 ```
 
-**所以现在跑出来的"评分"是假的常量，不能写进简历。**
-`extraction_completeness` 等维度连方法体都没有，只有 `0.5` 占位。
+**不再存在 0.7/0.5 占位常量。** judge 失败返回 `None` 并记入 `skipped_metrics`
+（`SKIP_JUDGE_UNAVAILABLE` / `SKIP_UNPARSEABLE` / `SKIP_UNKNOWN_METRIC`），
+只有真实分数进入聚合器。历史占位行由迁移 029 标记 `is_stub=true`，
+聚合器过滤后不参与均值、趋势和发布判断。
 
 ### 3.3 聚合器
 
-`MetricsAggregator`（metrics.py）：运行均值/最小/最大/趋势，**框架真实**，
-但 `_entries` 内存起步为空，无预录数据，`get_scenario_metrics()` 对空场景返回 `{}`。
+`MetricsAggregator`（metrics.py）：运行均值/最小/最大/趋势，**框架真实**。
+聚合查询过滤 `is_stub=true` 行（PR-00A）；内存起步为空，
+`get_scenario_metrics()` 对空场景返回 `{}`。
 
 ---
 
@@ -267,8 +270,8 @@ python evaluation/run_golden_eval.py
 > 拒答用例），并写到真实评测运行器，跑出**真实指标**：prompt-injection 拦截率
 > 100%、正常查询误拦率 0%、真实质量分（interview_digest/voice_insight/culture_content
 > citation_recall 均 1.0）、单次全量回归仅耗 2.25% 月度预算（~44.4 次/租户月，CI 可高频跑）。
-> *（线上异步 auto_eval 的质量分仍是 0.7/0.5 占位 stub，未接真实实现；
-> 检索阶段延迟/Recall 消融尚未做——这两点别写进简历当已完成。）*
+> *（线上异步 auto_eval 已切换为真实 LLM-as-judge（2026-08-27 c7b9462），失败记入
+> skipped_metrics 不写入库；检索阶段延迟/Recall 消融尚未做——这两点别写进简历当已完成。）*
 
 **可上简历的真实数字（来自 2026-07-30 REAL-LLM 运行，非编造）**：
 - 安全：prompt-injection 拦截率 **100%**（含中文注入），误拦率 **0%**

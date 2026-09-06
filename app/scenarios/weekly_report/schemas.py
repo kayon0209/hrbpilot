@@ -56,8 +56,8 @@ class WeeklyReportResponse(BaseModel):
 class GenerateRequest(BaseModel):
     """Request to generate a weekly report."""
 
-    period: str = Field(..., description="报告周期, 如 2026-W28")
-    source_ids: list[str] = Field(default_factory=list, description="数据源ID列表")
+    period: str = Field(..., description="报告周期, 如 2026-W28", pattern=r"^\d{4}-W\d{2}$")
+    source_ids: list[str] = Field(default_factory=list, description="数据源ID列表", max_length=50)
     draft_mode: bool = Field(True, description="是否生成草稿（可编辑）")
 
 
@@ -65,5 +65,5 @@ class SaveRequest(BaseModel):
     """Request to save/publish a weekly report."""
 
     report_id: str
-    action: str = "save"  # save | publish
+    action: str = Field("save", pattern="^(save|publish)$")  # save | publish
     edits: dict | None = None  # Optional manual edits

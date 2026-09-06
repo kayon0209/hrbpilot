@@ -1,95 +1,129 @@
-"""HRBP AI Workbench — LLM degradation strategy.
+"""HRBP AI Workbench — request-level LLM degradation (PR-04).
 
-Phase 15 spec: When the primary LLM provider is unavailable,
-automatically fall back to the next available provider in order:
-  Primary (zhipu) → Fallback 1 (deepseek) → Fallback 2 (openai) → Error
+When the primary provider for a request fails, try the remaining providers in
+that request's ``fallback_order`` WITHOUT touching the global active provider
+(review #11: concurrent requests must not observe each other's fallback).
 
-The fallback is transparent to callers — they just call generate()
-and get a response from whichever provider is available.
+Unlike the old implementation (which called ``set_active_provider``), this
+module is side-effect-free on global state: every provider attempt constructs
+its own client via the Model Router path and logs which provider served the
+request.
 """
 
-from app.rag.llm.orchestrator import (
-    _PROVIDER_REGISTRY,
-    get_active_provider,
-    set_active_provider,
-)
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
+from app.rag.llm.model_router import ModelRequest
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Provider fallback order (first available wins)
-FALLBACK_ORDER = ["zhipu", "deepseek", "openai"]
 
-
-def get_fallback_order() -> list[str]:
-    """Return the ordered list of providers, starting with the active one."""
-    active = get_active_provider()
-    order = [active] + [p for p in FALLBACK_ORDER if p != active]
-    # Filter to only providers that are actually configured
-    return [p for p in order if p in _PROVIDER_REGISTRY]
-
-
-async def try_generate_with_fallback(
-    prompt_template: str,
-    context: list[dict],
-    query: str,
+async def generate_with_fallback(
+    messages: list[dict[str, str]],
+    model_request: ModelRequest,
     max_tokens: int = 1024,
     temperature: float = 0.3,
 ) -> tuple[str, int | None, str]:
-    """Generate response with automatic provider fallback.
+    """Generate using the request's provider; fall back per-request on failure.
 
-    Tries each provider in fallback order. On success, returns
-    (content, tokens_used, provider_used).
-    On total failure, returns an error message.
+    Returns (content, tokens_used, provider_used). Raises when every provider
+    in the request's fallback order has failed (callers decide degradation).
     """
-    from app.rag.llm.orchestrator import LLMOrchestrator
+    from app.rag.llm.orchestrator import _client_for_provider
 
-    original_provider = get_active_provider()
     errors: list[str] = []
+    providers = [model_request.provider, *model_request.fallback_order]
+    for provider in providers:
+        try:
+            client = _client_for_provider(provider)
+            response = await client.chat.completions.create(
+                model=model_request.model,
+                messages=cast(Any, messages),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=False,
+            )
+            content = response.choices[0].message.content or ""
+            tokens = response.usage.total_tokens if response.usage else None
+            logger.info(
+                "llm_request_generated",
+                provider=provider,
+                model=model_request.model,
+                tokens=tokens,
+                response_len=len(content),
+            )
+            return content, tokens, provider
+        except Exception as e:
+            errors.append(f"{provider}: {str(e)[:120]}")
+            logger.warning(
+                "llm_request_provider_failed",
+                provider=provider,
+                model=model_request.model,
+                error=str(e)[:200],
+            )
 
-    try:
-        for provider in get_fallback_order():
-            try:
-                if provider != get_active_provider():
-                    logger.warning(
-                        "llm_fallback_attempt",
-                        from_provider=original_provider,
-                        to_provider=provider,
-                        errors=errors,
-                    )
-                    set_active_provider(provider)
+    logger.error(
+        "llm_request_all_providers_failed",
+        providers=providers,
+        errors=errors,
+        scenario_id=model_request.scenario_id,
+    )
+    raise RuntimeError("all LLM providers failed for this request")
 
-                orchestrator = LLMOrchestrator()
-                content, tokens = await orchestrator.generate(
-                    prompt_template=prompt_template,
-                    context=context,
-                    query=query,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
 
-                logger.info(
-                    "llm_generate_success",
-                    provider=provider,
-                    tokens=tokens,
-                )
-                return content, tokens, provider
+async def stream_with_fallback(
+    messages: list[dict[str, str]],
+    model_request: ModelRequest,
+    max_tokens: int = 1024,
+    temperature: float = 0.3,
+) -> AsyncIterator[tuple[str, str]]:
+    """Stream from the request's primary provider; fall back per-request.
 
-            except Exception as e:
-                errors.append(f"{provider}: {str(e)[:100]}")
-                logger.error(
-                    "llm_provider_failed",
-                    provider=provider,
-                    error=str(e)[:200],
-                )
+    Yields (text_chunk, provider_used) so the caller can log which provider
+    served each stream. Raises when every provider has failed.
+    """
+    from app.rag.llm.orchestrator import _client_for_provider
 
-        # All providers failed — return degraded response
-        logger.critical("llm_all_providers_failed", errors=errors)
-        return (
-            "抱歉，当前所有 AI 服务均不可用，请稍后再试。",
-            None,
-            "none",
-        )
-    finally:
-        if original_provider != get_active_provider():
-            set_active_provider(original_provider)
+    errors: list[str] = []
+    providers = [model_request.provider, *model_request.fallback_order]
+    for provider in providers:
+        try:
+            client = _client_for_provider(provider)
+            stream = await client.chat.completions.create(
+                model=model_request.model,
+                messages=cast(Any, messages),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            collected = 0
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    collected += 1
+                    yield content, provider
+            logger.info(
+                "llm_request_streamed",
+                provider=provider,
+                model=model_request.model,
+                chunks=collected,
+            )
+            return
+        except Exception as e:
+            errors.append(f"{provider}: {str(e)[:120]}")
+            logger.warning(
+                "llm_request_stream_provider_failed",
+                provider=provider,
+                model=model_request.model,
+                error=str(e)[:200],
+            )
+
+    logger.error(
+        "llm_request_stream_all_providers_failed",
+        providers=providers,
+        errors=errors,
+    )
+    raise RuntimeError("all LLM providers failed for this stream")

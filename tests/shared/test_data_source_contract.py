@@ -60,7 +60,11 @@ _BODY = {
 
 
 def test_business_roles_cannot_reach_data_sources(client):
-    for role, uid in (("hrbp", _HRBP), ("employee", "10000000-0000-4000-8000-000000000001"), ("hr_manager", "10000000-0000-4000-8000-000000000002")):
+    for role, uid in (
+        ("hrbp", _HRBP),
+        ("employee", "10000000-0000-4000-8000-000000000001"),
+        ("hr_manager", "10000000-0000-4000-8000-000000000002"),
+    ):
         resp = client.get("/api/data-sources", headers=_headers(role, uid))
         assert resp.status_code == 403, f"{role} must be blocked"
 

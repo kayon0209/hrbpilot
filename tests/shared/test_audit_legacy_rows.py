@@ -5,6 +5,7 @@ tenant eval-runner) and asserts the tolerant decoder degrades them to text
 instead of raising — the exact crash path an admin of a tenant with normal
 QA traffic would hit.
 """
+
 import asyncio
 
 from app.access.routes.audit import _load_json_or_text
@@ -18,13 +19,17 @@ def test_real_legacy_rows_decode_without_crash():
     async def fetch():
         eng = get_engine()
         async with eng.connect() as c:
+            tenant_id = "eval-runner"
+            await c.execute(text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": tenant_id})
             rows = (
                 await c.execute(
                     text(
                         "SELECT input_summary FROM audit_logs "
-                        "WHERE scenario_id IN ('policy_qa','interview_digest','voice_insight','weekly_report') "
+                        "WHERE tenant_id = :tenant_id "
+                        "AND scenario_id IN ('policy_qa','interview_digest','voice_insight','weekly_report') "
                         "ORDER BY created_at DESC LIMIT 50"
-                    )
+                    ),
+                    {"tenant_id": tenant_id},
                 )
             ).fetchall()
             return [r[0] for r in rows]

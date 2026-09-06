@@ -172,15 +172,7 @@ async def hr_triage(
             filters.append(EmployeeRequest.created_by.in_(visible_user_ids))
         else:
             raise NotFoundError("Request", request_id)
-        row = (
-            (
-                await db.execute(
-                    select(EmployeeRequest).where(*filters)
-                )
-            )
-            .scalars()
-            .first()
-        )
+        row = (await db.execute(select(EmployeeRequest).where(*filters))).scalars().first()
         if row is None:
             raise NotFoundError("Request", request_id)
         row.status = body.status
@@ -296,17 +288,14 @@ async def hr_list_assignees(tenant_id: str, manager_id: str, manager_role: str) 
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         rows = (
-            (
-                await db.execute(
-                    select(User.id, User.name, User.email).where(
-                        User.tenant_id == tenant_id,
-                        User.id.in_(visible_user_ids),
-                        User.role == "hrbp",
-                    )
+            await db.execute(
+                select(User.id, User.name, User.email).where(
+                    User.tenant_id == tenant_id,
+                    User.id.in_(visible_user_ids),
+                    User.role == "hrbp",
                 )
             )
-            .all()
-        )
+        ).all()
     return [{"user_id": r[0], "name": r[1], "email": r[2]} for r in rows]
 
 

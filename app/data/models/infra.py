@@ -8,7 +8,7 @@ All have tenant_id for RLS.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -16,11 +16,17 @@ from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryK
 
 class AsyncTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "async_tasks"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_async_tasks_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
+            name="fk_async_tasks_tenant_creator",
+        ),
+    )
 
     type: Mapped[str] = mapped_column(String(50), nullable=False)  # voice_insight_analysis | document_ingestion | ...
-    created_by: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True, index=True
-    )
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="pending"
     )  # pending(排队中) | running(正在分析) | completed | partial | failed — stage words only, never fake percentages
@@ -60,6 +66,11 @@ class EvalResult(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     scenario_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(100), nullable=False)  # citation_accuracy | answer_relevance | ...
     score: Mapped[float] = mapped_column(Float, nullable=False)
+    # True when the row carries a placeholder/estimated score that must not
+    # drive averages, trends or release judgements (historical auto-eval
+    # constants). Real measured rows always write False. The server default
+    # mirrors the Python default so raw SQL inserts also default to measured.
+    is_stub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     request_id: Mapped[str | None] = mapped_column(String(36), default=None)  # linked to audit log
 
     def __repr__(self) -> str:
@@ -86,7 +97,9 @@ class TokenLedgerEntry(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     measured: Mapped[bool] = mapped_column(nullable=False, default=False)  # True = real usage, False = estimate
-    settlement_state: Mapped[str] = mapped_column(String(12), nullable=False, default="SETTLED")  # RESERVE|SETTLED|REFUNDED
+    settlement_state: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="SETTLED"
+    )  # RESERVE|SETTLED|REFUNDED
 
     def __repr__(self) -> str:
         return f"<TokenLedgerEntry id={self.id} req={self.request_id} total={self.total_tokens}>"
