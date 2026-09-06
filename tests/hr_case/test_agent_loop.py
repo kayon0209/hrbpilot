@@ -16,7 +16,7 @@ from app.data.models.hr_case import ToolExecution
 from app.scenarios.hr_case_agent import agent_loop
 from app.scenarios.hr_case_agent.agent_loop import execute_approved_write, register_tool_executor, run_plan
 from app.scenarios.hr_case_agent.planner import MAX_PLAN_STEPS, Planner, PlanValidationError, requires_human_review
-from app.scenarios.hr_case_agent.service import ApprovalError, HRCaseService
+from app.scenarios.hr_case_agent.service import ApprovalError, HighRiskWriteBlockedError, HRCaseService
 from app.scenarios.hr_case_agent.tools import ToolError, validate_tool_call
 
 
@@ -127,11 +127,93 @@ def test_high_risk_requires_human_review():
     assert not requires_human_review("overtime", "LOW")
 
 
+async def test_high_risk_case_cannot_request_write_approval(session_factory):
+    """Service-layer guard: a high-risk case (category or HIGH risk level)
+    must never produce a write approval request, even when a caller bypasses
+    the route-level planner."""
+    case_id = await make_case(session_factory, risk="HIGH", category="overtime")
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        with pytest.raises(HighRiskWriteBlockedError):
+            await service.request_approval(
+                case_id,
+                "create_hr_case",
+                {"title": "t", "subject_ref": "s", "category": "overtime"},
+                plan_id=plan.id,
+            )
+
+
+async def test_high_risk_category_cannot_request_write_approval(session_factory):
+    """termination/harassment/discrimination/labor_arbitration are evidence-only
+    even when a caller marks the risk LOW."""
+    case_id = await make_case(session_factory, risk="LOW", category="termination")
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        with pytest.raises(HighRiskWriteBlockedError):
+            await service.request_approval(
+                case_id,
+                "send_case_notification",
+                {"channel": "email", "recipient_ref": "EMP-SYN-001", "template": "notice"},
+                plan_id=plan.id,
+            )
+
+
+async def test_run_plan_hands_off_when_high_risk_write_attempted(session_factory):
+    """If a stale/malformed plan ever routes a write tool onto a high-risk
+    case, the agent loop must hand off instead of parking in AWAITING_APPROVAL."""
+    case_id = await make_case(session_factory, risk="HIGH", category="overtime")
+    register_tool_executor("search_policy", ok_executor("found chunks"))
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        run = await service.start_agent_run(case_id, "不应到达写工具")
+        await session.commit()
+
+        planner = Planner(None)
+        plan = planner.validate(
+            json.dumps(
+                {
+                    "steps": [
+                        {"tool": "search_policy", "params": {"query": "q"}},
+                        {
+                            "tool": "create_hr_case",
+                            "params": {"title": "t", "subject_ref": "s", "category": "overtime"},
+                        },
+                    ]
+                }
+            )
+        )
+        result = await run_plan(service, case_id, plan, agent_run_id=run.id)
+        assert result.status == "HANDED_OFF"
+        assert "high-risk case forbids" in (result.handoff_reason or "")
+
+
 def test_tool_schema_validation_rejects_bad_params():
     with pytest.raises(ToolError, match="INVALID_PARAMS"):
         validate_tool_call("create_hr_case", {"title": ""})
+    with pytest.raises(ToolError, match="INVALID_PARAMS"):
+        validate_tool_call("update_case_status", {"status": "FAILED"})
     normalized = validate_tool_call("search_policy", {"query": "加班", "top_k": "3"})
     assert normalized["top_k"] == 3  # coerced
+
+
+def test_tool_schema_normalization_is_json_serializable():
+    normalized = validate_tool_call(
+        "create_work_task",
+        {"title": "跟进面谈", "due_at": "2026-09-06T09:30:00+08:00"},
+    )
+
+    assert json.loads(json.dumps(normalized, sort_keys=True)) == {
+        "due_at": "2026-09-06T09:30:00+08:00",
+        "next_action": "",
+        "title": "跟进面谈",
+    }
 
 
 # --- agent loop ---
@@ -175,7 +257,10 @@ async def test_write_tool_stops_for_approval_and_never_executes(session_factory)
                 {
                     "steps": [
                         {"tool": "search_policy", "params": {"query": "加班费标准"}},
-                        {"tool": "create_hr_case", "params": {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"}},
+                        {
+                            "tool": "create_hr_case",
+                            "params": {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"},
+                        },
                     ]
                 }
             )
@@ -201,9 +286,12 @@ async def test_approved_write_executes_exactly_once(session_factory):
         await service.transition_case(case_id, "EVIDENCE_READY")
         plan = await service.save_plan(case_id, steps=[])
         approval = await service.request_approval(
-            case_id, "create_hr_case", {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"}, plan_id=plan.id
+            case_id,
+            "create_hr_case",
+            {"title": "加班费争议", "subject_ref": "EMP-SYN-001", "category": "overtime"},
+            plan_id=plan.id,
         )
-        await service.decide_approval(approval.id, "u9", "approve", "同意", role="hr_manager")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", "同意", role="hr_manager")
         await session.commit()
 
         async def executor(params: dict) -> dict:

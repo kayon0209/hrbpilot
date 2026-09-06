@@ -14,6 +14,8 @@ from app.data.models.hr_case import (
 )
 from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEntry
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
+from app.data.models.notification import InAppNotification
+from app.data.models.runtime import ExecutionGrant, OutboxMessage
 from app.data.models.scenarios import (
     CultureContent,
     EmployeeRequest,
@@ -24,6 +26,7 @@ from app.data.models.scenarios import (
 )
 from app.data.models.tenant import Tenant
 from app.data.models.user import User
+from app.data.models.work_task import WorkTask
 
 __all__ = [
     "AgentRun",
@@ -41,13 +44,16 @@ __all__ = [
     "DocumentChunk",
     "EmployeeRequest",
     "EvalResult",
+    "ExecutionGrant",
     "HRCase",
+    "InAppNotification",
     "InsightReport",
     "InterviewDigest",
     "KnowledgeBase",
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
     "OrgUnit",
+    "OutboxMessage",
     "Tenant",
     "TenantMixin",
     "TimestampMixin",
@@ -56,4 +62,5 @@ __all__ = [
     "UUIDPrimaryKey",
     "User",
     "WeeklyReport",
+    "WorkTask",
 ]

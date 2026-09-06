@@ -6,6 +6,7 @@ Middleware chain (in order):
 All routes and middleware are registered here.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,6 +32,7 @@ from app.access.routes.hr_case import router as hr_case_router
 from app.access.routes.interview_digest import router as interview_router
 from app.access.routes.kb import router as kb_router
 from app.access.routes.knowledge_feedback import router as knowledge_feedback_router
+from app.access.routes.notifications import router as notifications_router
 from app.access.routes.policy_qa import router as policy_qa_router
 from app.access.routes.settings import router as settings_router
 from app.access.routes.voice_insight import router as voice_router
@@ -43,6 +45,7 @@ from app.shared.logger import get_logger, setup_logging
 from app.shared.shutdown import shutdown
 
 logger = get_logger(__name__)
+_INFRASTRUCTURE_INIT_TIMEOUT_SECONDS = 5.0
 
 setup_logging()
 
@@ -51,13 +54,19 @@ async def _ensure_infrastructure() -> None:
     try:
         from app.rag.storage.milvus import MilvusStore
 
-        await MilvusStore().ensure_collection_async()
+        await asyncio.wait_for(
+            MilvusStore().ensure_collection_async(),
+            timeout=_INFRASTRUCTURE_INIT_TIMEOUT_SECONDS,
+        )
     except Exception as e:
         logger.warning("milvus_not_ready_at_startup", error=str(e))
     try:
         from app.rag.storage.object_store import ObjectStore
 
-        await ObjectStore().ensure_bucket_async()
+        await asyncio.wait_for(
+            ObjectStore().ensure_bucket_async(),
+            timeout=_INFRASTRUCTURE_INIT_TIMEOUT_SECONDS,
+        )
     except Exception as e:
         logger.warning("minio_not_ready_at_startup", error=str(e))
 
@@ -111,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(eval_metrics_router)
     app.include_router(work_summary_router)
     app.include_router(knowledge_feedback_router)
+    app.include_router(notifications_router)
     app.include_router(employee_request_router)
     app.include_router(data_source_router)
     app.include_router(audit_router)

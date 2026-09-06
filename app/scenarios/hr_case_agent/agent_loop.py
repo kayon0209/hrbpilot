@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from app.scenarios.hr_case_agent import state as case_state
 from app.scenarios.hr_case_agent.planner import MAX_STEPS_PER_RUN, CasePlanDraft, PlanStep
-from app.scenarios.hr_case_agent.service import HRCaseService
+from app.scenarios.hr_case_agent.service import HighRiskWriteBlockedError, HRCaseService
 from app.scenarios.hr_case_agent.tools import TOOL_KINDS, ToolError, validate_tool_call
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
@@ -80,12 +80,20 @@ async def run_plan(
             case_now = await service.get_case(case_id)
             if case_now.status == "EVIDENCE_READY":
                 await service.transition_case(case_id, case_state.PLAN_READY, reason=f"plan ready for {step.tool}")
-            approval = await service.request_approval(
-                case_id,
-                tool_name=step.tool,
-                params=normalized,
-                agent_run_id=agent_run_id,
-            )
+            try:
+                approval = await service.request_approval(
+                    case_id,
+                    tool_name=step.tool,
+                    params=normalized,
+                    agent_run_id=agent_run_id,
+                )
+            except HighRiskWriteBlockedError:
+                # Defensive: a high-risk case must never reach a write approval.
+                # If a stale/malformed plan does, hand off to a human instead of
+                # creating an AWAITING_APPROVAL state that can never execute.
+                result.status = "HANDED_OFF"
+                result.handoff_reason = f"step {index}: high-risk case forbids write tool {step.tool}"
+                break
             result.status = "AWAITING_APPROVAL"
             result.approval_id = approval.id
             result.steps_taken += 1
@@ -146,19 +154,31 @@ async def execute_approved_write(
 ) -> dict:
     """Run an approved write tool — the SECOND request after human approval.
 
-    Re-validates the tool call from the stored approval params (never trusts
-    the caller's copy), consumes the approval, records the idempotent
-    execution, and moves the case to EXECUTING → RESOLVED on success.
+    Transaction discipline for crash consistency:
+      1. CLAIM is committed FIRST: approval → CONSUMED and the execution row →
+         RUNNING are durable before any external side effect runs.
+      2. The external ``executor`` then runs OUTSIDE any then-open transaction
+         (no long database lock is held during the side effect).
+      3. COMPLETION/FAILURE is committed in a SECOND transaction.
+
+    If the process crashes after the external side effect but before the
+    completion commit, the CONSUMED approval (durable from step 1) blocks a
+    retry from re-executing the side effect — the approval cannot be claimed
+    again, so the external operation is not repeated.
     """
     from app.data.models.hr_case import ApprovalRequest
 
     approval = (
-        await service.session.execute(
-            __import__("sqlalchemy").select(ApprovalRequest).where(
-                ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == service.tenant_id
+        (
+            await service.session.execute(
+                __import__("sqlalchemy")
+                .select(ApprovalRequest)
+                .where(ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == service.tenant_id)
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if approval is None:
         raise NotFoundError("Approval request", approval_id)
 
@@ -175,16 +195,24 @@ async def execute_approved_write(
     if execution.status == "SUCCEEDED":
         return {"status": "already_done", "execution_id": execution.id}
 
+    # ---- Step 1: claim is durable BEFORE the external side effect. ----
     await service.transition_case(case_id, case_state.EXECUTING, reason=f"executing {approval.tool_name}")
+    await service.session.commit()
+
+    # ---- Step 2: external side effect, with no open DB transaction/lock. ----
     try:
         outcome = await executor(normalized)
     except ToolError as e:
+        # ---- Step 3a: failure recorded in a second transaction. ----
         await service.finish_tool_execution(execution.id, ok=False, error_code=e.code, error_message=str(e))
         await service.transition_case(case_id, case_state.FAILED, reason=e.code)
+        await service.session.commit()
         return {"status": "failed", "error_code": e.code, "execution_id": execution.id}
 
+    # ---- Step 3b: success recorded in a second transaction. ----
     await service.finish_tool_execution(execution.id, ok=True, result_summary=str(outcome.get("summary", ""))[:500])
     await service.transition_case(case_id, case_state.RESOLVED, reason=f"{approval.tool_name} done")
+    await service.session.commit()
     return {"status": "done", "execution_id": execution.id, "summary": outcome.get("summary", "")}
 
 
