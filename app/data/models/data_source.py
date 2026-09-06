@@ -35,6 +35,10 @@ class DataSource(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
             "event_route IN ('none', 'employee_request')",
             name="ck_data_sources_event_route",
         ),
+        CheckConstraint(
+            "wecom_callback_config_encrypted IS NULL OR platform = 'wecom'",
+            name="ck_data_sources_wecom_callback_config",
+        ),
         UniqueConstraint("tenant_id", "id", name="uq_data_sources_tenant_id"),
     )
 
@@ -58,6 +62,9 @@ class DataSource(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     revoked_reason: Mapped[str | None] = mapped_column(Text, default=None)
     credential_ref: Mapped[str | None] = mapped_column(String(500), default=None)  # KMS ref — never the secret
     credential_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)  # tenant-key encrypted
+    # WeCom callback configuration is a distinct, tenant-envelope-encrypted
+    # bundle.  It never reuses the application secret credential column.
+    wecom_callback_config_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     # OAuth state (connector backbone, migration 018). Token ciphertext only —
     # plaintext access/refresh tokens never touch storage or any API response.
     oauth_state: Mapped[str] = mapped_column(String(20), nullable=False, default="none")

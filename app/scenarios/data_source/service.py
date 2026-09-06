@@ -9,9 +9,11 @@ safe. Pause stops new syncs immediately; revoke also records when and why.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from app.shared.errors import AppError, NotFoundError, ValidationError
 from app.shared.logger import get_logger
@@ -71,6 +73,27 @@ class UpdateDataSourceBody(BaseModel):
     data_destination: str | None = Field(None, max_length=2000)
 
 
+class WeComCallbackConfigBody(BaseModel):
+    """Write-only configuration for one WeCom self-built application callback."""
+
+    corp_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    agent_id: str = Field(..., min_length=1, max_length=32, pattern=r"^[0-9]+$")
+    corp_secret: str = Field(..., min_length=1, max_length=2000)
+    callback_token: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9]+$")
+    encoding_aes_key: str = Field(..., min_length=43, max_length=43, pattern=r"^[A-Za-z0-9]{43}$")
+
+
+@dataclass(frozen=True)
+class WeComCallbackConfig:
+    """Decrypted callback material for internal request verification only."""
+
+    corp_id: str
+    agent_id: str
+    corp_secret: str
+    callback_token: str
+    encoding_aes_key: str
+
+
 class DataSourceView(BaseModel):
     """Admin-facing view — no credential material, ever."""
 
@@ -99,11 +122,35 @@ class DataSourceView(BaseModel):
     oauth_redirect_uri: str | None
     oauth_connected_at: str | None
     oauth_scopes: list[str]
+    wecom_callback_configured: bool
+    wecom_corp_id: str | None
+    wecom_agent_id: str | None
+    wecom_callback_path: str | None
     updated_at: str | None
+
+
+def _wecom_callback_config_summary(row) -> tuple[bool, str | None, str | None]:
+    encrypted = getattr(row, "wecom_callback_config_encrypted", None)
+    if not encrypted:
+        return False, None, None
+    try:
+        from cryptography.fernet import InvalidToken
+
+        from app.connectors.credentials import decrypt_credential
+
+        payload = json.loads(decrypt_credential(row.tenant_id, encrypted))
+        corp_id = payload.get("corp_id")
+        agent_id = payload.get("agent_id")
+        if isinstance(corp_id, str) and isinstance(agent_id, str):
+            return True, corp_id, agent_id
+    except (InvalidToken, TypeError, ValueError):
+        pass
+    return False, None, None
 
 
 def _view(row) -> DataSourceView:
     sync_status = row.sync_status or "never_run"
+    wecom_configured, wecom_corp_id, wecom_agent_id = _wecom_callback_config_summary(row)
     return DataSourceView(
         source_id=row.id,
         name=row.name,
@@ -130,6 +177,14 @@ def _view(row) -> DataSourceView:
         oauth_redirect_uri=getattr(row, "oauth_redirect_uri", None),
         oauth_connected_at=row.oauth_connected_at.isoformat() if getattr(row, "oauth_connected_at", None) else None,
         oauth_scopes=json.loads(row.oauth_scopes) if getattr(row, "oauth_scopes", None) else [],
+        wecom_callback_configured=wecom_configured,
+        wecom_corp_id=wecom_corp_id,
+        wecom_agent_id=wecom_agent_id,
+        wecom_callback_path=(
+            f"/api/connector-webhooks/wecom/{row.tenant_id}/{row.id}"
+            if row.platform == "wecom" and getattr(row, "event_route", "none") == "employee_request"
+            else None
+        ),
         updated_at=row.updated_at.isoformat() if getattr(row, "updated_at", None) else None,
     )
 
@@ -146,8 +201,6 @@ async def create_data_source(tenant_id: str, user_id: str, body: CreateDataSourc
             raise ValidationError("员工请求入口目前仅支持企业微信或飞书")
         if "messages" not in body.content_types:
             raise ValidationError("员工请求入口必须授权消息类型")
-        if body.platform == "wecom" and not (body.authorized_scope_json or {}).get("chat_ids"):
-            raise ValidationError("企业微信员工请求入口必须配置至少一个授权群 ID")
 
     # First-batch connectors (WeCom / Feishu) accept real credential
     # registration: with envelope encryption ready, credentials persist as
@@ -222,6 +275,84 @@ async def list_data_sources(tenant_id: str) -> list[DataSourceView]:
             .all()
         )
     return [_view(row) for row in rows]
+
+
+async def configure_wecom_callback(
+    tenant_id: str,
+    actor_id: str,
+    source_id: str,
+    body: WeComCallbackConfigBody,
+) -> dict[str, str | bool]:
+    """Replace one WeCom callback bundle without ever returning its secrets."""
+    from sqlalchemy import select
+
+    from app.connectors.credentials import encrypt_credential
+    from app.data.database import get_session_factory
+    from app.data.models.data_source import DataSource
+    from app.shared.audit import append_security_audit_event
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        row = await db.scalar(
+            select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id).with_for_update()
+        )
+        if row is None:
+            raise NotFoundError("Data source", source_id)
+        if row.platform != "wecom":
+            raise ValidationError("仅企业微信接入可配置企微回调")
+        if row.event_route != "employee_request":
+            raise ValidationError("该数据源未配置为员工请求入口")
+        if row.revoked_at is not None:
+            raise ValidationError("已撤销的接入不能配置回调；请重新建立接入")
+
+        payload = json.dumps(body.model_dump(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        row.wecom_callback_config_encrypted = encrypt_credential(tenant_id, payload)
+        row.updated_at = datetime.now(UTC)
+        await append_security_audit_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            action="data_source.wecom_callback_configured",
+            object_type="data_source",
+            object_id=source_id,
+            details={"configured": True, "corp_id": body.corp_id, "agent_id": body.agent_id},
+        )
+        await db.commit()
+    return {
+        "source_id": source_id,
+        "configured": True,
+        "corp_id": body.corp_id,
+        "agent_id": body.agent_id,
+        "callback_path": f"/api/connector-webhooks/wecom/{tenant_id}/{source_id}",
+    }
+
+
+async def load_wecom_callback_config(tenant_id: str, source_id: str) -> WeComCallbackConfig:
+    """Load one callback bundle under tenant RLS without exposing it to an API view."""
+    from cryptography.fernet import InvalidToken
+    from sqlalchemy import select
+
+    from app.connectors.credentials import decrypt_credential
+    from app.data.database import get_session_factory
+    from app.data.models.data_source import DataSource
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        row = await db.scalar(select(DataSource).where(DataSource.tenant_id == tenant_id, DataSource.id == source_id))
+    if row is None:
+        raise NotFoundError("Data source", source_id)
+    if row.platform != "wecom" or row.event_route != "employee_request" or row.revoked_at is not None:
+        raise AppError("数据源未完成企业微信员工请求入口配置", code="CONFIG_ERROR", status_code=503)
+    if not row.wecom_callback_config_encrypted:
+        raise AppError("数据源未完成企业微信回调配置", code="CONFIG_ERROR", status_code=503)
+    try:
+        payload = json.loads(decrypt_credential(tenant_id, row.wecom_callback_config_encrypted))
+        config = WeComCallbackConfigBody.model_validate(payload)
+    except (InvalidToken, TypeError, ValueError, PydanticValidationError) as exc:
+        raise AppError("数据源企业微信回调配置无效", code="CONFIG_ERROR", status_code=503) from exc
+    return WeComCallbackConfig(**config.model_dump())
 
 
 async def bind_platform_identity(
@@ -486,6 +617,7 @@ async def revoke_data_source(tenant_id: str, actor_id: str, source_id: str, reas
         # Local credential and OAuth token wipe — the actual security boundary.
         row.credential_encrypted = None
         row.credential_ref = None
+        row.wecom_callback_config_encrypted = None
         row.oauth_encrypted_token = None
         row.oauth_refresh_encrypted = None
         row.oauth_expires_at = None

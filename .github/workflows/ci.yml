@@ -7,6 +7,32 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://hrbp_ci_app:hrbp_ci_app_password@127.0.0.1:5432/hrbp_ci
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: hrbp_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hrbp_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,6 +42,72 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Initialize test schema
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/hrbp_ci
+        run: alembic upgrade head
+      - name: Provision RLS-bound test role
+        run: |
+          python - <<'PY'
+          import asyncio
+
+          import asyncpg
+
+          ROLE = "hrbp_ci_app"
+
+
+          async def main() -> None:
+              connection = await asyncpg.connect(
+                  host="127.0.0.1",
+                  port=5432,
+                  user="postgres",
+                  password="postgres",
+                  database="hrbp_ci",
+              )
+              try:
+                  await connection.execute(
+                      "CREATE ROLE hrbp_ci_app LOGIN PASSWORD 'hrbp_ci_app_password' "
+                      "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; "
+                      "GRANT USAGE ON SCHEMA public TO hrbp_ci_app; "
+                      "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO hrbp_ci_app; "
+                      "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO hrbp_ci_app;"
+                  )
+                  role = await connection.fetchrow(
+                      "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1", ROLE
+                  )
+                  if role is None or role["rolsuper"] or role["rolbypassrls"]:
+                      raise RuntimeError(f"CI test role is not RLS-bound: {role!r}")
+              finally:
+                  await connection.close()
+
+
+          asyncio.run(main())
+          PY
+      - name: Verify RLS-bound test connection
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+
+          import asyncpg
+
+
+          async def main() -> None:
+              url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+              connection = await asyncpg.connect(url)
+              try:
+                  role = await connection.fetchrow(
+                      "SELECT current_user, rolsuper, rolbypassrls "
+                      "FROM pg_roles WHERE rolname = current_user"
+                  )
+                  if role is None or role["current_user"] != "hrbp_ci_app" or role["rolsuper"] or role["rolbypassrls"]:
+                      raise RuntimeError(f"pytest connection is not RLS-bound: {role!r}")
+              finally:
+                  await connection.close()
+
+
+          asyncio.run(main())
+          PY
       - name: Lint
         run: |
           ruff check app tests evaluation

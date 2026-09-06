@@ -4,6 +4,7 @@ from app.data.models.access_scope import ManagerOrgScope, OrgUnit
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.connector import (
+    ConnectorDeliveryAttempt,
     ConnectorEventLog,
     ConnectorIdentityBinding,
     ConnectorIntakeEvent,
@@ -45,6 +46,7 @@ __all__ = [
     "CasePlan",
     "ChatMessage",
     "ChatSession",
+    "ConnectorDeliveryAttempt",
     "ConnectorEventLog",
     "ConnectorIdentityBinding",
     "ConnectorIntakeEvent",

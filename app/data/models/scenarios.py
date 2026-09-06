@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -179,6 +180,7 @@ class EmployeeRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
 
     __tablename__ = "employee_requests"
     __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_employee_requests_tenant_id"),
         CheckConstraint(
             "(connector_source_id IS NULL AND connector_external_event_id IS NULL AND external_sender_id IS NULL) "
             "OR (connector_source_id IS NOT NULL AND connector_external_event_id IS NOT NULL AND external_sender_id IS NOT NULL)",

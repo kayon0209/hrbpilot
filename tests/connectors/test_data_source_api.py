@@ -67,6 +67,16 @@ def _payload(**overrides) -> dict:
     return payload
 
 
+def _wecom_callback_config() -> dict[str, str]:
+    return {
+        "corp_id": "ww-test-corp",
+        "agent_id": "1000002",
+        "corp_secret": "test-corp-secret",
+        "callback_token": "CallbackToken1",
+        "encoding_aes_key": "a" * 43,
+    }
+
+
 async def _cleanup(tenant_id: str) -> None:
     factory = get_session_factory()
     async with factory() as db:
@@ -158,7 +168,7 @@ def test_employee_request_event_route_is_persisted(client: TestClient) -> None:
         asyncio.run(_cleanup(tenant_id))
 
 
-def test_wecom_employee_request_route_requires_structured_chat_scope(client: TestClient) -> None:
+def test_wecom_employee_request_route_allows_a_direct_app_message_scope(client: TestClient) -> None:
     tenant_id = str(uuid4())
     headers = {"Authorization": f"Bearer {_token(tenant_id, str(uuid4()))}"}
     try:
@@ -167,8 +177,81 @@ def test_wecom_employee_request_route_requires_structured_chat_scope(client: Tes
             headers=headers,
             json=_payload(event_route="employee_request", authorized_scope_json=None),
         )
-        assert response.status_code == 422, response.text
-        assert "群" in response.json()["message"]
+        assert response.status_code == 200, response.text
+        assert response.json()["authorized_scope_json"] is None
+    finally:
+        asyncio.run(_cleanup(tenant_id))
+
+
+def test_admin_stores_wecom_callback_configuration_without_secret_leak(client: TestClient) -> None:
+    tenant_id = str(uuid4())
+    headers = {"Authorization": f"Bearer {_token(tenant_id, str(uuid4()))}"}
+    configuration = _wecom_callback_config()
+    try:
+        source = client.post(
+            "/api/data-sources",
+            headers=headers,
+            json=_payload(
+                event_route="employee_request",
+                authorized_scope_json={"chat_ids": ["chat-hr"], "folder_ids": []},
+            ),
+        )
+        assert source.status_code == 200, source.text
+        source_id = source.json()["source_id"]
+
+        stored = client.put(
+            f"/api/data-sources/{source_id}/wecom-callback-config",
+            headers=headers,
+            json=configuration,
+        )
+        assert stored.status_code == 200, stored.text
+        assert stored.json() == {
+            "source_id": source_id,
+            "configured": True,
+            "corp_id": configuration["corp_id"],
+            "agent_id": configuration["agent_id"],
+            "callback_path": f"/api/connector-webhooks/wecom/{tenant_id}/{source_id}",
+        }
+
+        listed = client.get("/api/data-sources", headers=headers)
+        assert listed.status_code == 200, listed.text
+        for secret in (
+            configuration["corp_secret"],
+            configuration["callback_token"],
+            configuration["encoding_aes_key"],
+        ):
+            assert secret not in listed.text
+            assert secret not in stored.text
+        assert (
+            listed.json()["sources"][0]["wecom_callback_path"]
+            == f"/api/connector-webhooks/wecom/{tenant_id}/{source_id}"
+        )
+    finally:
+        asyncio.run(_cleanup(tenant_id))
+
+
+def test_wecom_callback_configuration_rejects_non_wecom_source(client: TestClient) -> None:
+    tenant_id = str(uuid4())
+    headers = {"Authorization": f"Bearer {_token(tenant_id, str(uuid4()))}"}
+    try:
+        source = client.post(
+            "/api/data-sources",
+            headers=headers,
+            json=_payload(
+                platform="feishu",
+                event_route="employee_request",
+                authorized_scope_json=None,
+            ),
+        )
+        assert source.status_code == 200, source.text
+
+        rejected = client.put(
+            f"/api/data-sources/{source.json()['source_id']}/wecom-callback-config",
+            headers=headers,
+            json=_wecom_callback_config(),
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "企业微信" in rejected.json()["message"]
     finally:
         asyncio.run(_cleanup(tenant_id))
 

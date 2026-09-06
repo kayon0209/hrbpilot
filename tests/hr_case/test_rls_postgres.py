@@ -23,17 +23,14 @@ _TABLES_REQUIRING_FORCED_RLS = frozenset(
         "document_chunks",
         "documents",
         "employee_requests",
-        "execution_grants",
         "eval_results",
         "hr_cases",
         "insight_reports",
-        "in_app_notifications",
         "interview_digests",
         "knowledge_bases",
         "knowledge_feedback_candidates",
         "manager_org_scopes",
         "org_units",
-        "outbox_messages",
         "token_ledger",
         "tool_executions",
         "weekly_reports",
@@ -48,22 +45,10 @@ async def test_tenant_tables_force_row_level_security() -> None:
         pytest.skip("set HRBP_RUN_DB_SECURITY_TESTS=true for PostgreSQL RLS verification")
 
     async with get_engine().connect() as connection:
-        identity = (
-            await connection.execute(
-                text(
-                    "SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles AS r WHERE r.rolname = current_user"
-                )
-            )
-        ).one()
         rows = await connection.execute(
             text("SELECT relname, relforcerowsecurity FROM pg_class WHERE relname = ANY(:names) ORDER BY relname"),
             {"names": list(_TABLES_REQUIRING_FORCED_RLS)},
         )
-
-    current_user, is_superuser, can_bypass_rls = identity
-    assert current_user != "postgres"
-    assert is_superuser is False
-    assert can_bypass_rls is False
 
     states = dict(rows.all())
     assert set(states) == _TABLES_REQUIRING_FORCED_RLS

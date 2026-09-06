@@ -8,8 +8,6 @@ import pytest
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-
 @pytest.fixture(autouse=True)
 def _isolate_llm_provider_module_state():
     """Snapshot and restore the LLM orchestrator module globals per test.

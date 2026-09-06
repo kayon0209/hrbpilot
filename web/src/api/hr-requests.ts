@@ -1,5 +1,15 @@
 import { apiClient } from './http'
 
+export interface HrDeliveryAttempt {
+  attempt_id: string
+  status: 'queued' | 'simulated_accepted' | 'retryable_failed' | 'rejected'
+  attempt_count: number
+  provider_msgid: string | null
+  safe_message: string
+  retryable: boolean
+  error: string | null
+}
+
 export interface HrRequestItem {
   request_id: string
   request_type: string
@@ -15,6 +25,8 @@ export interface HrRequestItem {
   hr_note: string | null
   hr_case_id: string | null
   hr_owner_id: string | null
+  connector_source_label: string | null
+  delivery: HrDeliveryAttempt | null
 }
 
 export interface Assignee {
@@ -42,4 +54,11 @@ export function triageHrRequest(requestId: string, body: {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+export function retryHrDelivery(requestId: string, attemptId: string) {
+  return apiClient.request<HrDeliveryAttempt>(
+    `/api/hr-requests/${requestId}/delivery-attempts/${attemptId}/retry`,
+    { method: 'POST' },
+  )
 }

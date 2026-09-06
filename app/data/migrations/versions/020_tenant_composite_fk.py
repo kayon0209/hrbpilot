@@ -214,36 +214,9 @@ def downgrade() -> None:
             touched.add(child)
             touched.add(parent)
             op.drop_constraint(_constraint, child, type_="foreignkey")
-
-        # ``020`` replaced, rather than supplemented, the historical
-        # single-column foreign keys.  A downgrade must therefore recreate
-        # every previous constraint before earlier revisions are asked to
-        # remove their own schema.  In particular, ``016`` owns
-        # ``fk_culture_contents_created_by`` and cannot downgrade if this
-        # revision merely drops the composite replacement.
-        #
-        # The lists intentionally have the same order.  Keep the invariant
-        # explicit so a future composite FK cannot silently lose its historic
-        # downgrade counterpart.
-        for (old_child, old_constraint), (child, composite_constraint, parent, column) in zip(
-            _OLD_FKS, _CHILD_FKS, strict=True
-        ):
-            if old_child != child:
-                raise RuntimeError(
-                    f"020 tenant-FK migration lists are out of sync: old={old_child!r}, composite={child!r}"
-                )
+        for child, _constraint in reversed(_OLD_FKS):
             _no_force(child)
-            _no_force(parent)
             touched.add(child)
-            touched.add(parent)
-            op.create_foreign_key(
-                old_constraint,
-                child,
-                parent,
-                [column],
-                ["id"],
-                ondelete="CASCADE" if composite_constraint == "fk_document_chunks_tenant_document" else None,
-            )
     finally:
         for table in touched:
             _re_force(table)

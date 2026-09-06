@@ -1,8 +1,8 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncState } from '../../components/AsyncState'
 import { listAdminUsers, type AdminUserView } from '../../api/admin-users'
-import { bindPlatformIdentity, createDataSource, listDataSources, pauseDataSource, resumeDataSource, revokeDataSource, PLATFORMS, type DataSourceView } from '../../api/data-sources'
+import { bindPlatformIdentity, configureWeComCallback, createDataSource, listDataSources, pauseDataSource, resumeDataSource, revokeDataSource, PLATFORMS, type DataSourceView } from '../../api/data-sources'
 import styles from './DataSourcesPage.module.css'
 
 /**
@@ -24,6 +24,10 @@ export function DataSourcesPage() {
       bindPlatformIdentity(sourceId, { external_user_id: externalUserId, user_id: userId })
     ),
   })
+  const configureWeCom = useMutation({
+    mutationFn: ({ sourceId, body }: { sourceId: string; body: Parameters<typeof configureWeComCallback>[1] }) => configureWeComCallback(sourceId, body),
+    onSuccess: invalidate,
+  })
 
   const [name, setName] = useState('')
   const [platform, setPlatform] = useState('feishu')
@@ -32,8 +36,13 @@ export function DataSourcesPage() {
   const [chatIds, setChatIds] = useState('')
   const [eventRoute, setEventRoute] = useState<'none' | 'employee_request'>('none')
   const [destination, setDestination] = useState('')
+  const [showCreate, setShowCreate] = useState(true)
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [revokeReason, setRevokeReason] = useState('')
+
+  useEffect(() => {
+    if ((sources.data?.sources.length ?? 0) > 0 && !create.isSuccess) setShowCreate(false)
+  }, [create.isSuccess, sources.data?.sources.length])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -51,7 +60,7 @@ export function DataSourcesPage() {
       content_types: eventRoute === 'employee_request' ? ['messages'] : ['documents', 'attachments'],
       data_destination: destination.trim(),
     })
-    setName(''); setPurpose(''); setScope(''); setChatIds(''); setEventRoute('none'); setDestination('')
+    setName(''); setPurpose(''); setScope(''); setChatIds(''); setEventRoute('none'); setDestination(''); setShowCreate(false)
   }
 
   return (
@@ -64,7 +73,7 @@ export function DataSourcesPage() {
         </div>
       </header>
 
-      <section className="panel">
+      {showCreate && <section className="panel">
         <h2>登记材料来源</h2>
         <p className={styles.note}>先记录要接入什么和谁可以使用。账号授权将在安全接入流程开放后单独完成，本页不会收集密码或密钥。</p>
         <form onSubmit={submit} className={styles.form}>
@@ -87,18 +96,22 @@ export function DataSourcesPage() {
             {eventRoute === 'employee_request' && <small>仅在平台账号已与员工身份显式绑定后，消息才会生成员工请求；未绑定消息会等待管理员确认，绝不按昵称猜测。</small>}
           </label>
           <label>授权范围<input value={scope} onChange={e => setScope(e.target.value)} maxLength={2000} required placeholder="仅授权哪些文件夹、群组或规则" /></label>
-          {platform === 'wecom' && <label>企业微信群 ID（逗号分隔）<input value={chatIds} onChange={e => setChatIds(e.target.value)} maxLength={2000} required={eventRoute === 'employee_request'} placeholder="chat_hr, chat_east" /><small>只有这里列出的群消息会被后端消费；员工请求入口至少需要一个群 ID。</small></label>}
+          {platform === 'wecom' && <label>企业微信群 ID（可选，逗号分隔）<input value={chatIds} onChange={e => setChatIds(e.target.value)} maxLength={2000} placeholder="chat_hr, chat_east" /><small>自建应用可直接接收员工私聊，不需要群 ID；如另行启用群消息，再在这里记录经授权的群范围。</small></label>}
           <label>数据去向<input value={destination} onChange={e => setDestination(e.target.value)} maxLength={2000} required placeholder="材料进入哪个工作区，谁可见" /></label>
           <p className={styles.note}>完成企业授权后，本页会显示实际可同步范围。个人微信不做任何聊天抓取。</p>
           <div className={styles.actions}>
             <button className="primary-button" type="submit" disabled={create.isPending}>{create.isPending ? '正在保存…' : '保存接入计划'}</button>
+            {(sources.data?.sources.length ?? 0) > 0 && <button className="secondary-button" type="button" onClick={() => setShowCreate(false)}>取消新增</button>}
           </div>
           {create.isError && <p className={styles.error} role="alert">添加未保存：{create.error.message}</p>}
         </form>
-      </section>
+      </section>}
 
       <section className="panel" aria-labelledby="list-heading">
-        <h2 id="list-heading">接入计划</h2>
+        <div className={styles.sectionHeading}>
+          <h2 id="list-heading">接入计划</h2>
+          {!showCreate && <button className="secondary-button" type="button" onClick={() => setShowCreate(true)}>新增接入</button>}
+        </div>
         {sources.isPending && <AsyncState kind="loading" title="正在读取接入" />}
         {sources.isError && (
           <AsyncState kind="error" title="接入读取失败" detail={sources.error.message} action={<button onClick={() => sources.refetch()}>重试</button>} />
@@ -115,10 +128,12 @@ export function DataSourcesPage() {
               employeesLoading={users.isPending}
               bindingError={bindIdentity.isError ? bindIdentity.error.message : null}
               onBindIdentity={(externalUserId, userId) => bindIdentity.mutateAsync({ sourceId: source.source_id, externalUserId, userId })}
+              wecomConfigError={configureWeCom.isError ? configureWeCom.error.message : null}
+              onConfigureWeCom={body => configureWeCom.mutateAsync({ sourceId: source.source_id, body })}
               onPause={pause.mutate}
               onResume={resume.mutate}
               onRevoke={setRevokingId}
-              busy={pause.isPending || resume.isPending || revoke.isPending || bindIdentity.isPending}
+              busy={pause.isPending || resume.isPending || revoke.isPending || bindIdentity.isPending || configureWeCom.isPending}
             />
           ))}
         </div>
@@ -141,12 +156,14 @@ export function DataSourcesPage() {
   )
 }
 
-function SourceCard({ source, employees, employeesLoading, bindingError, onBindIdentity, onPause, onResume, onRevoke, busy }: {
+function SourceCard({ source, employees, employeesLoading, bindingError, onBindIdentity, wecomConfigError, onConfigureWeCom, onPause, onResume, onRevoke, busy }: {
   source: DataSourceView
   employees: AdminUserView[]
   employeesLoading: boolean
   bindingError: string | null
   onBindIdentity: (externalUserId: string, userId: string) => Promise<unknown>
+  wecomConfigError: string | null
+  onConfigureWeCom: (body: Parameters<typeof configureWeComCallback>[1]) => Promise<unknown>
   onPause: (id: string) => void
   onResume: (id: string) => void
   onRevoke: (id: string) => void
@@ -176,6 +193,15 @@ function SourceCard({ source, employees, employeesLoading, bindingError, onBindI
         <p className={styles.revokedNote}>已于 {source.revoked_at?.slice(0, 10)} 撤销：{source.revoked_reason}。如需再次使用，请新建接入并重新授权。</p>
       ) : (
         <>
+          {source.platform === 'wecom' && source.event_route === 'employee_request' && <WeComCallbackForm
+            configured={source.wecom_callback_configured}
+            corpId={source.wecom_corp_id}
+            agentId={source.wecom_agent_id}
+            callbackPath={source.wecom_callback_path}
+            error={wecomConfigError}
+            busy={busy}
+            onConfigure={onConfigureWeCom}
+          />}
           {source.event_route === 'employee_request' && <IdentityBindingForm
             employees={employees}
             employeesLoading={employeesLoading}
@@ -195,6 +221,64 @@ function SourceCard({ source, employees, employeesLoading, bindingError, onBindI
       )}
     </article>
   )
+}
+
+function WeComCallbackForm({ configured, corpId, agentId, callbackPath, error, busy, onConfigure }: {
+  configured: boolean
+  corpId: string | null
+  agentId: string | null
+  callbackPath: string | null
+  error: string | null
+  busy: boolean
+  onConfigure: (body: Parameters<typeof configureWeComCallback>[1]) => Promise<unknown>
+}) {
+  const [corpIdInput, setCorpIdInput] = useState(corpId ?? '')
+  const [agentIdInput, setAgentIdInput] = useState(agentId ?? '')
+  const [corpSecret, setCorpSecret] = useState('')
+  const [callbackToken, setCallbackToken] = useState('')
+  const [encodingAesKey, setEncodingAesKey] = useState('')
+  const [notice, setNotice] = useState('')
+  const [copyNotice, setCopyNotice] = useState('')
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!corpIdInput.trim() || !agentIdInput.trim() || !corpSecret || !callbackToken || !encodingAesKey) return
+    setNotice('')
+    await onConfigure({
+      corp_id: corpIdInput.trim(), agent_id: agentIdInput.trim(), corp_secret: corpSecret,
+      callback_token: callbackToken, encoding_aes_key: encodingAesKey,
+    })
+    setCorpSecret(''); setCallbackToken(''); setEncodingAesKey('')
+    setNotice('已加密保存回调配置。请在企业微信自建应用中填入本数据源的回调地址并完成 URL 验证。')
+  }
+
+  return <section className={styles.identityBinding} aria-label="配置企业微信回调">
+    <h2>第 1 步：企业微信回调</h2>
+    <p>{configured ? `已配置 CorpID ${corpId}、AgentID ${agentId}；如需轮换密钥，请完整重新填写。` : '填写自建应用的回调参数。密钥只会加密保存，保存后不会再次显示。'}</p>
+    {callbackPath && <div className={styles.callbackPath}>
+      <p>在企业微信应用回调 URL 中填写“已部署服务的 HTTPS 域名”加下方路径：</p>
+      <code>{callbackPath}</code>
+      <button className="secondary-button" type="button" onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(callbackPath)
+          setCopyNotice('回调路径已复制；请粘贴在企业微信应用的 HTTPS 域名之后。')
+        } catch {
+          setCopyNotice('浏览器未允许复制，请手动复制上方路径。')
+        }
+      }}>复制回调路径</button>
+      {copyNotice && <p role="status">{copyNotice}</p>}
+    </div>}
+    <form onSubmit={submit} className={styles.form}>
+      <label>CorpID<input value={corpIdInput} onChange={event => setCorpIdInput(event.target.value)} maxLength={128} required /></label>
+      <label>AgentID<input value={agentIdInput} onChange={event => setAgentIdInput(event.target.value)} inputMode="numeric" maxLength={32} required /></label>
+      <label>Secret<input type="password" value={corpSecret} onChange={event => setCorpSecret(event.target.value)} maxLength={2000} required /></label>
+      <label>回调 Token<input type="password" value={callbackToken} onChange={event => setCallbackToken(event.target.value)} maxLength={32} required /></label>
+      <label>EncodingAESKey<input type="password" value={encodingAesKey} onChange={event => setEncodingAesKey(event.target.value)} minLength={43} maxLength={43} required /></label>
+      <div className={styles.actions}><button className="secondary-button" type="submit" disabled={busy}>{busy ? '正在加密保存…' : configured ? '更新回调配置' : '保存回调配置'}</button></div>
+      {notice && <p role="status">{notice}</p>}
+      {error && <p className={styles.error} role="alert">配置未保存：{error}</p>}
+    </form>
+  </section>
 }
 
 function IdentityBindingForm({ employees, employeesLoading, bindingError, busy, onBind }: {
@@ -220,8 +304,8 @@ function IdentityBindingForm({ employees, employeesLoading, bindingError, busy, 
   }
 
   return <section className={styles.identityBinding} aria-label="确认平台员工身份">
-    <h2>确认平台员工身份</h2>
-    <p>仅在核验实际账号归属后操作。系统不会按昵称、姓名或邮箱自动匹配。</p>
+    <h2>第 2 步：确认平台员工身份</h2>
+    <p>URL 验证后，核验实际账号归属再操作。系统不会按昵称、姓名或邮箱自动匹配。</p>
     {employeesLoading ? <p>正在读取员工名单…</p> : employees.length === 0 ? <p>尚无可绑定员工，请先在“用户与权限”中建立员工账号。</p> : <form onSubmit={submit} className={styles.form}>
       <label>平台账号 ID<input value={externalUserId} onChange={event => setExternalUserId(event.target.value)} maxLength={200} required placeholder="例如：ou_123 或 userid" /></label>
       <label>HRBPilot 员工

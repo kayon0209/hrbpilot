@@ -8,6 +8,12 @@
 .status_in_progress{color:var(--evidence);background:var(--evidence-soft)}
 .status_resolved{color:var(--success);background:var(--success-soft)}
 .card h3{margin:0 0 6px;font:500 var(--text-h3)/var(--text-h3-line) var(--font-body)}
+.source{margin:0 0 6px;color:var(--evidence);font-size:var(--text-meta);font-weight:600}
+.delivery{margin:8px 0;padding:8px 10px;border-radius:var(--radius-1);font-size:var(--text-meta);color:var(--muted);background:var(--surface)}
+.delivery p{margin:0 0 6px}
+.deliveryAccepted{color:var(--success);background:var(--success-soft)}
+.deliveryRetryable{color:var(--warning);background:var(--warning-soft)}
+.deliveryRejected{color:var(--danger);background:var(--danger-soft)}
 .description{margin:0;color:var(--ink-soft);font-size:var(--text-ui);line-height:1.6}
 .materials{margin:10px 0 0;padding:10px;color:var(--warning);background:var(--warning-soft);font-size:var(--text-ui);border-radius:var(--radius-1)}
 .internalNote{margin:8px 0 0;color:var(--ink-soft);font-size:var(--text-meta);border-left:2px solid var(--line-strong);padding-left:8px}

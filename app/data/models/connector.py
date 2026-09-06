@@ -63,6 +63,55 @@ class ConnectorEventLog(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     replay_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class ConnectorDeliveryAttempt(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    """A durable, local-only protocol simulator outbox record.
+
+    This is deliberately separate from the inbound connector event log.  A
+    successful status means only that the local simulator accepted the request;
+    it never proves external WeCom delivery.
+    """
+
+    __tablename__ = "connector_delivery_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'simulated_accepted', 'retryable_failed', 'rejected')",
+            name="ck_connector_delivery_attempt_status",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_connector_delivery_attempt_count"),
+        UniqueConstraint(
+            "tenant_id",
+            "employee_request_id",
+            "content_digest",
+            name="uq_connector_delivery_attempt_business_version",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "employee_request_id"],
+            ["employee_requests.tenant_id", "employee_requests.id"],
+            name="fk_connector_delivery_attempt_tenant_request",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "source_id"],
+            ["data_sources.tenant_id", "data_sources.id"],
+            name="fk_connector_delivery_attempt_tenant_source",
+        ),
+    )
+
+    employee_request_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(40), nullable=False, default="wecom_simulator")
+    recipient_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    provider_msgid: Mapped[str | None] = mapped_column(String(255), default=None)
+    provider_errcode: Mapped[int | None] = mapped_column(Integer, default=None)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
 class ConnectorIdentityBinding(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     """Administrator-verified platform identity to internal employee mapping.
 
