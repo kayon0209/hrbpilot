@@ -10,7 +10,7 @@ export type PolicyStreamEvent =
   | { type: 'correction'; data: { full_text: string } }
   // 'complete' carries session_id so follow-ups keep the same thread (spec §7.3);
   // confidence/latency stay internal — never surfaced to users (spec §11)
-  | { type: 'complete'; data: { message_id?: string; session_id?: string; has_evidence?: boolean } }
+  | { type: 'complete'; data: { message_id?: string; session_id?: string; has_evidence?: boolean; history_used?: boolean; history_message_count?: number } }
   | { type: 'error'; data: { message: string } }
 
 export async function listPolicyKnowledgeBases() {

@@ -40,6 +40,22 @@ cd web && E2E_API_TARGET="http://127.0.0.1:8001" corepack pnpm exec vite --port 
 corepack pnpm exec playwright test
 ```
 
+### 可复现的隔离库账号播种
+
+不要复用开发库账号，也不要把测试密码写入 `.env`。对已证明隔离的测试库，可由
+`scripts/seed_e2e_role_accounts.py` 创建一次性四角色 bcrypt 账号。调用方必须在
+当前进程提供随机 `E2E_RUN_ID`（6–16 位小写字母/数字）与至少 16 位的
+`E2E_SEED_PASSWORD`；脚本不会输出密码。账号邮箱格式为
+`e2e-<role>-<run_id>@hrbpilot.test`，随后由同一进程拼出 `E2E_ROLE_ACCOUNTS`。
+
+示例（仅限隔离库）：
+
+```bash
+E2E_RUN_ID=abc123 E2E_SEED_PASSWORD='<random>' \\
+DATABASE_URL='<isolated database URL>' \\
+python scripts/seed_e2e_role_accounts.py
+```
+
 ## 已知注意事项
 
 1. **限流**：全套 ~25 用例密集请求会触发 `user 30/min` 限流（429「请求过于频繁」）。

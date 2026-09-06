@@ -16,6 +16,7 @@ from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db, tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.knowledge_base import Document, KnowledgeBase
+from app.scenarios.policy_qa.context_manager import ContextManager
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
 from app.scenarios.policy_qa.schemas import QAResponse
 from app.shared.errors import NotFoundError
@@ -120,12 +121,34 @@ async def _save_history_async(
         return assistant_message.id
 
 
+async def _load_session_history(
+    db: AsyncSession, tenant_id: str, user_id: str, session_id: str | None
+) -> tuple[list[dict[str, str]] | None, dict]:
+    """Load bounded conversation history for an owned session.
+
+    Returns (history_messages, history_meta). When session_id is absent or
+    unknown, history is None and meta reports history_used=False — the frontend
+    then stops claiming follow-ups carry context it never received.
+    """
+    if not session_id:
+        return None, ContextManager.build_meta(None)
+    context = await ContextManager().load_history(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+        scenario_id="policy_qa",
+    )
+    return (context.messages if context.messages else None), ContextManager.build_meta(context)
+
+
 @router.post("/ask")
 @require_auth
 async def ask_question(body: AskRequest, request: Request, session: AsyncSession = Depends(get_db)):
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
+    history, history_meta = await _load_session_history(session, tenant_id, user_id, body.session_id)
     await session.close()
 
     if body.stream:
@@ -137,18 +160,17 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                 # through, so the persisted history matches what the user
                 # actually saw (chunk text was previously discarded — the
                 # assistant message saved with an empty body).
-                streamed_answer = ""
                 streamed_citations = ""
                 async for raw_event in orchestrator.execute_stream(
-                    body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id
+                    body.question,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    kb_id=kb.id,
+                    history=history,
+                    history_meta=history_meta,
                 ):
                     event = json.loads(raw_event)
                     if event.get("event") == "chunk":
-                        try:
-                            chunk_payload = json.loads(event.get("data", "{}"))
-                        except (json.JSONDecodeError, TypeError):
-                            chunk_payload = {}
-                        streamed_answer += str(chunk_payload.get("text", ""))
                         yield f"data: {raw_event}\n\n"
                         continue
                     if event.get("event") == "sources":
@@ -160,8 +182,12 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                             done_payload = json.loads(event.get("data", "{}"))
                         except (json.JSONDecodeError, TypeError):
                             done_payload = {}
+                        # PR-03: the terminal answer is the authoritative text —
+                        # the postprocessor/guardrails already applied to the full
+                        # stream, so persistence must store it (not chunk replay).
+                        final_answer = str(done_payload.get("final_answer", ""))
                         qa_result = QAResponse(
-                            answer=streamed_answer,
+                            answer=final_answer,
                             citations=[],
                             confidence=float(done_payload.get("confidence", 0.0) or 0.0),
                             has_evidence=bool(done_payload.get("has_evidence", False)),
@@ -179,6 +205,8 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
                         )
                         done_payload["message_id"] = message_id
                         done_payload["latency_ms"] = int((time.time() - start) * 1000)
+                        done_payload["history_used"] = history_meta.get("history_used", False)
+                        done_payload["history_message_count"] = history_meta.get("history_message_count", 0)
                         yield f"data: {json.dumps({'event': 'done', 'data': json.dumps(done_payload, ensure_ascii=False)})}\n\n"
                         continue
                     if event.get("event") == "error":
@@ -199,10 +227,20 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
             },
         )
 
-    result = await orchestrator.execute(body.question, tenant_id=tenant_id, user_id=user_id, kb_id=kb.id)
+    history, history_meta = await _load_session_history(session, tenant_id, user_id, body.session_id)
+    result = await orchestrator.execute(
+        body.question,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        kb_id=kb.id,
+        history=history,
+        history_meta=history_meta,
+    )
     message_id = await _save_history_async(tenant_id, user_id, body.question, result, body.session_id)
     response = result.model_dump()
     response["message_id"] = message_id
+    response["history_used"] = history_meta.get("history_used", False)
+    response["history_message_count"] = history_meta.get("history_message_count", 0)
     return response
 
 

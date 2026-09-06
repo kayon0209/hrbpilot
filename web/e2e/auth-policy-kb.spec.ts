@@ -16,9 +16,14 @@ async function login(page: Parameters<Parameters<typeof test>[1]>[0]['page'], ac
 
 async function askPolicyQuestion(page: Parameters<Parameters<typeof test>[1]>[0]['page']) {
   await expect(page.getByRole('heading', { name: '制度问答' })).toBeVisible()
-  await expect(page.getByLabel('知识库')).toBeEnabled()
+  const knowledgeBase = page.getByLabel('知识库')
+  await expect(knowledgeBase).toBeEnabled()
+  await expect(knowledgeBase.locator('option')).not.toHaveCount(0)
+  await knowledgeBase.selectOption({ index: 0 })
   await page.getByLabel('问题').fill('请假超过三天需要经过哪些审批？')
-  await page.getByRole('button', { name: '发送问题' }).click()
+  const send = page.getByRole('button', { name: '发送问题' })
+  await expect(send).toBeEnabled()
+  await send.click()
 
   await expect(page.getByRole('button', { name: '有帮助' })).toBeVisible({ timeout: 120_000 })
   // The evidence panel renders "依据与来源" and its article list as siblings

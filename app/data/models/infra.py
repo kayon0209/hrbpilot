@@ -8,7 +8,7 @@ All have tenant_id for RLS.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -66,6 +66,11 @@ class EvalResult(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     scenario_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(100), nullable=False)  # citation_accuracy | answer_relevance | ...
     score: Mapped[float] = mapped_column(Float, nullable=False)
+    # True when the row carries a placeholder/estimated score that must not
+    # drive averages, trends or release judgements (historical auto-eval
+    # constants). Real measured rows always write False. The server default
+    # mirrors the Python default so raw SQL inserts also default to measured.
+    is_stub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     request_id: Mapped[str | None] = mapped_column(String(36), default=None)  # linked to audit log
 
     def __repr__(self) -> str:

@@ -25,6 +25,7 @@ from app.data.models.hr_case import (
     ToolExecution,
 )
 from app.scenarios.hr_case_agent import state as case_state
+from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
 from app.shared.errors import AppError, NotFoundError
 from app.shared.logger import get_logger
 
@@ -45,14 +46,25 @@ class ApprovalError(AppError):
         super().__init__(message, code="APPROVAL_INVALID", status_code=409)
 
 
+class HighRiskWriteBlockedError(AppError):
+    """A high-risk case forbids write tools — evidence-only plus handoff."""
+
+    def __init__(self, category: str, risk_level: str, tool_name: str) -> None:
+        super().__init__(
+            f"High-risk case ({category}/{risk_level}) forbids write tool {tool_name}; evidence-only + human handoff",
+            code="HIGH_RISK_WRITE_BLOCKED",
+            status_code=409,
+        )
+
+
 # Roles allowed to decide approvals and execute write tools. The HR Case
 # Agent itself never holds these roles — it only proposes.
 DECIDER_ROLES = frozenset({"hr_manager", "admin"})
 
 # Phase 5 tool whitelist: write tools ALWAYS require an approval request;
 # read tools do not. begin_tool_execution enforces this split.
-WRITE_TOOLS = frozenset({"create_hr_case", "assign_case_owner", "send_case_notification", "update_case_status"})
-READ_TOOLS = frozenset({"search_policy", "get_policy_source"})
+WRITE_TOOLS = frozenset(tool.name for tool in TOOL_CATALOG.tools if tool.kind.value == "write")
+READ_TOOLS = frozenset(tool.name for tool in TOOL_CATALOG.tools if tool.kind.value == "read")
 
 
 def _parse_user_actor(actor: str) -> tuple[str | None, str | None]:
@@ -243,6 +255,13 @@ class HRCaseService:
         ttl_seconds: int = 3600,
     ) -> ApprovalRequest:
         case = await self.get_case(case_id)
+        if tool_name in WRITE_TOOLS:
+            from app.scenarios.hr_case_agent.planner import requires_human_review
+
+            if requires_human_review(case.category, case.risk_level):
+                # High-risk cases are evidence-only: no write approval can be
+                # requested, so the agent loop hands off instead of escalating.
+                raise HighRiskWriteBlockedError(case.category, case.risk_level, tool_name)
         case.status = case_state.transition(case.status, case_state.AWAITING_APPROVAL)
         expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         # Normalize first so the stored params carry schema defaults; the

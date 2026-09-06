@@ -10,6 +10,8 @@ supplies params; the service layer re-validates everything.
 
 from pydantic import BaseModel, Field
 
+from app.access.policies.contracts import ToolCatalog, ToolDefinition, ToolKind
+
 
 class ToolError(Exception):
     """Structured tool failure with a machine-readable code."""
@@ -53,6 +55,10 @@ class UpdateCaseStatusInput(BaseModel):
     status: str = Field(..., min_length=1, max_length=30)
 
 
+class ToolOutput(BaseModel):
+    summary: str = ""
+
+
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "search_policy": SearchPolicyInput,
     "get_policy_source": GetPolicySourceInput,
@@ -62,14 +68,40 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "update_case_status": UpdateCaseStatusInput,
 }
 
-TOOL_KINDS: dict[str, str] = {
-    "search_policy": "read",
-    "get_policy_source": "read",
-    "create_hr_case": "write",
-    "assign_case_owner": "write",
-    "send_case_notification": "write",
-    "update_case_status": "write",
+_TOOL_METADATA = {
+    "search_policy": (ToolKind.READ, "policy.read", "low"),
+    "get_policy_source": (ToolKind.READ, "policy.read", "low"),
+    "create_hr_case": (ToolKind.WRITE, "hr_case", "medium"),
+    "assign_case_owner": (ToolKind.WRITE, "hr_case", "medium"),
+    "send_case_notification": (ToolKind.WRITE, "hr_case", "medium"),
+    "update_case_status": (ToolKind.WRITE, "hr_case", "medium"),
 }
+
+TOOL_CATALOG = ToolCatalog(
+    version="hr-case-v1",
+    tools=tuple(
+        ToolDefinition(
+            name=name,
+            version="v1",
+            kind=kind,
+            input_schema=schema.model_json_schema(),
+            output_schema=ToolOutput.model_json_schema(),
+            required_capability=capability,
+            risk_level=risk_level,
+            approval_required=kind is ToolKind.WRITE,
+            timeout_seconds=30,
+            max_attempts=1,
+            supports_idempotency=kind is ToolKind.WRITE,
+        )
+        for name, schema in TOOL_SCHEMAS.items()
+        for kind, capability, risk_level in (_TOOL_METADATA[name],)
+    ),
+)
+
+# Compatibility view for the legacy agent loop.  It is derived from the one
+# catalog above, so planners, approvals, and execution do not define tool kind
+# independently.
+TOOL_KINDS: dict[str, str] = {tool.name: tool.kind.value for tool in TOOL_CATALOG.tools}
 
 
 def validate_tool_call(tool_name: str, params: dict) -> dict:

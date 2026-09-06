@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from app.scenarios.hr_case_agent import state as case_state
 from app.scenarios.hr_case_agent.planner import MAX_STEPS_PER_RUN, CasePlanDraft, PlanStep
-from app.scenarios.hr_case_agent.service import HRCaseService
+from app.scenarios.hr_case_agent.service import HighRiskWriteBlockedError, HRCaseService
 from app.scenarios.hr_case_agent.tools import TOOL_KINDS, ToolError, validate_tool_call
 from app.shared.errors import NotFoundError
 from app.shared.logger import get_logger
@@ -80,12 +80,20 @@ async def run_plan(
             case_now = await service.get_case(case_id)
             if case_now.status == "EVIDENCE_READY":
                 await service.transition_case(case_id, case_state.PLAN_READY, reason=f"plan ready for {step.tool}")
-            approval = await service.request_approval(
-                case_id,
-                tool_name=step.tool,
-                params=normalized,
-                agent_run_id=agent_run_id,
-            )
+            try:
+                approval = await service.request_approval(
+                    case_id,
+                    tool_name=step.tool,
+                    params=normalized,
+                    agent_run_id=agent_run_id,
+                )
+            except HighRiskWriteBlockedError:
+                # Defensive: a high-risk case must never reach a write approval.
+                # If a stale/malformed plan does, hand off to a human instead of
+                # creating an AWAITING_APPROVAL state that can never execute.
+                result.status = "HANDED_OFF"
+                result.handoff_reason = f"step {index}: high-risk case forbids write tool {step.tool}"
+                break
             result.status = "AWAITING_APPROVAL"
             result.approval_id = approval.id
             result.steps_taken += 1

@@ -103,14 +103,20 @@ class AutoEvaluator:
         metrics: list[str],
         tenant_id: str,
         scenario_id: str = "rag_pipeline",
+        history_messages: list[dict[str, str]] | None = None,
     ) -> EvalOutcome:
         """Run evaluation metrics on a pipeline result.
 
         Only successfully judged metrics are returned in ``scores`` and
         recorded into the aggregator; failures land in ``skipped_metrics``.
+
+        ``history_messages`` (optional, structured context from the Context
+        Manager) is used for metadata only — it never changes the judge
+        prompts and never leaks content into logs.
         """
         scores: dict[str, float] = {}
         skipped: list[SkippedMetric] = []
+        history_count = len(history_messages) if history_messages else 0
 
         for metric in metrics:
             if metric == "citation_accuracy":
@@ -159,6 +165,8 @@ class AutoEvaluator:
             scores=scores,
             skipped=[s.metric for s in skipped],
             tenant_id=tenant_id,
+            scenario_id=scenario_id,
+            history_message_count=history_count,
         )
         return EvalOutcome(scores=scores, skipped_metrics=skipped)
 

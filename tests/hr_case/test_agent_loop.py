@@ -16,7 +16,7 @@ from app.data.models.hr_case import ToolExecution
 from app.scenarios.hr_case_agent import agent_loop
 from app.scenarios.hr_case_agent.agent_loop import execute_approved_write, register_tool_executor, run_plan
 from app.scenarios.hr_case_agent.planner import MAX_PLAN_STEPS, Planner, PlanValidationError, requires_human_review
-from app.scenarios.hr_case_agent.service import ApprovalError, HRCaseService
+from app.scenarios.hr_case_agent.service import ApprovalError, HighRiskWriteBlockedError, HRCaseService
 from app.scenarios.hr_case_agent.tools import ToolError, validate_tool_call
 
 
@@ -125,6 +125,73 @@ def test_high_risk_requires_human_review():
     assert requires_human_review("termination", "LOW")
     assert requires_human_review("overtime", "HIGH")
     assert not requires_human_review("overtime", "LOW")
+
+
+async def test_high_risk_case_cannot_request_write_approval(session_factory):
+    """Service-layer guard: a high-risk case (category or HIGH risk level)
+    must never produce a write approval request, even when a caller bypasses
+    the route-level planner."""
+    case_id = await make_case(session_factory, risk="HIGH", category="overtime")
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        with pytest.raises(HighRiskWriteBlockedError):
+            await service.request_approval(
+                case_id,
+                "create_hr_case",
+                {"title": "t", "subject_ref": "s", "category": "overtime"},
+                plan_id=plan.id,
+            )
+
+
+async def test_high_risk_category_cannot_request_write_approval(session_factory):
+    """termination/harassment/discrimination/labor_arbitration are evidence-only
+    even when a caller marks the risk LOW."""
+    case_id = await make_case(session_factory, risk="LOW", category="termination")
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        with pytest.raises(HighRiskWriteBlockedError):
+            await service.request_approval(
+                case_id,
+                "send_case_notification",
+                {"channel": "email", "recipient_ref": "EMP-SYN-001", "template": "notice"},
+                plan_id=plan.id,
+            )
+
+
+async def test_run_plan_hands_off_when_high_risk_write_attempted(session_factory):
+    """If a stale/malformed plan ever routes a write tool onto a high-risk
+    case, the agent loop must hand off instead of parking in AWAITING_APPROVAL."""
+    case_id = await make_case(session_factory, risk="HIGH", category="overtime")
+    register_tool_executor("search_policy", ok_executor("found chunks"))
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        run = await service.start_agent_run(case_id, "不应到达写工具")
+        await session.commit()
+
+        planner = Planner(None)
+        plan = planner.validate(
+            json.dumps(
+                {
+                    "steps": [
+                        {"tool": "search_policy", "params": {"query": "q"}},
+                        {
+                            "tool": "create_hr_case",
+                            "params": {"title": "t", "subject_ref": "s", "category": "overtime"},
+                        },
+                    ]
+                }
+            )
+        )
+        result = await run_plan(service, case_id, plan, agent_run_id=run.id)
+        assert result.status == "HANDED_OFF"
+        assert "high-risk case forbids" in (result.handoff_reason or "")
 
 
 def test_tool_schema_validation_rejects_bad_params():

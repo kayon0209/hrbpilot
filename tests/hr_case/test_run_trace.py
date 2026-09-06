@@ -87,6 +87,14 @@ async def test_run_trace_exposes_full_trajectory(session_factory, monkeypatch):
         assert outcome.status == "COMPLETED"
 
         # call the trace endpoint with a faked auth context
+        # resolve_visible_user_ids opens its own session through the global
+        # engine (production PG); this test runs on an isolated sqlite engine,
+        # so pin the manager scope to the seeded creator id. The real scope
+        # resolution is covered by test_case_http_acceptance.py against PG.
+        async def _stub_visible_user_ids(tenant_id, actor_id, actor_role):
+            return {"u1"}
+
+        monkeypatch.setattr("app.access.routes.hr_case.resolve_visible_user_ids", _stub_visible_user_ids)
         request = Request({"type": "http", "headers": [], "client": ("127.0.0.1", 0)})
         request.state.user_id = "u1"
         request.state.tenant_id = "t1"

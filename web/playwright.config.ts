@@ -9,6 +9,10 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
     trace: 'retain-on-failure',
   },
+  // The suite shares one local backend and performs real streaming requests.
+  // Parallel Chromium workers exhaust Windows desktop resources and turn
+  // navigation into ERR_INSUFFICIENT_RESOURCES rather than product evidence.
+  workers: 1,
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   reporter: 'list',
 })

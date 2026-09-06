@@ -69,6 +69,10 @@ def svc(session_factory):
 
 
 async def make_case(session_factory, tenant="t1", **overrides):
+    # LOW matches HRCaseService.create_case's default: these tests exercise the
+    # approval/idempotency/lifecycle paths that only exist for non-high-risk
+    # cases. The evidence-only high-risk gate has dedicated coverage in
+    # test_agent_loop.py (risk="HIGH" and HIGH_RISK_CATEGORIES cases).
     async with session_factory() as session:
         service = HRCaseService(session, tenant)
         case = await service.create_case(
@@ -76,7 +80,7 @@ async def make_case(session_factory, tenant="t1", **overrides):
             subject_ref=overrides.get("subject_ref", "EMP-SYN-001"),
             category=overrides.get("category", "overtime"),
             title=overrides.get("title", "加班费争议"),
-            risk_level=overrides.get("risk_level", "HIGH"),
+            risk_level=overrides.get("risk_level", "LOW"),
         )
         await session.commit()
         return case.id

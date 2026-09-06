@@ -49,6 +49,32 @@ class PipelineResult:
     tokens_used: int | None = None
 
 
+class SegmentTimer:
+    """Record stage durations (ms) for structured observability logs.
+
+    Deliberately metadata-only: it stores stage names and millisecond deltas,
+    never prompts, queries, document text or employee data. Consumers must
+    keep it that way when forwarding fields into a log line.
+    """
+
+    def __init__(self) -> None:
+        self._started: dict[str, float] = {}
+        self._durations_ms: dict[str, int] = {}
+
+    def start(self, stage: str) -> None:
+        if stage not in self._started:
+            self._started[stage] = time.time()
+
+    def stop(self, stage: str) -> None:
+        started = self._started.pop(stage, None)
+        if started is not None:
+            self._durations_ms[stage] = int((time.time() - started) * 1000)
+
+    def as_metadata(self) -> dict[str, int]:
+        """Return stage→ms mapping plus an optional total_ms."""
+        return dict(sorted(self._durations_ms.items()))
+
+
 class CapabilityPipeline:
     def __init__(
         self,
@@ -76,13 +102,18 @@ class CapabilityPipeline:
         self, input: str, config: ScenarioConfig, tenant_id: str, user_id: str, preprocessor=None, postprocessor=None
     ) -> PipelineResult:
         start_time = time.time()
+        timer = SegmentTimer()
         guardrail_flags = {}
         processed_input = input
         if preprocessor:
+            timer.start("preprocessor")
             processed_input = await preprocessor(input, config)
+            timer.stop("preprocessor")
 
         if self.input_guard and config.guardrail_rules.input:
+            timer.start("input_guard")
             guarded_input, input_flags = await self.input_guard.check(processed_input, config.guardrail_rules.input)
+            timer.stop("input_guard")
             guardrail_flags["input"] = input_flags
             if input_flags.get("blocked"):
                 return PipelineResult(
@@ -99,6 +130,7 @@ class CapabilityPipeline:
         context_chunks = []
         if self.retriever and config.knowledge_base_id:
             try:
+                timer.start("retrieval")
                 context_chunks = await self.retriever.retrieve(
                     query=guarded_input,
                     kb_id=config.knowledge_base_id,
@@ -107,6 +139,7 @@ class CapabilityPipeline:
                     rerank=config.rerank_enabled,
                     tenant_id=tenant_id,
                 )
+                timer.stop("retrieval")
             except AppError:
                 raise
             except Exception as e:
@@ -123,6 +156,7 @@ class CapabilityPipeline:
         await self._check_token_budget(tenant_id, estimated_tokens)
 
         if self.llm_generator:
+            timer.start("llm")
             raw_output, tokens_used = await self.llm_generator.generate(
                 prompt_template=config.prompt_template,
                 context=context_chunks,
@@ -130,14 +164,17 @@ class CapabilityPipeline:
                 max_tokens=config.max_tokens,
                 temperature=config.temperature,
             )
+            timer.stop("llm")
         else:
             raw_output = "(LLM 未配置)"
             tokens_used = None
 
         if self.output_guard and config.guardrail_rules.output:
+            timer.start("output_guard")
             guarded_output, output_flags = await self.output_guard.check(
                 raw_output, config.guardrail_rules.output, sources=context_chunks
             )
+            timer.stop("output_guard")
             guardrail_flags["output"] = output_flags
         else:
             guarded_output = raw_output
@@ -167,6 +204,15 @@ class CapabilityPipeline:
             )
 
         latency_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            "pipeline_segment_latency",
+            scenario_id=config.scenario_id,
+            tenant_id=tenant_id,
+            latency_ms=latency_ms,
+            segments_ms=timer.as_metadata(),
+            context_chunks=len(context_chunks),
+            tokens_used=tokens_used,
+        )
         _schedule_background_task(
             _write_audit_async(
                 tenant_id=tenant_id,

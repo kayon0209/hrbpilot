@@ -50,6 +50,14 @@ INJECTION_PATTERNS = [
 ]
 
 
+def contains_prompt_injection(text: str) -> bool:
+    """Return True when text contains common instruction-hijack patterns."""
+    for pattern in INJECTION_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
 class InputGuardrail:
     """Check and process input before it reaches LLM."""
 
@@ -123,7 +131,4 @@ class InputGuardrail:
 
     def _detect_prompt_injection(self, text: str) -> bool:
         """Check for common prompt injection patterns."""
-        for pattern in INJECTION_PATTERNS:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True
-        return False
+        return contains_prompt_injection(text)
