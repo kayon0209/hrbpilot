@@ -63,8 +63,20 @@ def upgrade() -> None:
     )
     # Migrations run under the database administrator in the container, while
     # the API and Worker deliberately use the non-superuser application role.
-    # RLS constrains this grant to the current tenant context.
-    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE in_app_notifications TO hrbp")
+    # RLS constrains this grant to the current tenant context.  The grant is
+    # conditional on that role existing: CI provisions an RLS-bound role with
+    # a different name, and the workflow grants it schema-wide privileges.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'hrbp') THEN
+                EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE in_app_notifications TO hrbp';
+            END IF;
+        END
+        $$;
+        """
+    )
     op.create_index(
         "ix_in_app_notifications_recipient_unread",
         "in_app_notifications",
