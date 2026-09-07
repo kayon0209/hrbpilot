@@ -154,6 +154,8 @@ async def _seed_approved_write(
         await service.decide_approval(case.id, approval.id, user_id, "approve", "verified", role="hr_manager")
         await db.commit()
         return case.id, approval.id
+
+
 async def _cleanup_case_actor(tenant_id: str) -> None:
     factory = get_session_factory()
     async with factory() as db:
