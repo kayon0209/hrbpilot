@@ -50,12 +50,17 @@ curl -X POST $BASE/<case_id>/approve -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approval_id":"<approval_id>","decision":"approve","reason":"情况属实"}'
 
-# 5) 执行已批准的写工具（幂等：同 request_id 不产生第二次副作用）
+# 5) 原子受理已批准的写工具（返回 202；幂等：同 request_id 不产生第二次受理）
 curl -X POST $BASE/<case_id>/execute -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approval_id":"<approval_id>","request_id":"<uuid>" }'
 
-# 6) 审计轨迹与运行回放
+# 6) 独立 Worker 派发已受理的 Outbox（不能由 API 进程内后台任务替代）
+python -m app.outbox.worker
+# 运维脚本或排障时只跑一轮：
+python -m app.outbox.worker --once --max-messages 100
+
+# 7) 审计轨迹与运行回放
 curl $BASE/<case_id>/events -H "Authorization: Bearer $TOKEN"
 curl $BASE/<case_id>/runs/<run_id> -H "Authorization: Bearer $TOKEN"
 ```
@@ -67,7 +72,8 @@ curl $BASE/<case_id>/runs/<run_id> -H "Authorization: Bearer $TOKEN"
 | `422 INVALID_CASE_TRANSITION` | 跳状态或终态后再变更 | 按状态机走合法路径 |
 | `409 APPROVAL_INVALID: expired` | 审批超时（默认 1h TTL） | 重新 `plan/run` 生成新审批 |
 | `409 APPROVAL_INVALID: requires APPROVED` | 未审批或已消费（CONSUMED） | 必须先 `approve`；失败的执行也不能复用旧审批 |
-| `501 TOOL_EXECUTOR_MISSING` | 写工具无生产执行器注册 | 检查 `agent_loop.register_tool_executor` 启动注册 |
+| Outbox `dead_letter` 且 `EXECUTOR_NOT_REGISTERED` | 该工具没有受控生产执行器（当前为 `send_case_notification`） | 不要伪造成功；接入满足幂等键和结果对账契约的邮件或站内信 Provider 后，重新校验权限再重放 DLQ |
+| ToolExecution `UNKNOWN` | 外部调用可能已发出但响应不确定 | 先通过下游幂等键/外部引用对账；禁止盲目重试 |
 | `429 RATE_LIMIT_EXCEEDED` | Redis 滑动窗口限流（60/min per tenant、30/min per user） | 排查异常调用方；Redis 不可用时开发模式 fail-open |
 | `InvalidPasswordError` 连 PG | 5432 被宿主机本地 PG 占用 | `DATABASE_URL` 指向 5433 |
 
@@ -75,6 +81,7 @@ curl $BASE/<case_id>/runs/<run_id> -H "Authorization: Bearer $TOKEN"
 
 - 审批人 `approver_id` 一律取自 JWT（服务端），请求体声明的身份不采信。
 - 写工具的执行与审批是**两个请求**；不存在「批准并执行」的合并端点。
+- `/execute` 仅在同一事务创建 ToolExecution、ExecutionGrant 与 `tool.dispatch` Outbox，必须由独立 Worker 认领后执行；Worker 只认领自己的 `tool.dispatch/tool_execution` 消息，不得消费 Connector 等其他队列。
 - 审批与执行的参数绑定用规范化后的哈希（`input_hash`）比对，替换参数的执行会 409。
 - `case_events` 只追加；应用代码不提供更新/删除路径。
 - `subject_ref` 仅使用合成标识（如 `EMP-SYN-101`），禁止写入真实员工档案。
@@ -87,4 +94,4 @@ python scripts/demo_hr_case.py                        # 三旅程演示（无需
 python evaluation/run_golden_eval.py                  # 离线 golden 评测（注意模式标注）
 ```
 
-轨迹门禁（Phase 6）：未授权写 = 0、重复副作用 = 0、高风险转人工 ≥ 0.95、误升级 ≤ 0.10、写审批门 = 1.0。任何门禁失败先修复再发布。
+轨迹门禁（Phase 6）：未授权写 = 0、重复副作用 = 0、高风险转人工 ≥ 0.95、误升级 ≤ 0.10、写审批门 = 1.0。额外的真实 PostgreSQL Dispatcher 门禁位于 `tests/runtime/test_dispatcher_postgres.py`，需显式设置 `HRBP_RUN_CONCURRENCY_TESTS=true`。任何门禁失败先修复再发布。

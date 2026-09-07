@@ -4,7 +4,7 @@ import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.data.database import make_tenant_session
 from app.data.models.hr_case import AgentRun, ApprovalRequest, CaseEvent, CasePlan, HRCase, ToolExecution
@@ -22,6 +22,12 @@ async def test_gateway_prepares_grant_execution_and_outbox_in_one_transaction() 
     tenant_id, user_id = str(uuid4()), str(uuid4())
     session = await make_tenant_session(tenant_id)
     try:
+        identity = (
+            await session.execute(
+                text("SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
+            )
+        ).one()
+        assert identity == ("hrbp", False, False)
         session.add(
             User(
                 id=user_id,
@@ -49,13 +55,17 @@ async def test_gateway_prepares_grant_execution_and_outbox_in_one_transaction() 
         await session.commit()
 
         assert prepared.execution_id
+        assert prepared.deduplicated is False
         assert (
             await session.scalar(select(ApprovalRequest.status).where(ApprovalRequest.id == approval.id))
         ) == "CONSUMED"
-        assert (
-            await session.scalar(select(ToolExecution.status).where(ToolExecution.id == prepared.execution_id))
-            == "PENDING"
-        )
+        execution = await session.scalar(select(ToolExecution).where(ToolExecution.id == prepared.execution_id))
+        assert execution is not None
+        assert execution.status == "PENDING"
+        assert execution.execution_grant_id == prepared.grant_id
+        assert execution.outbox_message_id == prepared.outbox_id
+        assert execution.dispatch_lease_owner is None
+        assert execution.dispatch_lease_token == 0
         assert (
             await session.scalar(select(ExecutionGrant.id).where(ExecutionGrant.id == prepared.grant_id))
             == prepared.grant_id
@@ -64,12 +74,18 @@ async def test_gateway_prepares_grant_execution_and_outbox_in_one_transaction() 
             await session.scalar(select(OutboxMessage.id).where(OutboxMessage.id == prepared.outbox_id))
             == prepared.outbox_id
         )
+
+        duplicate = await ToolGateway(service).prepare_approved_write(case.id, approval.id, "gateway-request-1")
+        assert duplicate.execution_id == prepared.execution_id
+        assert duplicate.grant_id == prepared.grant_id
+        assert duplicate.outbox_id == prepared.outbox_id
+        assert duplicate.deduplicated is True
     finally:
         await session.rollback()
+        await session.execute(delete(ToolExecution).where(ToolExecution.tenant_id == tenant_id))
         await session.execute(delete(OutboxMessage).where(OutboxMessage.tenant_id == tenant_id))
         await session.execute(delete(ExecutionGrant).where(ExecutionGrant.tenant_id == tenant_id))
         await session.execute(delete(CaseEvent).where(CaseEvent.tenant_id == tenant_id))
-        await session.execute(delete(ToolExecution).where(ToolExecution.tenant_id == tenant_id))
         await session.execute(delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id))
         await session.execute(delete(CasePlan).where(CasePlan.tenant_id == tenant_id))
         await session.execute(delete(AgentRun).where(AgentRun.tenant_id == tenant_id))

@@ -197,8 +197,23 @@ async def test_run_plan_hands_off_when_high_risk_write_attempted(session_factory
 def test_tool_schema_validation_rejects_bad_params():
     with pytest.raises(ToolError, match="INVALID_PARAMS"):
         validate_tool_call("create_hr_case", {"title": ""})
+    with pytest.raises(ToolError, match="INVALID_PARAMS"):
+        validate_tool_call("update_case_status", {"status": "FAILED"})
     normalized = validate_tool_call("search_policy", {"query": "加班", "top_k": "3"})
     assert normalized["top_k"] == 3  # coerced
+
+
+def test_tool_schema_normalization_is_json_serializable():
+    normalized = validate_tool_call(
+        "create_work_task",
+        {"title": "跟进面谈", "due_at": "2026-09-06T09:30:00+08:00"},
+    )
+
+    assert json.loads(json.dumps(normalized, sort_keys=True)) == {
+        "due_at": "2026-09-06T09:30:00+08:00",
+        "next_action": "",
+        "title": "跟进面谈",
+    }
 
 
 # --- agent loop ---

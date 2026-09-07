@@ -25,6 +25,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
     "employee": {
         "policy_qa",  # own-visibility scope enforced by service layer
         "employee_request",
+        "notifications",  # own recipient records only
     },
     "hrbp": {
         "policy_qa",
@@ -35,6 +36,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "hr_case",  # object-level ACL still applies (service layer)
         "hr_request_triage",
         "work_summary",
+        "notifications",
     },
     "hr_manager": {
         "policy_qa",
@@ -46,6 +48,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "knowledge_feedback",  # manager action center (Phase 3)
         "hr_request_triage",
         "work_summary",
+        "notifications",
     },
     "admin": {
         # Platform capabilities only — no HR business content by default.
@@ -80,6 +83,7 @@ ROUTE_CAPABILITY_MAP = {
     "/api/my-requests": "employee_request",
     "/api/hr-requests": "hr_request_triage",
     "/api/work-summaries": "work_summary",
+    "/api/notifications": "notifications",
     "/api/interview-digest": "interview_digest",
     "/api/voice-insight": "voice_insight",
     "/api/weekly-report": "weekly_report",

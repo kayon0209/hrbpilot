@@ -8,7 +8,7 @@ auth wiring, then skips DB-dependent flows.
 The critical Phase 5 guarantees covered here at the HTTP boundary:
   - unauthenticated access is rejected
   - approve and execute are separate requests
-  - execute requires hr_manager/admin
+  - execute requires an HR business role with case access
 """
 
 import asyncio
@@ -19,13 +19,18 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.config.settings import settings
 from app.data.database import get_session_factory
 from app.data.models.hr_case import AgentRun, ApprovalRequest, CaseEvent, CasePlan, HRCase, ToolExecution
+from app.data.models.notification import InAppNotification
+from app.data.models.runtime import ExecutionGrant, OutboxMessage
 from app.data.models.user import User
+from app.data.models.work_task import WorkTask
 from app.main import create_app
+from app.outbox.worker import drain_tool_dispatches
+from app.scenarios.hr_case_agent.service import HRCaseService
 
 _JWT_ISSUER = "hrbp-ai-workbench"
 _JWT_AUDIENCE = "hrbp-ai-workbench"
@@ -120,12 +125,47 @@ async def _seed_case_actor(tenant_id: str, user_id: str) -> None:
         await db.commit()
 
 
+async def _seed_approved_write(
+    tenant_id: str,
+    user_id: str,
+    *,
+    tool_name: str = "create_work_task",
+    params: dict | None = None,
+) -> tuple[str, str]:
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        service = HRCaseService(
+            db,
+            tenant_id,
+            actor=f"user:{user_id}|role:hr_manager",
+            visible_user_ids={user_id},
+        )
+        case = await service.create_case(user_id, "EMP-HTTP-DISPATCH", "overtime", "HTTP dispatch")
+        await service.transition_case(case.id, "TRIAGED")
+        await service.transition_case(case.id, "EVIDENCE_READY")
+        plan = await service.save_plan(case.id, steps=[])
+        approval = await service.request_approval(
+            case.id,
+            tool_name,
+            params or {"title": "HTTP target", "next_action": "Collect attendance evidence"},
+            plan_id=plan.id,
+        )
+        await service.decide_approval(case.id, approval.id, user_id, "approve", "verified", role="hr_manager")
+        await db.commit()
+        return case.id, approval.id
+
+
 async def _cleanup_case_actor(tenant_id: str) -> None:
     factory = get_session_factory()
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
-        await db.execute(delete(CaseEvent).where(CaseEvent.tenant_id == tenant_id))
+        await db.execute(delete(InAppNotification).where(InAppNotification.tenant_id == tenant_id))
+        await db.execute(delete(WorkTask).where(WorkTask.tenant_id == tenant_id))
         await db.execute(delete(ToolExecution).where(ToolExecution.tenant_id == tenant_id))
+        await db.execute(delete(OutboxMessage).where(OutboxMessage.tenant_id == tenant_id))
+        await db.execute(delete(ExecutionGrant).where(ExecutionGrant.tenant_id == tenant_id))
+        await db.execute(delete(CaseEvent).where(CaseEvent.tenant_id == tenant_id))
         await db.execute(delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id))
         await db.execute(delete(CasePlan).where(CasePlan.tenant_id == tenant_id))
         await db.execute(delete(AgentRun).where(AgentRun.tenant_id == tenant_id))
@@ -187,10 +227,21 @@ def test_full_case_flow_with_real_db(client, _real_db_actor):
             json={"approval_id": approval_id, "request_id": "e2e-req-1"},
             headers=headers,
         )
-        # No production executor registered for write tools in Phase 5 —
-        # a 501 TOOL_EXECUTOR_MISSING is the honest outcome, not a fake 200.
-        assert executed.status_code == 501
-        assert executed.json()["code"] == "TOOL_EXECUTOR_MISSING"
+        assert executed.status_code == 202, executed.text
+        accepted = executed.json()
+        assert accepted["status"] == "accepted"
+        assert accepted["deduplicated"] is False
+        assert accepted["execution_id"]
+        assert accepted["grant_id"]
+        assert accepted["outbox_id"]
+
+        duplicate = client.post(
+            f"/api/v1/hr-cases/{case_id}/execute",
+            json={"approval_id": approval_id, "request_id": "e2e-req-1"},
+            headers=headers,
+        )
+        assert duplicate.status_code == 202, duplicate.text
+        assert duplicate.json() == {**accepted, "deduplicated": True}
 
     events = client.get(f"/api/v1/hr-cases/{case_id}/events", headers=headers)
     assert events.status_code == 200
@@ -209,3 +260,101 @@ def test_execute_requires_manager_role(client, _real_db_required):
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+def test_execute_endpoint_only_prepares_governed_dispatch(client, _real_db_actor):
+    tenant_id, user_id = _real_db_actor
+    case_id, approval_id = asyncio.run(_seed_approved_write(tenant_id, user_id))
+    headers = _auth_header(_make_token(user_id=user_id, tenant_id=tenant_id))
+
+    first = client.post(
+        f"/api/v1/hr-cases/{case_id}/execute",
+        json={"approval_id": approval_id, "request_id": "http-dispatch-1"},
+        headers=headers,
+    )
+    assert first.status_code == 202, first.text
+    accepted = first.json()
+    assert accepted["status"] == "accepted"
+    assert accepted["deduplicated"] is False
+
+    duplicate = client.post(
+        f"/api/v1/hr-cases/{case_id}/execute",
+        json={"approval_id": approval_id, "request_id": "http-dispatch-1"},
+        headers=headers,
+    )
+    assert duplicate.status_code == 202, duplicate.text
+    assert duplicate.json() == {**accepted, "deduplicated": True}
+
+    states = asyncio.run(
+        drain_tool_dispatches(
+            tenant_id,
+            max_messages=10,
+            worker_id="http-dispatch-worker",
+        )
+    )
+    assert states == ["succeeded"]
+
+    async def _load_task() -> WorkTask | None:
+        factory = get_session_factory()
+        async with factory() as db:
+            db.info["tenant_id"] = tenant_id
+            return await db.scalar(
+                select(WorkTask).where(
+                    WorkTask.tenant_id == tenant_id,
+                    WorkTask.idempotency_key == "http-dispatch-1",
+                )
+            )
+
+    task = asyncio.run(_load_task())
+    assert task is not None
+    assert task.title == "HTTP target"
+    assert task.next_action == "Collect attendance evidence"
+
+
+def test_recipient_can_read_and_acknowledge_only_own_in_app_notification(client, _real_db_actor):
+    tenant_id, user_id = _real_db_actor
+    case_id, approval_id = asyncio.run(
+        _seed_approved_write(
+            tenant_id,
+            user_id,
+            tool_name="send_case_notification",
+            params={
+                "channel": "in_app",
+                "recipient_ref": user_id,
+                "template": "case_owner_action_required",
+            },
+        )
+    )
+    headers = _auth_header(_make_token(user_id=user_id, tenant_id=tenant_id))
+    accepted = client.post(
+        f"/api/v1/hr-cases/{case_id}/execute",
+        json={"approval_id": approval_id, "request_id": "http-notification-1"},
+        headers=headers,
+    )
+    assert accepted.status_code == 202, accepted.text
+    assert asyncio.run(drain_tool_dispatches(tenant_id, max_messages=10, worker_id="http-notification-worker")) == [
+        "succeeded"
+    ]
+
+    inbox = client.get("/api/notifications", headers=headers)
+    assert inbox.status_code == 200, inbox.text
+    notifications = inbox.json()["notifications"]
+    assert len(notifications) == 1
+    notification = notifications[0]
+    assert notification["case_id"] == case_id
+    assert notification["template"] == "case_owner_action_required"
+    assert notification["read_at"] is None
+    assert "params" not in notification
+
+    read = client.post(f"/api/notifications/{notification['notification_id']}/read", headers=headers)
+    assert read.status_code == 200, read.text
+    assert read.json()["read_at"] is not None
+
+    other_user_id = str(uuid4())
+    asyncio.run(_seed_case_actor(tenant_id, other_user_id))
+    other_headers = _auth_header(_make_token(role="employee", user_id=other_user_id, tenant_id=tenant_id))
+    assert client.get("/api/notifications", headers=other_headers).json() == {"notifications": []}
+    assert (
+        client.post(f"/api/notifications/{notification['notification_id']}/read", headers=other_headers).status_code
+        == 404
+    )

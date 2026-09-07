@@ -32,6 +32,11 @@ class _Retriever:
         return self._chunks
 
 
+class _ReplacingOutputGuard:
+    async def check(self, _text, _rules, **_kwargs):
+        return "安全的最终回答", {"blocked": True}
+
+
 def _orchestrator(chunks) -> PolicyQAOrchestrator:
     from app.guardrails.input_guard import InputGuardrail
     from app.guardrails.output_guard import OutputGuardrail
@@ -88,3 +93,16 @@ async def test_stream_final_answer_matches_joined_chunks_when_no_fallback():
     done = next(e for e in events if e["event"] == "done")
     payload = json.loads(done["data"])
     assert payload["final_answer"] == joined
+
+
+@pytest.mark.asyncio
+async def test_stream_never_emits_raw_output_that_the_output_guard_replaced():
+    orch = _orchestrator([{"source": "员工手册.pdf", "section": "4.2", "content": "年假可顺延", "confidence": 0.9}])
+    orch.output_guard = cast(Any, _ReplacingOutputGuard())
+
+    events = [json.loads(item) async for item in orch.execute_stream("年假能顺延吗？", "t1", "u1", kb_id="kb1")]
+    visible = "".join(json.loads(e["data"])["text"] for e in events if e["event"] == "chunk")
+    done = next(e for e in events if e["event"] == "done")
+
+    assert visible == "安全的最终回答"
+    assert json.loads(done["data"])["final_answer"] == visible

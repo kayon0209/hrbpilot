@@ -24,6 +24,7 @@ from app.data.models.hr_case import (
     HRCase,
     ToolExecution,
 )
+from app.data.models.user import User
 from app.scenarios.hr_case_agent import state as case_state
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
 from app.shared.errors import AppError, NotFoundError
@@ -103,8 +104,10 @@ class HRCaseService:
         title: str,
         description: str | None = None,
         risk_level: str = "LOW",
+        case_id: str | None = None,
     ) -> HRCase:
         case = HRCase(
+            id=case_id,
             tenant_id=self.tenant_id,
             created_by=created_by,
             subject_ref=subject_ref,
@@ -117,6 +120,26 @@ class HRCaseService:
         self.session.add(case)
         await self.session.flush()
         await self._append_event(case.id, "CASE_CREATED", {"title": title, "risk_level": risk_level})
+        return case
+
+    async def assign_case_owner(self, case_id: str, owner_id: str) -> HRCase:
+        """Assign a visible tenant user and append a durable ownership event."""
+        case = await self.get_case(case_id)
+        visible_user_ids = self._visible_creator_ids()
+        if visible_user_ids is not None and owner_id not in visible_user_ids:
+            raise CasePermissionDeniedError("Owner is outside the actor's visible scope")
+        owner = await self.session.scalar(select(User).where(User.id == owner_id, User.tenant_id == self.tenant_id))
+        if owner is None:
+            raise NotFoundError("User", owner_id)
+        if case.owner_id == owner_id:
+            return case
+        previous_owner_id = case.owner_id
+        case.owner_id = owner_id
+        await self._append_event(
+            case.id,
+            "CASE_OWNER_ASSIGNED",
+            {"from": previous_owner_id, "to": owner_id},
+        )
         return case
 
     async def get_case(self, case_id: str) -> HRCase:
@@ -421,7 +444,12 @@ class HRCaseService:
         record without re-running the side effect. Approval: write tools
         require an APPROVED, unexpired, unconsumed approval request.
         """
-        await self.get_case(case_id)
+        case = await self.get_case(case_id)
+        if tool_name in WRITE_TOOLS:
+            from app.scenarios.hr_case_agent.planner import requires_human_review
+
+            if requires_human_review(case.category, case.risk_level):
+                raise HighRiskWriteBlockedError(case.category, case.risk_level, tool_name)
         existing = (
             (
                 await self.session.execute(

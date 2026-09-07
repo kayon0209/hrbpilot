@@ -281,7 +281,6 @@ class LLMOrchestrator:
     """Generate LLM responses with context-aware prompts."""
 
     @staticmethod
-    @staticmethod
     def _resolve_call(
         messages: list[dict[str, str]] | None,
         model_request: dict | object | None,

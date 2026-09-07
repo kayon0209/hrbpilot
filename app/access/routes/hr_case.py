@@ -6,7 +6,7 @@ Endpoints (approve and execute are TWO separate requests — never one):
   POST /api/v1/hr-cases/{id}/plan       agent plan (LLM → validated, stored)
   POST /api/v1/hr-cases/{id}/clarify    answer a clarification, back to TRIAGED
   POST /api/v1/hr-cases/{id}/approve    human decision on a pending approval
-  POST /api/v1/hr-cases/{id}/execute    run an APPROVED write (separate call)
+  POST /api/v1/hr-cases/{id}/execute    queue an APPROVED write (separate call)
   GET  /api/v1/hr-cases/{id}/events     append-only audit trail
 
 Security: operator identity comes from the auth context, never the body;
@@ -25,11 +25,12 @@ from app.access.middleware.tenant import require_tenant_id
 from app.access.object_scope import resolve_visible_user_ids
 from app.data.database import get_db
 from app.scenarios.hr_case_agent import state as case_state
-from app.scenarios.hr_case_agent.agent_loop import execute_approved_write, run_plan
+from app.scenarios.hr_case_agent.agent_loop import run_plan
 from app.scenarios.hr_case_agent.planner import Planner, requires_human_review
 from app.scenarios.hr_case_agent.service import HRCaseService
 from app.shared.errors import AppError, NotFoundError
 from app.shared.logger import get_logger
+from app.tools.gateway import ToolGateway
 
 logger = get_logger(__name__)
 
@@ -243,10 +244,10 @@ async def approve_case(case_id: str, body: ApproveBody, request: Request, sessio
     return {"approval_id": approval.id, "status": approval.status}
 
 
-@router.post("/{case_id}/execute")
+@router.post("/{case_id}/execute", status_code=202)
 @require_auth
 async def execute_case(case_id: str, body: ExecuteBody, request: Request, session: AsyncSession = Depends(get_db)):
-    """SECOND request after explicit approval — runs the approved write tool."""
+    """SECOND request after approval — atomically prepare governed dispatch."""
     # Capability gate FIRST: only business roles with hr_case capability reach
     # the database path; platform admin is not a business role (spec §3.2).
     role = getattr(request.state, "user_role", "employee")
@@ -255,45 +256,15 @@ async def execute_case(case_id: str, body: ExecuteBody, request: Request, sessio
 
         raise CasePermissionDeniedError(f"Role {role} cannot execute write tools")
     service = await _service(request, session)
-
-    from sqlalchemy import select
-
-    from app.data.models.hr_case import ApprovalRequest
-
-    approval = (
-        (
-            await session.execute(
-                select(ApprovalRequest).where(
-                    ApprovalRequest.id == body.approval_id,
-                    ApprovalRequest.case_id == case_id,
-                    ApprovalRequest.tenant_id == service.tenant_id,
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if approval is None:
-        raise NotFoundError("Approval request", body.approval_id)
-
-    from app.scenarios.hr_case_agent.agent_loop import TOOL_EXECUTORS
-    from app.scenarios.hr_case_agent.tools import ToolError
-
-    real_executor = TOOL_EXECUTORS.get(approval.tool_name)
-    if real_executor is None:
-        # No production executor wired for this tool yet: record intent, keep
-        # case AWAITING_APPROVAL-consumed state, return explicit error.
-        raise AppError(
-            f"No executor registered for {approval.tool_name}", code="TOOL_EXECUTOR_MISSING", status_code=501
-        )
-
-    try:
-        outcome = await execute_approved_write(service, case_id, body.approval_id, body.request_id, real_executor)
-    except ToolError as e:
-        await session.commit()
-        raise AppError(str(e), code=e.code, status_code=502) from e
+    prepared = await ToolGateway(service).prepare_approved_write(case_id, body.approval_id, body.request_id)
     await session.commit()
-    return outcome
+    return {
+        "status": "accepted",
+        "execution_id": prepared.execution_id,
+        "grant_id": prepared.grant_id,
+        "outbox_id": prepared.outbox_id,
+        "deduplicated": prepared.deduplicated,
+    }
 
 
 @router.get("/{case_id}/events")

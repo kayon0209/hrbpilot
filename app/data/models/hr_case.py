@@ -22,8 +22,10 @@ profiles are stored.
 import datetime
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -141,6 +143,7 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     __tablename__ = "tool_executions"
     __table_args__ = (
         UniqueConstraint("case_id", "request_id", name="uq_tool_executions_case_request"),
+        UniqueConstraint("tenant_id", "id", name="uq_tool_executions_tenant_id"),
         ForeignKeyConstraint(
             ["tenant_id", "case_id"],
             ["hr_cases.tenant_id", "hr_cases.id"],
@@ -156,11 +159,26 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
             ["agent_runs.tenant_id", "agent_runs.id"],
             name="fk_tool_executions_tenant_run",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "execution_grant_id"],
+            ["execution_grants.tenant_id", "execution_grants.id"],
+            name="fk_tool_executions_tenant_grant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "outbox_message_id"],
+            ["outbox_messages.tenant_id", "outbox_messages.id"],
+            name="fk_tool_executions_tenant_outbox",
+        ),
+        CheckConstraint("dispatch_lease_token >= 0", name="ck_tool_executions_dispatch_lease_token"),
+        Index("ix_tool_executions_execution_grant_id", "execution_grant_id"),
+        Index("ix_tool_executions_outbox_message_id", "outbox_message_id"),
     )
 
     case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     approval_id: Mapped[str | None] = mapped_column(String(36), default=None)
     agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    execution_grant_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    outbox_message_id: Mapped[str | None] = mapped_column(String(36), default=None)
     tool_name: Mapped[str] = mapped_column(String(50), nullable=False)
     request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # idempotency key
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # sha256 of params
@@ -169,6 +187,9 @@ class ToolExecution(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     error_code: Mapped[str | None] = mapped_column(String(50), default=None)
     error_message: Mapped[str | None] = mapped_column(Text, default=None)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    dispatch_lease_owner: Mapped[str | None] = mapped_column(String(120), default=None)
+    dispatch_lease_token: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dispatch_lease_expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     def __repr__(self) -> str:
         return f"<ToolExecution id={self.id} tool={self.tool_name} status={self.status}>"

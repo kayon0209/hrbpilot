@@ -40,7 +40,9 @@ Making AI in HR **affordable and safe to ship**
 ## 📖 Table of Contents
 
 - [Why HRBPilot](#-why-hrbpilot-and-not-just-another-hr-qa-bot)
+- [Product highlights](#-product-highlights)
 - [HR scenarios covered](#-hr-scenarios-covered)
+- [HR Case Agent: governed execution and notifications](#-hr-case-agent-governed-execution-and-notifications)
 - [Architecture](#-architecture)
 - [Evaluation results](#-evaluation-results-real-llm-run)
 - [Quick start](#-quick-start)
@@ -63,6 +65,18 @@ The real pain in HR scenarios is **risk and cost**, not whether a model can prod
 > [!NOTE]
 > Every answer is required to carry citations. When no supporting evidence is retrieved, the pipeline takes the `no_evidence_fallback` path and explicitly declines rather than fabricating an answer.
 
+![HRBPilot product highlights: policy answers cite evidence, routine HR work is assisted by structured drafting, and operational actions require an explicit human approval.](./assets/hrbpilot-feature-overview.svg)
+
+---
+
+## ✨ Product highlights
+
+HRBPilot is not a generic chat model wrapped in an HR interface. It is built around three boundaries that match real HR work:
+
+- **Policy answers need evidence.** Policy Q&A retrieves from the current tenant's enabled knowledge bases, returns cited sources, and says so clearly when evidence is insufficient instead of fabricating an answer.
+- **Routine work should need less manual consolidation.** Interview digests, employee voice, weekly reports, and culture content are structured or drafted first so HR can spend time on judgement and conversation.
+- **People remain accountable for actions.** Write operations such as case creation, assignment, and status updates require human approval. Execution, notifications, and outcomes remain inspectable.
+
 ---
 
 ## 💼 HR scenarios covered
@@ -76,6 +90,28 @@ Each scenario is an independent `orchestrator` + `config` + `prompts` + `schemas
 | 🎧 **Voice insight** | `voice_insight` | Insight extraction from voice and meeting content |
 | 📅 **Weekly report** | `weekly_report` | Automated HR weekly report generation |
 | 🎨 **Culture content** | `culture_content` | Generation of corporate-culture content |
+
+---
+
+## 🤖 HR Case Agent: governed execution and notifications
+
+Alongside the five analytical scenarios, HRBPilot provides a deliberately bounded HR Case Agent. An employee or HR user can raise a case; the system identifies risk, gathers policy evidence, and proposes a plan. Any write action then requires human approval and is executed by an independent worker with an audit trail.
+
+| Capability | Behaviour and boundary |
+| :--- | :--- |
+| **Governed writes** | `create_hr_case`, `assign_case_owner`, `update_case_status`, and `create_work_task` require an approved, unexpired, parameter-hash-matched, unconsumed approval. `/execute` only accepts the request atomically and returns `202`; it never performs an external side effect inside the HTTP transaction. |
+| **Durable dispatch** | ToolExecution, an exact ExecutionGrant, and a `tool.dispatch` Outbox message are persisted in one transaction. The worker uses lease/fencing and a stable `request_id`; deterministic failures can retry or enter the DLQ, while an uncertain outcome becomes `UNKNOWN` and must not be retried blindly. |
+| **Traceability** | `GET /api/v1/hr-cases/{id}/runs/{run_id}` exposes the plan, tool execution, approval, and event trail. The case state machine only permits `NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED`. |
+| **Policy-Q&A protections** | Policy Q&A loads bounded context only for the current tenant, user, session, and scenario. Each request chooses immutable model configuration and a fallback order from scenario/risk/cost inputs without changing the global model selection. A streamed response is displayable only after output guardrails and the no-evidence fallback complete. |
+| **In-app notifications** | `GET /api/notifications` and the read endpoint expose only the current recipient's notification metadata. A notification ID belonging to another recipient returns 404; case content remains behind the case ACL. |
+
+Governed writes require an independent Outbox Worker. Docker Compose starts it already; for local or other deployments, start:
+
+```bash
+python -m app.outbox.worker
+```
+
+Use `python -m app.outbox.worker --once --max-messages 100` for a bounded operational drain. The [runbook](./docs/upgrade/HR_CASE_AGENT_RUNBOOK.md) contains API examples, DLQ replay, and `UNKNOWN` reconciliation; the [ADR](./docs/upgrade/ADR-0001-single-bounded-agent.md) explains the design trade-offs.
 
 ---
 
@@ -192,7 +228,7 @@ docker compose up --build           # 3. start
 1. PostgreSQL becomes ready
 2. The app runs `alembic upgrade head`
 3. Milvus / MinIO / Redis become ready
-4. uvicorn and the Celery ingestion worker start
+4. FastAPI (uvicorn) and the governed-write Outbox Worker start
 
 On startup the app ensures the Milvus collection (its dimension must match `EMBEDDING_DIMENSION`) and the MinIO bucket exist. The PostgreSQL application account is a **non-superuser**, so row-level security cannot be bypassed through the connection account.
 
@@ -289,6 +325,7 @@ CI runs `ruff check` · `ruff format --check` · `mypy` · `pytest` on every pus
 
 - The keyword-hit score for `weekly_report` (0.32) is low, mostly because free-form weekly-report text is hard to measure with keywords. The evaluation approach is being reworked.
 - Citation coverage for `policy_qa` (0.33) still has room to improve and is the current priority.
+- HR Case Agent quality gates are still offline and deterministic; no REAL-LLM end-to-end metric is claimed. `send_case_notification` has no verifiable external provider yet, so its dispatch enters the DLQ rather than falsely reporting delivery.
 
 ---
 

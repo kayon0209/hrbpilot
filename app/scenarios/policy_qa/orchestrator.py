@@ -296,7 +296,6 @@ class PolicyQAOrchestrator:
                     timer.stop("llm_first_chunk")
                     timer.start("llm_stream")
                 full_output += chunk_text
-                yield json.dumps({"event": "chunk", "data": json.dumps({"text": chunk_text})})
             timer.stop("llm_stream")
             if self.config.guardrail_rules.output:
                 timer.start("output_guard")
@@ -348,6 +347,14 @@ class PolicyQAOrchestrator:
                 ),
                 name="policy_qa_stream_eval_task",
             )
+
+        # Do not expose raw model chunks before output guardrails and the
+        # no-evidence fallback have produced the authoritative response. A
+        # later SSE terminal event cannot retract text already rendered by a
+        # browser. This deliberately trades token-by-token rendering for the
+        # security invariant that every visible answer passed the full guard.
+        if final_output:
+            yield json.dumps({"event": "chunk", "data": json.dumps({"text": final_output})})
 
         yield json.dumps(
             {

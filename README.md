@@ -40,7 +40,9 @@
 ## 📖 目录
 
 - [为什么是 HRBPilot](#-为什么是-hrbpilot而不是又一个-hr-问答-bot)
+- [产品特色](#-产品特色)
 - [覆盖的 HR 场景](#-覆盖的-hr-场景)
+- [HR Case Agent：受控执行与通知](#-hr-case-agent受控执行与通知)
 - [系统架构](#-系统架构)
 - [评测结果](#-评测结果真实-llm-跑通)
 - [快速开始](#-快速开始)
@@ -63,6 +65,18 @@ HR 场景真正的痛点是**风险与成本**，不是「能不能答出来」�
 > [!NOTE]
 > 所有回答强制携带引用（citation）。检索不到证据时走 `no_evidence_fallback` 明确拒答，而不是编造答案。
 
+![HRBPilot 产品特色总览：制度问答附带来源，日常 HR 工作可由系统协助整理，涉及建单、指派或状态更新等行动必须由负责人明确审批。](./assets/hrbpilot-feature-overview.svg)
+
+---
+
+## ✨ 产品特色
+
+HRBPilot 不是把一个通用聊天模型包装成 HR 工具，而是围绕 HR 的实际工作方式设置了三条底线：
+
+- **问制度，要有依据。** 制度问答从当前租户可用的企业知识库中检索；答案带来源，证据不足就明确说明，而不是编造结论。
+- **做日常工作，减少重复整理。** 面谈纪要、员工声音、周报和文化内容先由系统完成结构化整理与生成，HR 把时间留给判断和沟通。
+- **涉及行动，始终由人负责。** 建单、指派、状态更新等写操作需要人工审批；执行过程、通知和结果都保留可查看的记录。
+
 ---
 
 ## 💼 覆盖的 HR 场景
@@ -76,6 +90,28 @@ HR 场景真正的痛点是**风险与成本**，不是「能不能答出来」�
 | 🎧 **语音洞察** | `voice_insight` | 语音、会议内容的洞察提炼 |
 | 📅 **周报生成** | `weekly_report` | 自动汇总生成 HR 周报 |
 | 🎨 **文化内容** | `culture_content` | 企业文化相关内容生成 |
+
+---
+
+## 🤖 HR Case Agent：受控执行与通知
+
+除五个分析场景外，系统提供一个边界明确的 HR Case Agent：员工或 HR 提出问题后，系统依次完成风险识别、制度取证与计划生成；涉及写操作时，必须经过人工审批，随后才由独立 Worker 执行并留下审计轨迹。
+
+| 能力 | 行为与边界 |
+| :--- | :--- |
+| **受控写操作** | `create_hr_case`、`assign_case_owner`、`update_case_status` 与 `create_work_task` 必须满足审批已通过、未过期、参数哈希一致且未消费。`/execute` 只原子受理并返回 `202`，不会在 HTTP 请求中直接产生外部副作用。 |
+| **可靠派发** | ToolExecution、精确 ExecutionGrant 与 `tool.dispatch` Outbox 同一事务落库。Worker 使用 lease/fencing 与稳定 `request_id` 执行，确定性失败可重试或进入 DLQ；结果不确定时标记为 `UNKNOWN`，禁止盲目重试。 |
+| **全链路查看** | `GET /api/v1/hr-cases/{id}/runs/{run_id}` 可返回计划、工具执行、审批与事件轨迹。状态机只允许 `NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED` 的合法迁移。 |
+| **策略问答保护** | Policy QA 只在当前租户、用户、会话与场景范围内加载有限上下文；请求按场景/风险/成本选择不可变的模型配置及故障回退顺序，不会修改全局模型选择。流式请求也须先完成输出护栏和无证据回退，才返回可显示内容。 |
+| **站内通知** | `GET /api/notifications` 和已读接口只返回当前收件人的通知元数据；跨收件人 ID 返回 404，案件正文仍须通过案件 ACL 访问。 |
+
+运行受控写操作时，必须有独立的 Outbox Worker。Docker Compose 已配置该进程；本地或其他部署方式请启动：
+
+```bash
+python -m app.outbox.worker
+```
+
+可用 `python -m app.outbox.worker --once --max-messages 100` 做受限的排障/运维轮询。接口示例、DLQ 重放与 `UNKNOWN` 对账流程见 [运维手册](./docs/upgrade/HR_CASE_AGENT_RUNBOOK.md)，设计取舍见 [ADR](./docs/upgrade/ADR-0001-single-bounded-agent.md)。
 
 ---
 
@@ -194,7 +230,7 @@ docker compose up --build           # ③ 启动
 1. PostgreSQL 就绪
 2. 应用执行 `alembic upgrade head` 迁移
 3. Milvus / MinIO / Redis 就绪
-4. uvicorn + Celery ingestion worker 启动
+4. FastAPI（uvicorn）与受控写操作的 Outbox Worker 启动
 
 启动时自动确保 Milvus collection（维度须与 `EMBEDDING_DIMENSION` 一致）与 MinIO bucket 存在。PostgreSQL 应用账号为**非超级用户**，确保行级隔离 RLS 不会被连接账号绕过。
 
@@ -335,21 +371,7 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 - `weekly_report` 场景的关键词命中（0.536）偏低，主要因周报自由文本难以用关键词衡量，正在优化评测方式。
 - `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
 - `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
-
-## 🤖 HR Case Agent（受控执行体，Phase 4–7 新增）
-
-在五个分析场景之外，新增一个边界清晰的 HR Case Agent：员工/HR 提出问题 → 风险识别 → 制度取证 → 计划生成 → **人工审批** → 执行写工具（建单/指派/通知/状态更新）→ 审计留痕。
-
-- 状态机唯一可信：`NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED`，非法跳转一律 422（`app/scenarios/hr_case_agent/state.py`）。
-- 写工具四重门禁：审批 APPROVED、未过期、参数哈希一致、未消费；审批与执行是两个独立请求。
-- 失败恢复：写工具失败 → 案件 FAILED → **必须新审批 + 新 request_id** 才能重试，消费过的审批不可复用。
-- 可观测性：`GET /api/v1/hr-cases/{id}/runs/{run_id}` 返回计划、工具执行、审批与事件全链路。
-- Token 治理：Redis 热计数 + PostgreSQL `token_ledger` 追加式账本，(tenant, request_id) 唯一约束防重复结算。
-- 评测门禁（OFFLINE-DETERMINISTIC）：未授权写 = 0、重复副作用 = 0、高风险转人工 ≥ 0.95、误升级 ≤ 0.10、审批门 = 1.0（`tests/evaluation/test_agent_trajectory_gate.py`）。
-- 演示：`python scripts/demo_hr_case.py` 覆盖成功、拒绝、失败恢复三条旅程。
-- 设计决策与运维手册：`docs/upgrade/ADR-0001-single-bounded-agent.md` · `docs/upgrade/HR_CASE_AGENT_RUNBOOK.md`。
-
-> 诚实声明：Agent 评测为离线确定性模式，未宣称 REAL-LLM 端到端数字；生产写工具执行器（create/assign/notify 的真实下游）未接入，当前为 501 TOOL_EXECUTOR_MISSING 显式暴露。
+- HR Case Agent 的质量门禁目前仍是离线确定性评测，尚未宣称 REAL-LLM 端到端指标。`send_case_notification` 仍没有可验证的外部 Provider；该调用会进入 DLQ，不会伪造投递成功。
 
 ---
 

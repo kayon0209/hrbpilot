@@ -6,10 +6,8 @@ transaction is open.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 
 from sqlalchemy import Select, and_, or_, select, update
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.models.runtime import OutboxMessage
@@ -20,21 +18,32 @@ class OutboxRepository:
         self._session = session
         self._tenant_id = tenant_id
 
-    def _claimable(self, now: datetime) -> Select[tuple[OutboxMessage]]:
+    def _claimable(
+        self,
+        now: datetime,
+        *,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+    ) -> Select[tuple[OutboxMessage]]:
+        predicates = [
+            OutboxMessage.tenant_id == self._tenant_id,
+            OutboxMessage.next_attempt_at <= now,
+            or_(
+                OutboxMessage.status == "pending",
+                and_(
+                    OutboxMessage.status == "leased",
+                    OutboxMessage.lease_expires_at.is_not(None),
+                    OutboxMessage.lease_expires_at <= now,
+                ),
+            ),
+        ]
+        if event_type is not None:
+            predicates.append(OutboxMessage.event_type == event_type)
+        if aggregate_type is not None:
+            predicates.append(OutboxMessage.aggregate_type == aggregate_type)
         return (
             select(OutboxMessage)
-            .where(
-                OutboxMessage.tenant_id == self._tenant_id,
-                OutboxMessage.next_attempt_at <= now,
-                or_(
-                    OutboxMessage.status == "pending",
-                    and_(
-                        OutboxMessage.status == "leased",
-                        OutboxMessage.lease_expires_at.is_not(None),
-                        OutboxMessage.lease_expires_at <= now,
-                    ),
-                ),
-            )
+            .where(*predicates)
             .order_by(OutboxMessage.next_attempt_at, OutboxMessage.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
@@ -48,14 +57,30 @@ class OutboxRepository:
         await self._session.flush()
         return message
 
-    async def claim_next(self, worker_id: str, lease_seconds: int, now: datetime | None = None) -> OutboxMessage | None:
-        """Claim one eligible message; concurrent workers skip each other's rows."""
+    async def claim_next(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+        *,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+    ) -> OutboxMessage | None:
+        """Claim one eligible typed message; concurrent workers skip each other's rows."""
         if not worker_id:
             raise ValueError("worker_id is required")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
         claimed_at = now or datetime.now(UTC)
-        message = (await self._session.execute(self._claimable(claimed_at))).scalar_one_or_none()
+        message = (
+            await self._session.execute(
+                self._claimable(
+                    claimed_at,
+                    event_type=event_type,
+                    aggregate_type=aggregate_type,
+                )
+            )
+        ).scalar_one_or_none()
         if message is None:
             return None
         message.status = "leased"
@@ -78,8 +103,9 @@ class OutboxRepository:
                 OutboxMessage.lease_token == lease_token,
             )
             .values(status="delivered", lease_owner=None, lease_expires_at=None)
+            .returning(OutboxMessage.id)
         )
-        return cast(CursorResult[Any], completed).rowcount == 1
+        return completed.scalar_one_or_none() is not None
 
     async def schedule_retry(
         self,
@@ -106,5 +132,35 @@ class OutboxRepository:
                 next_attempt_at=next_attempt_at,
                 last_error_code=error_code,
             )
+            .returning(OutboxMessage.id)
         )
-        return cast(CursorResult[Any], released).rowcount == 1
+        return released.scalar_one_or_none() is not None
+
+    async def mark_terminal(
+        self,
+        message_id: str,
+        worker_id: str,
+        lease_token: int,
+        error_code: str,
+        *,
+        dead_letter: bool = False,
+    ) -> bool:
+        """Stop delivery only for the active lease, optionally in the DLQ."""
+        completed = await self._session.execute(
+            update(OutboxMessage)
+            .where(
+                OutboxMessage.id == message_id,
+                OutboxMessage.tenant_id == self._tenant_id,
+                OutboxMessage.status == "leased",
+                OutboxMessage.lease_owner == worker_id,
+                OutboxMessage.lease_token == lease_token,
+            )
+            .values(
+                status="dead_letter" if dead_letter else "terminal",
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error_code=error_code,
+            )
+            .returning(OutboxMessage.id)
+        )
+        return completed.scalar_one_or_none() is not None

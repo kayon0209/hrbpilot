@@ -59,6 +59,7 @@ class OutboxMessage(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
             name="ck_outbox_messages_status",
         ),
         CheckConstraint("attempt_count >= 0", name="ck_outbox_messages_attempt_count"),
+        UniqueConstraint("tenant_id", "id", name="uq_outbox_messages_tenant_id"),
         UniqueConstraint("tenant_id", "dedupe_key", name="uq_outbox_messages_tenant_dedupe"),
         Index("ix_outbox_messages_claimable", "status", "next_attempt_at", "lease_expires_at"),
     )

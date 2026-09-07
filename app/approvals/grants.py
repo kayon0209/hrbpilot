@@ -84,10 +84,10 @@ class ExecutionGrantRepository:
         claimed_id = updated.scalar_one_or_none()
         if claimed_id is None:
             return None
-        grant: ExecutionGrant | None = await self._session.scalar(
+        claimed_grant = await self._session.scalar(
             select(ExecutionGrant).where(
                 ExecutionGrant.id == claimed_id,
                 ExecutionGrant.tenant_id == self._tenant_id,
             )
         )
-        return grant
+        return claimed_grant

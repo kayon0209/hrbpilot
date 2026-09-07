@@ -148,10 +148,10 @@ async def ask_question(body: AskRequest, request: Request, session: AsyncSession
     tenant_id = require_tenant_id(request)
     user_id = getattr(request.state, "user_id", "unknown")
     kb = await _resolve_policy_kb(session, tenant_id, body.kb_id)
-    history, history_meta = await _load_session_history(session, tenant_id, user_id, body.session_id)
-    await session.close()
 
     if body.stream:
+        history, history_meta = await _load_session_history(session, tenant_id, user_id, body.session_id)
+        await session.close()
 
         async def event_stream():
             try:

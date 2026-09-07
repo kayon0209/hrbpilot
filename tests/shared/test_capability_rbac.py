@@ -66,10 +66,12 @@ def test_admin_cannot_access_hr_business_content():
 def test_capability_matrix_shape():
     from app.access.middleware.rbac import ROLE_CAPABILITIES
 
-    assert ROLE_CAPABILITIES["employee"] == {"policy_qa", "employee_request"}
+    assert ROLE_CAPABILITIES["employee"] == {"policy_qa", "employee_request", "notifications"}
     assert "hr_case" in ROLE_CAPABILITIES["hrbp"]
     assert "work_summary" in ROLE_CAPABILITIES["hrbp"]
+    assert "notifications" in ROLE_CAPABILITIES["hrbp"]
     assert "work_summary" in ROLE_CAPABILITIES["hr_manager"]
+    assert "notifications" in ROLE_CAPABILITIES["hr_manager"]
     assert "kb_management" not in ROLE_CAPABILITIES["hr_manager"]
     assert "knowledge_feedback" in ROLE_CAPABILITIES["hr_manager"]
     assert "evaluation" in ROLE_CAPABILITIES["admin"]
