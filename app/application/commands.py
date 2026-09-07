@@ -5,8 +5,8 @@ from typing import Protocol, TypeVar
 
 from app.application.uow import UnitOfWork
 
-TCommand = TypeVar("TCommand")
-TResult = TypeVar("TResult")
+TCommand = TypeVar("TCommand", contravariant=True)
+TResult = TypeVar("TResult", covariant=True)
 
 
 class CommandHandler(Protocol[TCommand, TResult]):
