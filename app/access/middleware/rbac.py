@@ -126,6 +126,9 @@ PUBLIC_PATHS = [
     "/api/auth/login",
     "/api/auth/refresh",
     "/api/auth/dev-users",
+    # MCP Streamable HTTP — anonymous reads allowed, writes self-enforce
+    # Authorization inside the MCP tool handlers (4321).
+    "/mcp",
     # Provider callbacks carry their own platform signature (SHA1/HMAC) and
     # are verified inside the route before any state is touched.
     "/api/connector-webhooks",
@@ -162,7 +165,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks"):
+        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks") or path.startswith("/mcp"):
             return await call_next(request)
 
         role = self._resolve_role(request)

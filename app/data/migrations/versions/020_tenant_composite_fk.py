@@ -25,8 +25,10 @@ FORCE-RLS table is temporarily NO FORCE while its constraints are added and
 re-FORCEd afterwards.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "020_tenant_composite_fk"
@@ -163,6 +165,43 @@ def _re_force(table: str) -> None:
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
 
 
+@contextmanager
+def _rls_relaxed(tables: Iterable[str]) -> Iterator[None]:
+    """Lift FORCE ROW LEVEL SECURITY on every table that actually has it.
+
+    The hard-coded ``_FORCED_RLS`` set above is documentation of what migration
+    014 turned on, but it is not authoritative: a parent table that gains FORCE
+    RLS later (``knowledge_bases`` and ``async_tasks`` both have it) is still
+    invisible to the FK validation scan when the migration connection — which
+    carries no tenant setting — reads it.  That makes ADD CONSTRAINT fail with
+    "violates foreign key constraint" even though the parent rows exist.
+
+    Probing ``pg_class`` instead of trusting a hand-maintained list fixes that
+    class of failure: every table that currently has FORCE on is relaxed, and
+    only those are re-FORCEd afterwards.  Tables that do not exist yet (or do
+    not have FORCE on) are skipped, so the same code works on a fresh database
+    and on one mid-history.
+    """
+    bind = op.get_bind()
+    relaxed: list[str] = []
+    try:
+        for table in sorted(set(tables)):
+            forced = bind.execute(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_class "
+                    "WHERE relname = :table AND relkind = 'r'"
+                ),
+                {"table": table},
+            ).scalar()
+            if forced:
+                op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+                relaxed.append(table)
+        yield
+    finally:
+        for table in relaxed:
+            op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+
+
 def _add_composite_fk(child: str, constraint: str, parent: str, column: str, *, ondelete: str | None = None) -> None:
     op.create_foreign_key(
         constraint,
@@ -174,25 +213,28 @@ def _add_composite_fk(child: str, constraint: str, parent: str, column: str, *, 
     )
 
 
+def _touched_tables() -> set[str]:
+    """Every table this revision reads or writes."""
+    return (
+        set(_PARENT_UNIQUE)
+        | {child for child, _ in _OLD_FKS}
+        | {child for child, _, _, _ in _CHILD_FKS}
+        | {parent for _, _, parent, _ in _CHILD_FKS}
+    )
+
+
 def upgrade() -> None:
     # Phase 1: parent (tenant_id, id) unique constraints (work_tasks exists).
-    for parent, constraint in _PARENT_UNIQUE.items():
-        op.execute(f"ALTER TABLE {parent} ADD CONSTRAINT {constraint} UNIQUE (tenant_id, id)")
-
     # Phase 2: drop the replaced single-column FKs, then add composite child
-    # FKs.  NO FORCE while validating so the FK scan can read existing rows
-    # without the forced tenant policy, then re-FORCE.
-    touched: set[str] = set()
-    try:
+    # FKs.  Both phases scan tables, so FORCE RLS is lifted for the whole block
+    # and restored afterwards — see _rls_relaxed.
+    with _rls_relaxed(_touched_tables()):
+        for parent, constraint in _PARENT_UNIQUE.items():
+            op.execute(f"ALTER TABLE {parent} ADD CONSTRAINT {constraint} UNIQUE (tenant_id, id)")
+
         for child, constraint in _OLD_FKS:
-            _no_force(child)
-            touched.add(child)
             op.execute(f"ALTER TABLE {child} DROP CONSTRAINT IF EXISTS {constraint}")
         for child, constraint, parent, column in _CHILD_FKS:
-            _no_force(child)
-            _no_force(parent)
-            touched.add(child)
-            touched.add(parent)
             _add_composite_fk(
                 child,
                 constraint,
@@ -200,19 +242,11 @@ def upgrade() -> None:
                 column,
                 ondelete="CASCADE" if constraint == "fk_document_chunks_tenant_document" else None,
             )
-    finally:
-        for table in touched:
-            _re_force(table)
 
 
 def downgrade() -> None:
-    touched: set[str] = set()
-    try:
-        for child, _constraint, parent, _column in _CHILD_FKS:
-            _no_force(child)
-            _no_force(parent)
-            touched.add(child)
-            touched.add(parent)
+    with _rls_relaxed(_touched_tables()):
+        for child, _constraint, _parent, _column in _CHILD_FKS:
             op.drop_constraint(_constraint, child, type_="foreignkey")
 
         # ``020`` replaced, rather than supplemented, the historical
@@ -232,10 +266,6 @@ def downgrade() -> None:
                 raise RuntimeError(
                     f"020 tenant-FK migration lists are out of sync: old={old_child!r}, composite={child!r}"
                 )
-            _no_force(child)
-            _no_force(parent)
-            touched.add(child)
-            touched.add(parent)
             op.create_foreign_key(
                 old_constraint,
                 child,
@@ -244,8 +274,5 @@ def downgrade() -> None:
                 ["id"],
                 ondelete="CASCADE" if composite_constraint == "fk_document_chunks_tenant_document" else None,
             )
-    finally:
-        for table in touched:
-            _re_force(table)
-    for parent, constraint in _PARENT_UNIQUE.items():
-        op.execute(f"ALTER TABLE {parent} DROP CONSTRAINT IF EXISTS {constraint}")
+        for parent, constraint in _PARENT_UNIQUE.items():
+            op.execute(f"ALTER TABLE {parent} DROP CONSTRAINT IF EXISTS {constraint}")

@@ -22,6 +22,7 @@ from app.data.models.hr_case import (
 )
 from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEntry
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
+from app.data.models.material import Employee, InterviewRecord, VoiceEntry
 from app.data.models.notification import InAppNotification
 from app.data.models.runtime import ExecutionGrant, OutboxMessage
 from app.data.models.scenarios import (
@@ -55,6 +56,7 @@ __all__ = [
     "DataSource",
     "Document",
     "DocumentChunk",
+    "Employee",
     "EmployeeRequest",
     "EvalResult",
     "ExecutionGrant",
@@ -62,6 +64,7 @@ __all__ = [
     "InAppNotification",
     "InsightReport",
     "InterviewDigest",
+    "InterviewRecord",
     "KnowledgeBase",
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
@@ -75,6 +78,7 @@ __all__ = [
     "ToolExecution",
     "UUIDPrimaryKey",
     "User",
+    "VoiceEntry",
     "WeeklyReport",
     "WorkTask",
 ]

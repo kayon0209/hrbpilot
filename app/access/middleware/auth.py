@@ -22,6 +22,9 @@ PUBLIC_PATHS = [
     "/openapi.json",
     "/api/auth/login",
     "/api/auth/refresh",
+    # MCP Streamable HTTP — anonymous reads allowed, writes self-enforce
+    # Authorization inside the MCP tool handlers (4234).
+    "/mcp",
     # Provider callbacks authenticate via their platform signature; the webhook
     # routes verify it BEFORE touching state (no JWT in a webhook request).
     "/api/connector-webhooks",
@@ -33,7 +36,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks"):
+        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks") or path.startswith("/mcp"):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization")

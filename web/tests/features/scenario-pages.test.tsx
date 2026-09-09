@@ -20,9 +20,11 @@ afterEach(() => {
 test('blocks interview analysis shorter than 50 characters', async () => {
   useSessionStore.setState({ user: { id: '1', name: 'HR', email: 'hr@test.com', role: 'hrbp', tenant_id: 't' } })
   const history = vi.spyOn(interviewApi, 'getInterviewHistory').mockResolvedValue({ digests: [] })
+  vi.spyOn(interviewApi, 'getInterviewRecords').mockResolvedValue({ records: [], total: 0, next_cursor: null })
   const { client } = renderPage(<InterviewDigestPage />)
   const user = userEvent.setup()
   await waitFor(() => expect(client.getQueryState(['interview-history'])?.status).toBe('success'))
+  await waitFor(() => expect(client.getQueryState(['interview-records', ''])?.status).toBe('success'))
   await user.type(screen.getByLabelText('面谈内容'), '太短')
   await user.click(screen.getByRole('button', { name: '开始分析' }))
   expect(screen.getByRole('alert')).toHaveTextContent('至少需要50字')

@@ -95,8 +95,8 @@ test('navigation renders three distinct experiences', () => {
   expect(manager).not.toContain('/knowledge-base')
   expect(manager).not.toContain('/evaluation')
   expect(manager).not.toContain('/settings')
-  // admin: platform pages only, no business entries
-  expect(admin).toEqual(['/admin', '/users', '/evaluation', '/knowledge-base', '/data-sources', '/settings', '/audit'])
+  // admin: platform pages only, no business entries (/mcp is a platform tool page)
+  expect(admin).toEqual(['/admin', '/users', '/evaluation', '/knowledge-base', '/data-sources', '/mcp', '/settings', '/audit'])
 })
 
 test('each experience lands on its own home after login', () => {

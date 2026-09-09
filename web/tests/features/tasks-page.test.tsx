@@ -118,7 +118,12 @@ test('summarises todays completed output and the next concrete continuation', as
   })
 
   expect(await screen.findByText('今天完成 1 项真实产出。')).toBeVisible()
-  expect(screen.getByText('下一步：本周周报草稿 · 检查风险并确认发布')).toBeVisible()
+  // continue_work renders as a clickable card: bold title line + action line + CTA.
+  // The same item may also appear in the 进行中 list, so scope to the review card.
+  const reviewCard = screen.getByText('继续处理 →').closest('a')
+  expect(reviewCard).not.toBeNull()
+  expect(reviewCard).toHaveTextContent('下一步：本周周报草稿')
+  expect(reviewCard).toHaveTextContent('检查风险并确认发布')
 })
 
 test('creates a persistent multi-day task from the task workspace', async () => {
@@ -141,7 +146,7 @@ test('creates a persistent multi-day task from the task workspace', async () => 
   fireEvent.change(await screen.findByLabelText('任务名称'), {
     target: { value: '完成三地薪酬复核' },
   })
-  fireEvent.change(screen.getByLabelText('下一步'), {
+  fireEvent.change(screen.getByLabelText(/下一步动作/), {
     target: { value: '先核对华东数据' },
   })
   fireEvent.click(screen.getByRole('button', { name: '创建多日任务' }))
@@ -257,7 +262,7 @@ test('splits a subtask with name, next action, owner and deadline', async () => 
   const task = (await screen.findByText('三地薪酬复核')).closest('article')!
   fireEvent.click(within(task).getByRole('button', { name: '拆分任务' }))
   fireEvent.change(within(task).getByLabelText('子任务名称'), { target: { value: '完成华东复核' } })
-  fireEvent.change(within(task).getByLabelText('子任务下一步'), { target: { value: '核对差异并留痕' } })
+  fireEvent.change(within(task).getByLabelText(/子任务下一步动作/), { target: { value: '核对差异并留痕' } })
   fireEvent.change(within(task).getByLabelText('子任务负责人'), { target: { value: 'u-2' } })
   fireEvent.change(within(task).getByLabelText('子任务截止时间'), { target: { value: '2026-09-02T17:00' } })
   fireEvent.click(within(task).getByRole('button', { name: '创建子任务' }))

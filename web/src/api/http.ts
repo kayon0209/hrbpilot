@@ -1,10 +1,19 @@
 import { z } from 'zod'
 
+const fieldErrorSchema = z.object({
+  field: z.string().optional(),
+  message: z.string().optional(),
+  type: z.string().optional(),
+})
+
 const errorSchema = z.object({
   code: z.string().optional(),
   message: z.string().optional(),
   detail: z.union([z.string(), z.object({ message: z.string().optional() })]).optional(),
   request_id: z.string().optional(),
+  // 422 responses carry per-field reasons; surfacing them beats a bare
+  // "Request validation failed" that tells the user nothing to fix.
+  errors: z.array(fieldErrorSchema).optional(),
 }).passthrough()
 
 export class ApiError extends Error {
@@ -13,6 +22,7 @@ export class ApiError extends Error {
     message: string,
     public code?: string,
     public requestId?: string,
+    public fieldErrors: { field: string; message: string }[] = [],
   ) {
     super(message)
     this.name = 'ApiError'
@@ -57,7 +67,16 @@ export async function normalizeError(response: Response): Promise<ApiError> {
   const parsed = errorSchema.safeParse(body)
   const value = parsed.success ? parsed.data : {}
   const detail = typeof value.detail === 'string' ? value.detail : value.detail?.message
-  return new ApiError(response.status, value.message ?? detail ?? `请求失败（${response.status}）`, value.code, value.request_id)
+  const fieldErrors = (value.errors ?? [])
+    .map(e => ({ field: (e.field ?? '').replace(/^body\./, ''), message: e.message ?? '' }))
+    .filter(e => e.field || e.message)
+  let message = value.message ?? detail ?? `请求失败（${response.status}）`
+  if (value.code === 'VALIDATION_ERROR') {
+    message = fieldErrors.length
+      ? `请求校验未通过：${fieldErrors.map(e => `${e.field} ${e.message}`.trim()).join('；')}`
+      : '请求校验未通过，请检查填写内容。'
+  }
+  return new ApiError(response.status, message, value.code, value.request_id, fieldErrors)
 }
 
 let handlers: Required<ClientOptions> = {

@@ -58,6 +58,9 @@ function WorkItem({
     item.total_units !== null ? String(item.total_units) : '',
   )
   const [editOwner, setEditOwner] = useState('')
+  // Same FE-04 idempotency guard as task creation, scoped to this card's
+  // split form: a retried split must not create the same subtask twice.
+  const [splitKey, setSplitKey] = useState(() => crypto.randomUUID())
   // FE-02: re-sync the edit form when the item data refreshes (advance,
   // owner change, other-actor updates). Without this, an open editor keeps
   // stale values and saving can silently overwrite a newer server state.
@@ -81,6 +84,7 @@ function WorkItem({
           waiting_for: null,
           due_at: subtaskDueAt ? new Date(subtaskDueAt).toISOString() : null,
           total_units: null,
+          idempotency_key: splitKey,
         })
       }
       if (action === 'advance') {
@@ -107,6 +111,7 @@ function WorkItem({
         setSubtaskOwner('')
         setSubtaskDueAt('')
         setSplitting(false)
+        setSplitKey(crypto.randomUUID())
       }
       if (action === 'save') setEditing(false)
       setActionError('')
@@ -130,7 +135,7 @@ function WorkItem({
     <article aria-label={item.title}>
       <strong>{item.title}</strong>
       <p>{item.next_action}</p>
-      <div className="task-metadata">
+      <div className="task-meta-row">
         {item.owner && <span>负责人：{item.owner}</span>}
         {item.waiting_for && <span>等待：{item.waiting_for}</span>}
         {item.due_at && <span>截止：{formatDeadline(item.due_at)}</span>}
@@ -138,7 +143,7 @@ function WorkItem({
           ? <span>进度：{item.completed_units}/{item.total_units}</span>
           : <span className={`task-stage task-stage--${item.business_status}`}>阶段：{item.business_status}</span>}
       </div>
-      {resumable && <Link to={item.resume_target}>打开</Link>}
+      {resumable && <Link to={item.resume_target} className="card-open">打开</Link>}
       {item.work_type === 'work_task' && item.business_status !== '已完成' && (
         <div className="admin-links">
           <button type="button" onClick={() => taskAction.mutate('complete')} disabled={taskAction.isPending}>
@@ -156,7 +161,7 @@ function WorkItem({
       {editing && (
         <div className="task-metadata">
           <label>任务名称<input value={editTitle} onChange={event => setEditTitle(event.target.value)} /></label>
-          <label>下一步<input value={editNextAction} onChange={event => setEditNextAction(event.target.value)} /></label>
+          <label>下一步动作<input value={editNextAction} onChange={event => setEditNextAction(event.target.value)} placeholder="例：联系候选人确认入职材料" /></label>
           <label>等待对象<input value={editWaitingFor} onChange={event => setEditWaitingFor(event.target.value)} /></label>
           <label>截止时间<input type="datetime-local" value={editDueAt} onChange={event => setEditDueAt(event.target.value)} /></label>
           <label>真实工作总量<input type="number" min="1" value={editTotalUnits} onChange={event => setEditTotalUnits(event.target.value)} /></label>
@@ -182,7 +187,7 @@ function WorkItem({
       {splitting && (
         <div className="task-metadata">
           <label>子任务名称<input value={subtaskTitle} onChange={event => setSubtaskTitle(event.target.value)} /></label>
-          <label>子任务下一步<input value={subtaskNextAction} onChange={event => setSubtaskNextAction(event.target.value)} /></label>
+          <label>子任务下一步动作<span className="form-hint">填具体动作，不是最终目标</span><input value={subtaskNextAction} onChange={event => setSubtaskNextAction(event.target.value)} placeholder="例：约员工面谈确认诉求" /></label>
           {owners.length > 1 && (
             <label>子任务负责人
               <select value={subtaskOwner} onChange={event => setSubtaskOwner(event.target.value)}>
@@ -226,6 +231,13 @@ export function TasksPage() {
   const [totalUnits, setTotalUnits] = useState('')
   const [ownerId, setOwnerId] = useState('')
   const [createError, setCreateError] = useState('')
+  // FE-04: the backend already de-duplicates creates by idempotency_key
+  // (partial unique index + "return the existing row" on conflict), but the
+  // key was never sent — a retried create produced a second task. One key
+  // per submitted form; a new one is minted only after a create succeeds, so
+  // retrying the SAME submit is safe while intentionally creating another
+  // task still works.
+  const [createKey, setCreateKey] = useState(() => crypto.randomUUID())
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['work-summaries'] }) }
   const createTask = useMutation({
     mutationFn: () => createWorkTask({
@@ -235,6 +247,7 @@ export function TasksPage() {
       due_at: dueAt ? new Date(dueAt).toISOString() : null,
       total_units: totalUnits ? Number(totalUnits) : null,
       owner_user_id: ownerId || undefined,
+      idempotency_key: createKey,
     }),
     onSuccess: () => {
       setTitle('')
@@ -244,6 +257,7 @@ export function TasksPage() {
       setTotalUnits('')
       setOwnerId('')
       setCreateError('')
+      setCreateKey(crypto.randomUUID())
       refresh()
     },
     onError: error => setCreateError(error instanceof Error ? error.message : '任务创建失败'),
@@ -274,7 +288,7 @@ export function TasksPage() {
         <div>
           <span className="eyebrow">工作台</span>
           <h1>工作任务</h1>
-          <p>每项任务标明阶段、下一步与等待对象；完成反馈直接指向产出。</p>
+          <p>每项任务标明阶段、下一步动作与等待对象；完成反馈直接指向产出。</p>
         </div>
       </header>
 
@@ -282,10 +296,10 @@ export function TasksPage() {
         <h2 id="create-task-heading">新建多日任务</h2>
         <div className="task-metadata">
           <label>任务名称<input value={title} onChange={event => setTitle(event.target.value)} /></label>
-          <label>下一步<input value={nextAction} onChange={event => setNextAction(event.target.value)} /></label>
-          <label>等待对象<input value={waitingFor} onChange={event => setWaitingFor(event.target.value)} /></label>
-          <label>截止时间<input type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label>
-          <label>真实工作总量<input type="number" min="1" value={totalUnits} onChange={event => setTotalUnits(event.target.value)} placeholder="可选" /></label>
+          <label>下一步动作<span className="form-hint">填具体动作，不是最终目标</span><input value={nextAction} onChange={event => setNextAction(event.target.value)} placeholder="例：联系候选人确认入职材料" /></label>
+          <label>等待对象<span className="form-hint">选填，例如：等员工回复</span><input value={waitingFor} onChange={event => setWaitingFor(event.target.value)} /></label>
+          <label>截止时间<span className="form-hint">选填</span><input type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label>
+          <label>真实工作总量<span className="form-hint">选填，填了会按数量记录进度</span><input type="number" min="1" value={totalUnits} onChange={event => setTotalUnits(event.target.value)} placeholder="如 12" /></label>
           {owners.length > 1 && (
             <label>负责人
               <select value={ownerId} onChange={event => setOwnerId(event.target.value)}>
@@ -338,7 +352,13 @@ export function TasksPage() {
           <h2 id="work-review-heading">工作回顾</h2>
           <p>今天完成 {done.length} 项真实产出。</p>
           {work.data.continue_work && (
-            <p>下一步：{work.data.continue_work.title} · {work.data.continue_work.next_action}</p>
+            <Link to={work.data.continue_work.resume_target} className="continue-card" style={{ marginTop: 14 }}>
+              <span>
+                <strong>下一步：{work.data.continue_work.title}</strong>
+                <p>{work.data.continue_work.next_action}</p>
+              </span>
+              <span className="continue-cta">继续处理 →</span>
+            </Link>
           )}
         </section>
       )}

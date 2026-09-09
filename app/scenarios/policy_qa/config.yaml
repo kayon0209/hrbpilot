@@ -15,6 +15,7 @@ guardrail_rules:
 eval_metrics:
   - citation_accuracy
   - answer_relevance
+  - faithfulness
 fallback_strategy: no_evidence
 max_tokens: 1024
 temperature: 0.1

@@ -19,3 +19,4 @@
 .incompleteNote{margin:12px 0 0;padding:10px 12px;background:var(--warning-soft);border:1px solid var(--warning);color:var(--warning);font-size:13px;line-height:1.6}
 @media(max-width:1200px){.grid{grid-template-columns:1fr}.history{max-width:none}}
 @media(max-width:900px){.workgrid{grid-template-columns:1fr}}
+.historyNote{margin:10px 0 0;color:var(--muted);font-size:var(--text-meta);line-height:1.6}

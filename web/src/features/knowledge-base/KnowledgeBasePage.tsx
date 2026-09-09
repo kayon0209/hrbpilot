@@ -6,15 +6,20 @@ import { StatusBadge } from '../../components/StatusBadge'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import styles from './KnowledgeBasePage.module.css'
 import { useSessionStore } from '../../app/session-store'
-import { hasMinimumRole } from '../../app/roles'
+import { hasCapability } from '../../app/roles'
 import { PermissionNotice } from '../../components/PermissionNotice'
 
 const statusLabels = { uploaded: '等待索引', parsing: '正在解析', indexed: '索引完成', error: '索引失败' }
 
 export function KnowledgeBasePage() {
   const user = useSessionStore(state => state.user)
-  if (!hasMinimumRole(user?.role, 'hr_manager')) {
-    return <main className="page-stack"><header className="page-heading"><div><span className="eyebrow">知识管理</span><h1>知识库</h1><p>制度文件、索引任务与检索数据由 HR 经理或管理员维护。</p></div></header><PermissionNotice feature="知识库" requiredRole="HR 经理或管理员" /></main>
+  // Gate on the capability the backend actually checks for /api/kb
+  // (ROUTE_CAPABILITY_MAP), not on `hasMinimumRole(role, 'hr_manager')`:
+  // that legacy helper maps to the `knowledge_feedback` capability, which
+  // admin does not hold — it used to lock admins out of the very page the
+  // router admits them to.
+  if (!hasCapability(user?.role, 'kb_management')) {
+    return <main className="page-stack"><header className="page-heading"><div><span className="eyebrow">知识管理</span><h1>知识库</h1><p>制度文件、索引任务与检索数据由管理员维护。</p></div></header><PermissionNotice feature="知识库" requiredRole="管理员" /></main>
   }
   return <KnowledgeBaseManagerPage />
 }

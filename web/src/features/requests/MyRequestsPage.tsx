@@ -22,14 +22,26 @@ export function MyRequestsPage() {
   const [requestType, setRequestType] = useState<string>('policy_check')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  // Whitespace-only input satisfies the HTML5 `required` check, so the guard
+  // below still fires — and it used to return silently, leaving the user with
+  // a button that appears to do nothing.
+  const [formError, setFormError] = useState('')
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!title.trim() || !description.trim()) return
+    if (!title.trim() || !description.trim()) {
+      setFormError('请填写标题和具体情况后再提交；只输入空格无法提交。')
+      return
+    }
+    setFormError('')
     create.reset()
-    await create.mutateAsync({ request_type: requestType, title: title.trim(), description: description.trim() })
-    setTitle('')
-    setDescription('')
+    try {
+      await create.mutateAsync({ request_type: requestType, title: title.trim(), description: description.trim() })
+      setTitle('')
+      setDescription('')
+    } catch {
+      setFormError(create.error instanceof Error ? create.error.message : '提交失败，请稍后重试。')
+    }
   }
 
   const requests = mine.data?.requests ?? []
@@ -58,6 +70,7 @@ export function MyRequestsPage() {
           <div className={styles.actions}>
             <button className="primary-button" type="submit" disabled={create.isPending}>{create.isPending ? '正在提交…' : '提交请求'}</button>
           </div>
+          {formError && <p role="alert" className={styles.hint}>{formError}</p>}
           {create.isError && <p className={styles.error} role="alert">提交未保存：{create.error.message}</p>}
           {create.isSuccess && <p className={styles.ok} role="status">请求已提交。HR 会尽快查看，需要补充材料时会在这里说明。</p>}
         </form>
