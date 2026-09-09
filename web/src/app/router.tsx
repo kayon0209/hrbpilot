@@ -21,6 +21,7 @@ import { MyRequestsPage } from '../features/requests/MyRequestsPage'
 import { TasksPage } from '../features/tasks/TasksPage'
 import { AuditPage } from '../features/audit/AuditPage'
 import { AdminUsersPage } from '../features/admin-users/AdminUsersPage'
+import { McpPage } from '../features/mcp/McpPage'
 import { ForbiddenPage } from '../pages/ForbiddenPage'
 import { useSessionStore } from './session-store'
 import type { UserRole } from '../api/types'
@@ -70,6 +71,7 @@ export const routes: RouteObject[] = [
       { path: 'tasks', element: <ProtectedRoute roles={only('hrbp', 'hr_manager')}><TasksPage /></ProtectedRoute> },
       { path: 'evaluation', element: <ProtectedRoute roles={only('admin')}><EvaluationPage /></ProtectedRoute> },
       { path: 'data-sources', element: <ProtectedRoute roles={only('admin')}><DataSourcesPage /></ProtectedRoute> },
+      { path: 'mcp', element: <ProtectedRoute roles={only('admin', 'hrbp', 'hr_manager')}><McpPage /></ProtectedRoute> },
       { path: 'settings', element: <ProtectedRoute roles={only('admin')}><SettingsPage /></ProtectedRoute> },
       { path: 'audit', element: <ProtectedRoute roles={only('admin')}><AuditPage /></ProtectedRoute> },
       { path: 'users', element: <ProtectedRoute roles={only('admin')}><AdminUsersPage /></ProtectedRoute> },

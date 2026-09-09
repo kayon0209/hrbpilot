@@ -24,6 +24,7 @@ const navigation: NavItem[] = [
   { to: '/', label: '今日工作', group: '工作台' },
   { to: '/policy', label: '制度问答', group: '工作台' },
   { to: '/tasks', label: '工作任务', group: '工作台' },
+  { to: '/mcp', label: 'MCP 外部工具', group: '更多工具' },
   { to: '/interview', label: '面谈纪要', group: '工作材料', capability: 'interview_digest' },
   { to: '/voice', label: '员工声音', group: '工作材料', capability: 'voice_insight' },
   { to: '/weekly', label: 'HR 周报', group: '输出与复盘', capability: 'weekly_report' },
@@ -49,6 +50,7 @@ export function getVisibleNav(role: UserRole | null | undefined): NavItem[] {
       { to: '/evaluation', label: 'AI 质量', group: '管理后台' },
       { to: '/knowledge-base', label: '知识库管理', group: '管理后台' },
       { to: '/data-sources', label: '数据接入', group: '管理后台' },
+      { to: '/mcp', label: 'MCP 外部工具', group: '管理后台' },
       { to: '/settings', label: '服务设置', group: '管理后台' },
       { to: '/audit', label: '审计记录', group: '管理后台' },
     ]

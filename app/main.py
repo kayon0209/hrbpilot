@@ -109,6 +109,12 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     app.include_router(health_router, prefix="/api")
+    from app.access.routes.mcp import router as mcp_router
+
+    app.include_router(mcp_router, prefix="/api")
+    from app.mcp.server import mcp_server as _mcp_server
+
+    app.mount("/mcp", _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True))
     app.include_router(auth_router)
     app.include_router(hr_case_router)
     app.include_router(policy_qa_router)
