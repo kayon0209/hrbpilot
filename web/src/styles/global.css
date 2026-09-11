@@ -1,0 +1,39 @@
+@import "./tokens.css";
+
+:root {
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  background:
+    linear-gradient(90deg, rgb(32 35 31 / 0.025) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--canvas);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 3px;
+}

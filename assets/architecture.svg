@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 620" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <rect width="820" height="620" fill="#ffffff"/>
+  <text x="40" y="38" font-size="21" font-weight="700" fill="#0f172a">HRBPilot · 系统架构</text>
+  <text x="40" y="60" font-size="13" fill="#64748b">5 大 HR 场景 · 护栏 + 成本治理作为一等公民</text>
+
+  <!-- Client -->
+  <rect x="40" y="86" width="740" height="54" rx="12" fill="#0f172a"/>
+  <text x="60" y="114" font-size="15" font-weight="600" fill="#ffffff">Client（HR / 管理者 / 内部系统）</text>
+
+  <line x1="410" y1="140" x2="410" y2="172" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- API Gateway -->
+  <rect x="40" y="176" width="740" height="58" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="60" y="204" font-size="15" font-weight="600" fill="#1e3a8a">API 网关</text>
+  <text x="200" y="204" font-size="12" fill="#1e40af">Auth · RBAC · 租户上下文中间件 · 结构化日志</text>
+
+  <line x1="410" y1="234" x2="410" y2="266" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- Scenario Orchestrator -->
+  <rect x="40" y="270" width="740" height="62" rx="12" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+  <text x="60" y="298" font-size="15" font-weight="600" fill="#065f46">5 × Scenario Orchestrator</text>
+  <text x="300" y="298" font-size="12" fill="#047857">policy_qa · interview_digest · culture_content · voice_insight · weekly_report</text>
+
+  <!-- three branches -->
+  <line x1="180" y1="332" x2="180" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="410" y1="332" x2="410" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="640" y1="332" x2="640" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- RAG Pipeline -->
+  <rect x="40" y="368" width="240" height="86" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <text x="60" y="396" font-size="14" font-weight="600" fill="#9a3412">RAG Pipeline</text>
+  <text x="60" y="418" font-size="12" fill="#c2410c">dense / sparse /</text>
+  <text x="60" y="436" font-size="12" fill="#c2410c">hybrid + 可选 rerank</text>
+
+  <!-- Guardrails -->
+  <rect x="290" y="368" width="240" height="86" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="310" y="396" font-size="14" font-weight="600" fill="#92400e">Guardrails 护栏</text>
+  <text x="310" y="418" font-size="12" fill="#92400e">输入护栏 → 合规校验</text>
+  <text x="310" y="436" font-size="12" fill="#92400e">→ 输出护栏 → 限流</text>
+
+  <!-- Token Budget -->
+  <rect x="540" y="368" width="240" height="86" rx="12" fill="#fce7f3" stroke="#db2777" stroke-width="2"/>
+  <text x="560" y="396" font-size="14" font-weight="600" fill="#9d174d">Token Budget</text>
+  <text x="560" y="418" font-size="12" fill="#be185d">租户月度预算（默认</text>
+  <text x="560" y="436" font-size="12" fill="#be185d">10M）· 75% 预警 / 90% 严重</text>
+
+  <!-- to storage -->
+  <line x1="160" y1="454" x2="160" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="410" y1="454" x2="410" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="660" y1="454" x2="660" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- Storage -->
+  <rect x="40" y="490" width="740" height="58" rx="12" fill="#e8f0fe" stroke="#336791" stroke-width="2"/>
+  <text x="60" y="518" font-size="15" font-weight="600" fill="#1e3a5f">存储层</text>
+  <text x="200" y="518" font-size="12" fill="#1e3a5f">PostgreSQL(Alembic) · Redis · Celery · MinIO · Milvus</text>
+
+  <!-- Evaluation -->
+  <rect x="470" y="270" width="310" height="62" rx="12" fill="#f1f5f9" stroke="#475569" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="490" y="298" font-size="14" font-weight="700" fill="#334155">Evaluation 评测</text>
+  <text x="490" y="318" font-size="12" fill="#475569">质量指标聚合 + golden dataset</text>
+
+  <path d="M470 300 C 430 300 430 300 410 300" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#d)"/>
+
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
+    <marker id="d" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
+  </defs>
+</svg>

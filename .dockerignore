@@ -1,0 +1,17 @@
+.git
+.gitignore
+.worktrees
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.env
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+kb_docs
+interview_samples
+docs
+assets

@@ -1,0 +1,105 @@
+"""HRBP AI Workbench — Async task, audit log, and eval result models.
+
+AsyncTask tracks long-running operations (voice insight batch analysis, etc.).
+AuditLog records every request for compliance and debugging.
+EvalResult stores quality metrics per request.
+All have tenant_id for RLS.
+"""
+
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Float, ForeignKeyConstraint, Integer, String, Text, UniqueConstraint, false
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
+
+
+class AsyncTask(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    __tablename__ = "async_tasks"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_async_tasks_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
+            name="fk_async_tasks_tenant_creator",
+        ),
+    )
+
+    type: Mapped[str] = mapped_column(String(50), nullable=False)  # voice_insight_analysis | document_ingestion | ...
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pending"
+    )  # pending(排队中) | running(正在分析) | completed | partial | failed — stage words only, never fake percentages
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0-100 percentage
+    result_json: Mapped[str | None] = mapped_column(Text, default=None)
+    error_message: Mapped[str | None] = mapped_column(Text, default=None)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    def __repr__(self) -> str:
+        return f"<AsyncTask id={self.id} type={self.type} status={self.status} progress={self.progress}%>"
+
+
+class AuditLog(Base, UUIDPrimaryKey, TenantMixin):
+    __tablename__ = "audit_logs"
+
+    # No updated_at — audit logs are append-only
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.now)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    input_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    output_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    retrieved_docs_json: Mapped[str | None] = mapped_column(Text, default=None)
+    llm_model_version: Mapped[str | None] = mapped_column(String(100), default=None)
+    guardrail_result_json: Mapped[str | None] = mapped_column(Text, default=None)
+    eval_score: Mapped[float | None] = mapped_column(Float, default=None)
+    response_latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+    token_consumption: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    def __repr__(self) -> str:
+        return f"<AuditLog id={self.id} scenario={self.scenario_id}>"
+
+
+class EvalResult(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    __tablename__ = "eval_results"
+
+    scenario_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    metric: Mapped[str] = mapped_column(String(100), nullable=False)  # citation_accuracy | answer_relevance | ...
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    # True when the row carries a placeholder/estimated score that must not
+    # drive averages, trends or release judgements (historical auto-eval
+    # constants). Real measured rows always write False. The server default
+    # mirrors the Python default so raw SQL inserts also default to measured.
+    is_stub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    request_id: Mapped[str | None] = mapped_column(String(36), default=None)  # linked to audit log
+
+    def __repr__(self) -> str:
+        return f"<EvalResult id={self.id} metric={self.metric} score={self.score}>"
+
+
+class TokenLedgerEntry(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    """Append-only persistent token ledger (Phase 7).
+
+    Redis keeps hot monthly counters and thresholds; this table is the
+    traceable source of truth. ``settlement_state`` guards double
+    settlement: reserve → settle → refund, each request_id settles once
+    (unique constraint with agent run/request id below).
+    """
+
+    __tablename__ = "token_ledger"
+    __table_args__ = (UniqueConstraint("tenant_id", "request_id", name="uq_token_ledger_tenant_request"),)
+
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    scenario_id: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
+    model: Mapped[str] = mapped_column(String(100), nullable=False, default="unknown")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    measured: Mapped[bool] = mapped_column(nullable=False, default=False)  # True = real usage, False = estimate
+    settlement_state: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="SETTLED"
+    )  # RESERVE|SETTLED|REFUNDED
+
+    def __repr__(self) -> str:
+        return f"<TokenLedgerEntry id={self.id} req={self.request_id} total={self.total_tokens}>"

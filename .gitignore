@@ -1,0 +1,82 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual envs ---
+.venv/
+venv/
+env/
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+!env.docker.example
+env.docker
+
+# --- Tooling caches ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Frontend tooling ---
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+
+# --- Isolated Git worktrees ---
+.worktrees/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Local data artifacts (keep kb_docs / interview_samples as project assets) ---
+*.log
+data/local_db*
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
+
+# --- Local investigation / audit artifacts ---
+_audit_outputs/
+_*.txt
+_audit_*.py
+_shot_*.png
+remove_secret.py
+replace-secrets.txt
+
+# --- Local scratch / personal build artifacts (resume production, etc.) ---
+tmp/
+output/
+err.txt
+
+# --- Local agent/tooling config (machine-specific paths; not shared) ---
+.ignore
+AGENTS.md
+docs/superpowers/
+
+# --- Incomplete golden eval runs (marked unclaimable; not evidence) ---
+evaluation/results/golden_eval_20260827T221009Z.json
+evaluation/results/golden_eval_20260827T221316Z.json
+evaluation/results/golden_eval_20260827T221506Z.json
+evaluation/results/golden_eval_20260828T095445Z.json
+evaluation/results/golden_eval_20260828T102205Z.json
+evaluation/results/golden_eval_20260828T110147Z.json
+evaluation/results/golden_eval_20260828T120046Z.json
+.gstack/
