@@ -32,6 +32,7 @@ class RetrievedChunk:
     sparse_rank: int | None = None  # 1-based rank in sparse result (None if absent)
     dense_score: float | None = None  # raw cosine similarity
     sparse_score: float | None = None  # raw ts_rank_cd
+    rerank_score: float | None = None  # query↔chunk cosine when rerank is enabled
 
     def to_dict(self) -> dict[str, Any]:
         """Return the unified dict shape consumed by orchestrators/citations."""
@@ -48,6 +49,7 @@ class RetrievedChunk:
             "sparse_rank": self.sparse_rank,
             "dense_score": self.dense_score,
             "sparse_score": self.sparse_score,
+            "rerank_score": self.rerank_score,
         }
 
 

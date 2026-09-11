@@ -72,13 +72,41 @@ async def _ensure_infrastructure() -> None:
         logger.warning("minio_not_ready_at_startup", error=str(e))
 
 
+def _register_agent_read_tools() -> None:
+    """Wire the HR Case agent's READ tools and fail loudly if any are missing.
+
+    The agent loop hands a case off to a human whenever a read step has no
+    executor registered.  Before this check nothing was registered at startup,
+    so **every** read step degraded to ``HANDED_OFF`` and the failure was only
+    visible as a handoff reason on an individual run.
+    """
+    from app.scenarios.hr_case_agent.agent_loop import TOOL_EXECUTORS
+    from app.scenarios.hr_case_agent.read_executors import register_read_tool_executors
+    from app.scenarios.hr_case_agent.tools import TOOL_KINDS
+
+    registered = set(register_read_tool_executors())
+    read_tools = {name for name, kind in TOOL_KINDS.items() if kind == "read"}
+    missing = sorted(read_tools - registered - set(TOOL_EXECUTORS))
+    if missing:
+        logger.error("agent_read_tools_without_executor", tools=missing)
+    else:
+        logger.info("agent_read_tools_ready", tools=sorted(read_tools))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _ensure_infrastructure()
-    try:
-        yield
-    finally:
-        await shutdown("lifespan", timeout=30.0)
+    # Streamable-HTTP MCP mount: Starlette does NOT run the lifespan of mounted
+    # sub-apps, so the session manager must be started here explicitly —
+    # otherwise every /mcp request 500s with "Task group is not initialized".
+    from app.mcp.server import mcp_server as _mcp_server
+
+    _register_agent_read_tools()
+    async with _mcp_server.session_manager.run():
+        await _ensure_infrastructure()
+        try:
+            yield
+        finally:
+            await shutdown("lifespan", timeout=30.0)
 
 
 def create_app() -> FastAPI:
@@ -111,7 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix="/api")
     from app.access.routes.mcp import router as mcp_router
 
-    app.include_router(mcp_router, prefix="/api")
+    app.include_router(mcp_router)
     from app.mcp.server import mcp_server as _mcp_server
 
     app.mount("/mcp", _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True))
@@ -120,6 +148,9 @@ def create_app() -> FastAPI:
     app.include_router(policy_qa_router)
     app.include_router(interview_router)
     app.include_router(voice_router)
+    from app.access.routes.material_batches import router as material_batches_router
+
+    app.include_router(material_batches_router)
     app.include_router(weekly_router)
     app.include_router(culture_router)
     app.include_router(kb_router)

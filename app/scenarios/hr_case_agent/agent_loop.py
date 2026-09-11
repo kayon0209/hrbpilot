@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from app.scenarios.hr_case_agent import state as case_state
 from app.scenarios.hr_case_agent.planner import MAX_STEPS_PER_RUN, CasePlanDraft, PlanStep
+from app.scenarios.hr_case_agent.read_context import bind_read_tenant, reset_read_tenant
 from app.scenarios.hr_case_agent.service import HighRiskWriteBlockedError, HRCaseService
 from app.scenarios.hr_case_agent.tools import TOOL_KINDS, ToolError, validate_tool_call
 from app.shared.errors import NotFoundError
@@ -102,23 +103,30 @@ async def run_plan(
 
         executor = TOOL_EXECUTORS.get(step.tool)
         if executor is None:
+            logger.error("agent_read_executor_missing", tool=step.tool, case_id=case_id)
             result.status = "HANDED_OFF"
             result.handoff_reason = f"no executor registered for {step.tool}"
             break
 
-        attempt = 0
-        while True:
-            try:
-                outcome = await executor(normalized)
-                result.tool_results.append({"tool": step.tool, "ok": True, "summary": outcome.get("summary", "")})
-                break
-            except ToolError as e:
-                attempt += 1
-                if attempt > 1:  # MAX_TOOL_RETRIES = 1
-                    result.status = "HANDED_OFF"
-                    result.handoff_reason = f"tool {step.tool} failed after retry: {e.code}"
+        # Read executors need a tenant to scope retrieval; bind it for exactly
+        # the duration of this tool call so concurrent runs cannot leak scope.
+        tenant_token = bind_read_tenant(service.tenant_id)
+        try:
+            attempt = 0
+            while True:
+                try:
+                    outcome = await executor(normalized)
+                    result.tool_results.append({"tool": step.tool, "ok": True, "summary": outcome.get("summary", "")})
                     break
-                logger.warning("agent_tool_retry", tool=step.tool, error=e.code)
+                except ToolError as e:
+                    attempt += 1
+                    if attempt > 1:  # MAX_TOOL_RETRIES = 1
+                        result.status = "HANDED_OFF"
+                        result.handoff_reason = f"tool {step.tool} failed after retry: {e.code}"
+                        break
+                    logger.warning("agent_tool_retry", tool=step.tool, error=e.code)
+        finally:
+            reset_read_tenant(tenant_token)
         if result.handoff_reason:
             break
 
