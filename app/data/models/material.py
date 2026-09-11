@@ -76,6 +76,7 @@ class InterviewRecord(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     raw_text: Mapped[str | None] = mapped_column(Text, default=None)
     raw_text_length: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     digest_task_id: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
+    batch_id: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
     # analyzing | completed | failed — mirrors the linked task's stage
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="analyzing")
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -115,8 +116,34 @@ class VoiceEntry(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     raw_text: Mapped[str | None] = mapped_column(Text, default=None)
     raw_text_length: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     digest_task_id: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
+    batch_id: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="analyzing")
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     def __repr__(self) -> str:
         return f"<VoiceEntry id={self.id} channel={self.channel} status={self.status}>"
+
+
+class MaterialBatch(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
+    """Batch run for 500-record bulk ingestion: progress 1/N + per-item isolation.
+
+    Single-row aggregate: each sub-item updates completed/failed atomically;
+    the whole batch never needs to be re-run on one LLM failure.
+    """
+
+    __tablename__ = "material_batches"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_material_batches_tenant_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["users.tenant_id", "users.id"],
+            name="fk_material_batches_tenant_creator",
+        ),
+    )
+
+    type: Mapped[str] = mapped_column(String(30), nullable=False)
+    total: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="analyzing")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

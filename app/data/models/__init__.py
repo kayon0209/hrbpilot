@@ -22,7 +22,7 @@ from app.data.models.hr_case import (
 )
 from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEntry
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
-from app.data.models.material import Employee, InterviewRecord, VoiceEntry
+from app.data.models.material import Employee, InterviewRecord, MaterialBatch, VoiceEntry
 from app.data.models.notification import InAppNotification
 from app.data.models.runtime import ExecutionGrant, OutboxMessage
 from app.data.models.scenarios import (
@@ -68,6 +68,7 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
+    "MaterialBatch",
     "OAuthNonce",
     "OrgUnit",
     "OutboxMessage",
