@@ -31,6 +31,18 @@ from app.shared.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Cosine similarity that degrades to 0.0 for empty/zero vectors."""
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = sum(a * a for a in left) ** 0.5
+    right_norm = sum(b * b for b in right) ** 0.5
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / (left_norm * right_norm)
+
+
 class Retriever:
     """Retrieve document chunks via dense / sparse / hybrid strategies."""
 
@@ -70,19 +82,13 @@ class Retriever:
         if isinstance(strategy, str):
             strategy = RetrievalStrategy(strategy)
 
-        if rerank:
-            logger.warning(
-                "rerank_requested_but_not_implemented",
-                strategy=strategy.value,
-                note="rerank=True keeps the interface only; no cross-encoder/rerank API wired",
-            )
-
         logger.info(
             "retrieval_requested",
             query=query[:50],
             kb_id=kb_id,
             strategy=strategy.value,
             top_k=top_k,
+            rerank=rerank,
             tenant_id=tenant_id,
         )
 
@@ -92,6 +98,9 @@ class Retriever:
             chunks = await self._sparse(query, kb_id, tenant_id, top_k)
         else:
             chunks = await self._hybrid(query, kb_id, tenant_id, top_k)
+
+        if rerank:
+            chunks = await self._rerank(query, chunks, top_k)
 
         logger.info("retrieval_completed", kb_id=kb_id, strategy=strategy.value, count=len(chunks))
         return [c.to_dict() for c in chunks]
@@ -161,11 +170,90 @@ class Retriever:
         return chunks[:top_k]
 
     async def _hybrid(self, query: str, kb_id: str, tenant_id: str, top_k: int) -> list[RetrievedChunk]:
-        dense, sparse = await asyncio.gather(
+        """Dense + sparse fused with RRF.
+
+        Dense (Milvus) and sparse (PostgreSQL FTS) are **independent** legs, so
+        one failing must not cancel the other.  ``asyncio.gather`` without
+        ``return_exceptions`` propagates the first exception and discards the
+        winner — Milvus being down used to turn a perfectly good BM25/FTS
+        result into a hard ``ExternalServiceError`` for the whole question.
+
+        Degrading to the surviving leg is only acceptable if it is *visible*:
+        every fallback logs at ERROR with the reason, and ``/api/ready``
+        independently reports ``milvus`` as ``unavailable``.  If BOTH legs fail
+        we re-raise instead of answering from an empty context — silently
+        returning "no results" on a broken retrieval stack is worse than
+        admitting failure.
+        """
+        dense_out, sparse_out = await asyncio.gather(
             self._dense(query, kb_id, tenant_id, settings.dense_top_k),
             self._sparse(query, kb_id, tenant_id, settings.sparse_top_k),
+            return_exceptions=True,
         )
+
+        dense: list[RetrievedChunk] = []
+        sparse: list[RetrievedChunk] = []
+        for leg, outcome in (("dense", dense_out), ("sparse", sparse_out)):
+            if isinstance(outcome, BaseException):
+                logger.error(
+                    "retrieval_leg_failed",
+                    leg=leg,
+                    kb_id=kb_id,
+                    tenant_id=tenant_id,
+                    error=str(outcome),
+                    error_type=type(outcome).__name__,
+                )
+                continue
+            if leg == "dense":
+                dense = outcome
+            else:
+                sparse = outcome
+
+        if not dense and not sparse:
+            first = dense_out if isinstance(dense_out, BaseException) else sparse_out
+            if isinstance(first, BaseException):
+                raise first
+            return []
+
+        if not dense or not sparse:
+            logger.error(
+                "hybrid_retrieval_degraded_to_single_leg",
+                kb_id=kb_id,
+                dense_ok=bool(dense),
+                sparse_ok=bool(sparse),
+            )
+
         return rrf_fusion(dense, sparse, k=settings.rrf_k, top_k=top_k)
+
+    async def _rerank(self, query: str, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
+        """Reorder fused candidates by query↔chunk embedding similarity.
+
+        Scope of this rerank (stated explicitly so callers do not over-trust it):
+        it is a **bi-encoder** rerank that reuses the configured embedding model —
+        no cross-encoder / dedicated rerank API is wired.  It reorders and scores
+        candidates; it never adds or drops evidence, so citations stay complete.
+
+        If the embedding service is unreachable the original fusion order is kept
+        and the failure is logged — rerank is an ordering refinement, so losing it
+        must not fail a legal-policy answer.
+        """
+        if len(chunks) < 2:
+            return chunks
+        try:
+            vectors = await self._get_embedder().embed([query] + [c.content for c in chunks])
+        except Exception as e:
+            logger.warning("rerank_skipped_embedding_unavailable", error=repr(e), candidates=len(chunks))
+            return chunks
+
+        query_vector = vectors[0]
+        scored: list[tuple[float, RetrievedChunk]] = []
+        for chunk, vector in zip(chunks, vectors[1:]):
+            similarity = _cosine_similarity(query_vector, vector)
+            chunk.rerank_score = similarity
+            scored.append((similarity, chunk))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        logger.info("rerank_applied", candidates=len(chunks), backend="bi-encoder-embedding")
+        return [chunk for _, chunk in scored][:top_k]
 
     # --- helpers ---
 

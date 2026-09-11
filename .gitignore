@@ -80,3 +80,16 @@ evaluation/results/golden_eval_20260828T102205Z.json
 evaluation/results/golden_eval_20260828T110147Z.json
 evaluation/results/golden_eval_20260828T120046Z.json
 .gstack/
+
+# ── 本地一次性验证产物（截图 / 探针脚本 / 临时制度）—— 仅本机，不进仓库 ──
+_verify_shots/
+_verify_*.json
+_verify_*.md
+/_*.py
+web/_verify_*.mjs
+web/_flow_*.mjs
+web/_check_*.mjs
+web/_shot_*.mjs
+web/_uxfix_*.mjs
+web/_audit_*.mjs
+web/_mg_e2e.mjs

@@ -8,10 +8,46 @@ import { AsyncState } from '../components/AsyncState'
  * failures, permission risks, failed syncs, pending configuration.
  * Healthy services are never stacked into metric cards.
  */
+
+/**
+ * 依赖 → 中文名 + 真实影响面。
+ *
+ * 影响面按代码事实写，不写「服务异常」这类废话：管理员要判断的是
+ * 「要不要现在处理」，而这取决于坏掉的东西到底挡住了什么。
+ * 依据见 docs/operations/dependency-failure-matrix.md。
+ */
+const DEPENDENCIES: Record<string, { label: string; impact: string }> = {
+  database: {
+    label: '数据库',
+    impact: '所有业务读写都不可用，服务无法对外提供。需要立即恢复。',
+  },
+  redis: {
+    label: '缓存与限流',
+    impact: '限流是 fail-closed：Redis 不可用会让已登录请求全部被拒绝（429）。需要立即恢复。',
+  },
+  milvus: {
+    label: '向量库',
+    impact: '密集检索不可用，混合检索自动降级为关键词检索 —— 问答仍可用，但召回会下降。',
+  },
+  minio: {
+    label: '对象存储',
+    impact: '附件与文件的上传下载不可用，其余功能不受影响。',
+  },
+  embedding: {
+    label: '向量化服务',
+    impact: '入库向量化与结果重排不可用；关键词检索与已有向量仍可用。',
+  },
+}
+
+function describe(name: string) {
+  return DEPENDENCIES[name] ?? { label: name, impact: '连接检查未通过，影响范围未知。' }
+}
+
 export function AdminHomePage() {
   const ready = useQuery({ queryKey: ['readiness'], queryFn: getReadiness, refetchInterval: 60_000 })
-  const checks = Object.entries(ready.data?.checks ?? {})
-  const failed = checks.filter(([, v]) => v === false || v === 'error' || (typeof v === 'object' && v.status && v.status !== 'ok'))
+  const data = ready.data
+  const critical = data?.critical_failed ?? []
+  const optional = data?.optional_unavailable ?? []
 
   return (
     <main className="page-stack">
@@ -32,7 +68,8 @@ export function AdminHomePage() {
           action={<button onClick={() => ready.refetch()}>重新检查</button>}
         />
       )}
-      {ready.data && failed.length === 0 && (
+
+      {data && critical.length === 0 && optional.length === 0 && (
         <section className="panel">
           <h2>当前没有需要处理的故障</h2>
           <p>各依赖运行正常。你可以前往 AI 质量查看评测指标，或在服务设置中调整配置。</p>
@@ -42,20 +79,40 @@ export function AdminHomePage() {
           </div>
         </section>
       )}
-      {failed.length > 0 && (
+
+      {critical.length > 0 && (
         <section className="panel">
-          <h2>故障与恢复</h2>
+          <h2>
+            服务不可用 <span className="status-badge status-badge--error">需立即处理</span>
+          </h2>
+          <p>关键依赖故障，当前实例无法对外提供服务。编排系统会把它摘出流量。</p>
           <div className="issue-list">
-            {failed.map(([name, value]) => (
+            {critical.map((name) => (
               <article key={name}>
-                <strong>{name} 不可用</strong>
-                <p>{typeof value === 'object' && value && 'detail' in value ? String((value as { detail?: string }).detail ?? '连接检查未通过') : '连接检查未通过'}</p>
-                <small>受影响的功能会向对应入口的使用者说明影响；这里提供恢复动作。</small>
+                <strong>{describe(name).label}不可用</strong>
+                <p>{describe(name).impact}</p>
               </article>
             ))}
           </div>
           <div className="admin-links">
             <Link to="/settings">前往服务设置</Link>
+          </div>
+        </section>
+      )}
+
+      {optional.length > 0 && (
+        <section className="panel">
+          <h2>
+            可选能力未就绪 <span className="status-badge status-badge--parsing">服务仍可运行</span>
+          </h2>
+          <p>这些依赖只影响对应能力，不影响整体可用性。若本次部署本就不含它们，可以忽略。</p>
+          <div className="issue-list">
+            {optional.map((name) => (
+              <article key={name}>
+                <strong>{describe(name).label}不可用</strong>
+                <p>{describe(name).impact}</p>
+              </article>
+            ))}
           </div>
         </section>
       )}

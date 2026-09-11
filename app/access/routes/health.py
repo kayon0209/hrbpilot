@@ -1,16 +1,61 @@
 """HRBP AI Workbench — health check and readiness endpoints.
 
-/health → liveness (is the app running?)
-/ready   → readiness (are all dependencies reachable?)
+/health → liveness (is the process alive?)
+/ready  → readiness (can THIS instance serve traffic right now?)
+
+Readiness semantics (revised 2026-09-11)
+----------------------------------------
+The previous implementation OR-ed every dependency into one ``ok``/``degraded``
+flag, giving Milvus/MinIO the same weight as PostgreSQL/Redis.  Consequence:
+on any deployment that intentionally omits an optional dependency the endpoint
+is **permanently** ``degraded`` — which makes it unusable as a Kubernetes
+``readinessProbe`` (the pod would never be marked ready) and, worse, trains
+operators to ignore it.
+
+Dependencies are therefore split by **blast radius**:
+
+* **critical** — losing one means the instance cannot serve *any* request.
+  → overall ``not_ready`` + **HTTP 503** (so orchestrators actually act).
+  - ``database``: every authenticated route reads it.
+  - ``redis``: the rate limiter is **fail-closed** — Redis down ⇒ HTTP 429 for
+    every authenticated request. Measured, not assumed:
+    ``docs/operations/dependency-failure-matrix.md``.
+* **optional** — losing one disables a specific capability, not the service.
+  → overall ``degraded`` + HTTP 200.
+  - ``milvus``: dense retrieval (hybrid falls back to sparse — see
+    ``Retriever._hybrid``).
+  - ``minio``: object storage for uploads/attachments.
+  - ``embedding``: dense vectors + rerank (sparse/FTS retrieval still works).
+
+Per-check status is intentionally three-valued so a reader never has to
+re-derive severity from the tier:
+
+* ``ok``            reachable
+* ``unavailable``   optional dependency not reachable → capability degraded
+* ``error``         critical dependency not reachable → instance cannot serve
+
+Public payload discipline (audit 2026-08-31 P2-1) is unchanged: no host names,
+no ports, no driver text.  Raw exception text goes to the server log only.
 """
 
+import asyncio
+
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.config.settings import settings
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["health"])
+
+# A probe that hangs is as useless as a probe that lies: the MinIO client
+# retries for ~17s against a dead endpoint, blowing past the 1s default
+# Kubernetes probe timeout.  Cap every check.
+CHECK_TIMEOUT_SECONDS = 5.0
+
+CRITICAL = "critical"
+OPTIONAL = "optional"
 
 
 @router.get("/health")
@@ -19,69 +64,110 @@ async def health_check():
     return {"status": "ok", "app": settings.app_name, "env": settings.app_env}
 
 
+async def _check_database() -> None:
+    from sqlalchemy import text
+
+    from app.data.database import get_engine
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+async def _check_redis() -> None:
+    import redis.asyncio as aioredis
+
+    r = aioredis.from_url(settings.redis_url)
+    try:
+        await r.ping()
+    finally:
+        await r.close()
+
+
+async def _check_milvus() -> None:
+    from app.rag.storage.milvus import MilvusStore
+
+    await MilvusStore().check_connection_async()
+
+
+async def _check_minio() -> None:
+    from app.rag.storage.object_store import ObjectStore
+
+    await ObjectStore().check_connection_async()
+
+
+async def _run_check(name: str, tier: str, probe) -> dict[str, str]:
+    """Run one dependency probe and map the outcome onto the 3-valued status.
+
+    Timeouts and connection errors are treated identically: from the caller's
+    point of view ``too slow`` and ``down`` are the same answer — this instance
+    cannot rely on that dependency right now.
+    """
+    try:
+        await asyncio.wait_for(probe(), timeout=CHECK_TIMEOUT_SECONDS)
+        return {"status": "ok", "tier": tier}
+    except asyncio.TimeoutError:
+        logger.warning(
+            "readiness_check_timeout",
+            dependency=name,
+            tier=tier,
+            timeout_seconds=CHECK_TIMEOUT_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001 - a probe must never raise
+        # Critical failures are operationally actionable; optional ones are
+        # capacity/capability signals. Log severity follows the tier.
+        log = logger.error if tier == CRITICAL else logger.warning
+        log(f"{name}_unavailable", tier=tier, error=str(e))
+    return {"status": "error" if tier == CRITICAL else "unavailable", "tier": tier}
+
+
 @router.get("/ready")
 async def readiness_check():
-    """Readiness probe — checks if all critical dependencies are reachable.
+    """Readiness probe — can this instance serve traffic?
 
-    This endpoint is PUBLIC (no auth): a degraded response must not disclose
-    internal topology (host names, ports, driver errors). Raw exception text
-    only goes to the server log; the public payload carries status only
-    (audit 2026-08-31 P2-1).
+    HTTP status carries the verdict so orchestrators can act on it directly:
+
+    * ``200`` + ``status: ok``        — everything reachable
+    * ``200`` + ``status: degraded``  — serving, but a capability is degraded
+    * ``503`` + ``status: not_ready`` — a critical dependency is down
+
+    The payload is PUBLIC (no auth) and never discloses internal topology.
     """
-    checks = {}
+    checks = {
+        "database": await _run_check("database", CRITICAL, _check_database),
+        "redis": await _run_check("redis", CRITICAL, _check_redis),
+        "milvus": await _run_check("milvus", OPTIONAL, _check_milvus),
+        "minio": await _run_check("minio", OPTIONAL, _check_minio),
+    }
 
-    # Database check
-    try:
-        from sqlalchemy import text
-
-        from app.data.database import get_engine
-
-        engine = get_engine()
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        checks["database"] = {"status": "ok"}
-    except Exception as e:
-        logger.error("database_unavailable", error=str(e))
-        checks["database"] = {"status": "error"}
-
-    # Redis check
-    try:
-        import redis.asyncio as aioredis
-
-        r = aioredis.from_url(settings.redis_url)
-        await r.ping()
-        await r.close()
-        checks["redis"] = {"status": "ok"}
-    except Exception as e:
-        logger.warning("redis_unavailable", error=str(e))
-        checks["redis"] = {"status": "error"}
-
-    try:
-        from app.rag.storage.milvus import MilvusStore
-
-        await MilvusStore().check_connection_async()
-        checks["milvus"] = {"status": "ok"}
-    except Exception as e:
-        logger.warning("milvus_unavailable", error=str(e))
-        checks["milvus"] = {"status": "error"}
-
-    try:
-        from app.rag.storage.object_store import ObjectStore
-
-        await ObjectStore().check_connection_async()
-        checks["minio"] = {"status": "ok"}
-    except Exception as e:
-        logger.warning("minio_unavailable", error=str(e))
-        checks["minio"] = {"status": "error"}
-
+    # Embedding is a configuration fact rather than a reachability probe: there
+    # is no cheap "is the vendor up" call that does not spend tokens.
     embedding_configured = bool(settings.embedding_base_url and settings.effective_embedding_api_key)
     if not embedding_configured:
         logger.warning("embedding_unconfigured", detail="missing endpoint or API key")
-    checks["embedding"] = {"status": "ok" if embedding_configured else "error"}
-
-    # Overall status
-    all_ok = all(c.get("status") == "ok" for c in checks.values())
-    return {
-        "status": "ok" if all_ok else "degraded",
-        "checks": checks,
+    checks["embedding"] = {
+        "status": "ok" if embedding_configured else "unavailable",
+        "tier": OPTIONAL,
     }
+
+    critical_failed = sorted(n for n, c in checks.items() if c["tier"] == CRITICAL and c["status"] != "ok")
+    optional_failed = sorted(n for n, c in checks.items() if c["tier"] == OPTIONAL and c["status"] != "ok")
+
+    if critical_failed:
+        overall, http_status = "not_ready", 503
+        logger.error("readiness_not_ready", critical_failed=critical_failed)
+    elif optional_failed:
+        overall, http_status = "degraded", 200
+        logger.warning("readiness_degraded", optional_unavailable=optional_failed)
+    else:
+        overall, http_status = "ok", 200
+
+    return JSONResponse(
+        status_code=http_status,
+        content={
+            "status": overall,
+            "critical_failed": critical_failed,
+            "optional_unavailable": optional_failed,
+            "checks": checks,
+        },
+    )
