@@ -119,6 +119,21 @@ async def test_hybrid_fuses_and_dedups(monkeypatch):
     assert {c.chunk_id for c in chunks} == {"a", "b", "c"}
 
 
+async def test_hybrid_keeps_sparse_results_when_dense_fails(monkeypatch):
+    r = Retriever()
+
+    async def failed_dense(q, kb, t, k):
+        raise RuntimeError("milvus down")
+
+    async def healthy_sparse(q, kb, t, k):
+        return [_chunk("sparse-only", 2.0)]
+
+    monkeypatch.setattr(r, "_dense", failed_dense)
+    monkeypatch.setattr(r, "_sparse", healthy_sparse)
+    chunks = await r._hybrid("q", "k1", "t", 5)
+    assert [chunk.chunk_id for chunk in chunks] == ["sparse-only"]
+
+
 async def test_retrieve_propagates_embedding_error():
     r = Retriever(embedder=_FakeEmbedder(error=RuntimeError("embedding down")), milvus=_FakeMilvus())
     with pytest.raises(RuntimeError):

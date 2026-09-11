@@ -16,6 +16,8 @@ Implementation notes (Phase 5 fix):
 
 from __future__ import annotations
 
+import os
+import time
 from typing import TYPE_CHECKING
 
 from app.config.settings import settings
@@ -29,6 +31,14 @@ logger = get_logger(__name__)
 _client: Redis | None = None
 _client_loop: object | None = None
 _client_unavailable: bool = False
+_client_failed_at: float = 0.0
+RETRY_COOLDOWN_SECONDS = float(os.environ.get("REDIS_RETRY_COOLDOWN_SECONDS", "10"))
+
+
+def _mark_unavailable() -> None:
+    global _client_unavailable, _client_failed_at
+    _client_unavailable = True
+    _client_failed_at = time.monotonic()
 
 
 def _current_loop() -> object | None:
@@ -65,11 +75,13 @@ async def get_redis() -> Redis | None:
                 except Exception:
                     pass
                 _client = None
-                _client_unavailable = True
+                _mark_unavailable()
                 return None
     if _client_unavailable and loop is not None and _client_loop is not None and loop is _client_loop:
-        # Already failed on THIS loop; don't hammer a down server.
-        return None
+        if time.monotonic() - _client_failed_at < RETRY_COOLDOWN_SECONDS:
+            return None
+        logger.info("redis_retry_after_cooldown", cooldown=RETRY_COOLDOWN_SECONDS)
+        _client_unavailable = False
     if _client_unavailable and _client_loop is None:
         # Previous failure had no loop context (sync context); allow retry.
         _client_unavailable = False
@@ -82,7 +94,7 @@ async def get_redis() -> Redis | None:
         logger.info("redis_connected", url=settings.redis_url)
         return _client
     except Exception as e:
-        _client_unavailable = True
+        _mark_unavailable()
         if _client is not None:
             # Shut the failed connection down cleanly, otherwise its
             # transport error surfaces later as an orphaned
@@ -103,7 +115,7 @@ async def close_redis() -> None:
     the event loop closes and surfaces as a noisy
     "RuntimeError: Event loop is closed" traceback on exit.
     """
-    global _client, _client_loop, _client_unavailable
+    global _client, _client_loop, _client_unavailable, _client_failed_at
     if _client is not None:
         try:
             await _client.aclose()
@@ -112,3 +124,4 @@ async def close_redis() -> None:
     _client = None
     _client_loop = None
     _client_unavailable = False
+    _client_failed_at = 0.0

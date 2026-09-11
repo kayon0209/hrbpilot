@@ -13,6 +13,7 @@ These tests stub every dependency check so they are hermetic, fast, and
 deterministic without live PostgreSQL/Redis/Milvus/MinIO.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -80,12 +81,13 @@ def test_health_is_liveness_only():
 
 
 def test_ready_reports_dependency_status():
-    """/api/ready reports reachability; each check is a flat status object."""
+    """Critical and optional failures have distinct machine-readable outcomes."""
     with _client() as client:
         resp = client.get("/api/ready")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.json()
-    assert body["status"] in ("ok", "degraded")
+    assert body["status"] == "not_ready"
+    assert body["critical_failed"] == ["database", "redis"]
     checks = body["checks"]
     # Present keys are the known dependency set; anything else would leak
     # internal wiring that does not belong in a public readiness payload.
@@ -93,16 +95,77 @@ def test_ready_reports_dependency_status():
     assert set(checks).issubset(allowed)
     for _name, state in checks.items():
         # Public payload carries status only — no host, port or driver text.
-        assert set(state) == {"status"}
-        assert state["status"] in ("ok", "error")
+        assert set(state) == {"status", "tier"}
+        assert state["status"] in ("ok", "unavailable", "error")
+        assert state["tier"] in ("critical", "optional")
 
 
 def test_ready_degraded_with_all_deps_down(deps_down):
     with _client() as client:
-        body = client.get("/api/ready").json()
+        response = client.get("/api/ready")
+    body = response.json()
+    assert response.status_code == 503
+    assert body["status"] == "not_ready"
+    assert set(body["critical_failed"]) == {"database", "redis"}
+    assert set(body["optional_unavailable"]) == {"embedding", "milvus", "minio"}
+    assert body["checks"]["database"] == {"status": "error", "tier": "critical"}
+    assert body["checks"]["milvus"] == {"status": "unavailable", "tier": "optional"}
+
+
+def test_ready_degraded_when_only_optional_deps_are_down(monkeypatch):
+    class FakeConn:
+        async def execute(self, _sql):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConn()
+
+    class FakeRedisClient:
+        async def ping(self):
+            return True
+
+        async def close(self):
+            return None
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(_url):
+            return FakeRedisClient()
+
+    class FakeAvailable:
+        async def check_connection_async(self):
+            return True
+
+    monkeypatch.setattr("app.data.database.get_engine", lambda: FakeEngine())
+    monkeypatch.setattr("redis.asyncio.from_url", FakeRedis.from_url)
+    monkeypatch.setattr("app.rag.storage.milvus.MilvusStore", _FakeUnavailable)
+    monkeypatch.setattr("app.rag.storage.object_store.ObjectStore", _FakeUnavailable)
+    monkeypatch.setattr("app.config.settings.settings.embedding_base_url", "")
+
+    with _client() as client:
+        response = client.get("/api/ready")
+    body = response.json()
+    assert response.status_code == 200
     assert body["status"] == "degraded"
-    for _name, state in body["checks"].items():
-        assert state == {"status": "error"}
+    assert body["critical_failed"] == []
+    assert body["optional_unavailable"] == ["embedding", "milvus", "minio"]
+
+
+def test_readiness_check_is_time_boxed(monkeypatch):
+    from app.access.routes import health as health_module
+
+    async def hang():
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(health_module, "CHECK_TIMEOUT_SECONDS", 0.01)
+    assert asyncio.run(health_module._run_check("hang", "critical", hang)) == {"status": "error", "tier": "critical"}
 
 
 def test_ready_never_contains_segment_timing():
@@ -117,7 +180,7 @@ def test_health_and_ready_are_public_unauthenticated():
     """Probes must answer before auth so orchestrators can restart us."""
     with _client() as client:
         assert client.get("/api/health").status_code == 200
-        assert client.get("/api/ready").status_code == 200
+        assert client.get("/api/ready").status_code == 503
 
 
 def test_segment_latency_log_shape_is_metadata_only():

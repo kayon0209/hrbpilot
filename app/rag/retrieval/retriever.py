@@ -35,7 +35,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     """Cosine similarity that degrades to 0.0 for empty/zero vectors."""
     if not left or not right or len(left) != len(right):
         return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = sum(a * a for a in left) ** 0.5
     right_norm = sum(b * b for b in right) ** 0.5
     if left_norm == 0.0 or right_norm == 0.0:
@@ -170,10 +170,28 @@ class Retriever:
         return chunks[:top_k]
 
     async def _hybrid(self, query: str, kb_id: str, tenant_id: str, top_k: int) -> list[RetrievedChunk]:
-        dense, sparse = await asyncio.gather(
+        dense_out, sparse_out = await asyncio.gather(
             self._dense(query, kb_id, tenant_id, settings.dense_top_k),
             self._sparse(query, kb_id, tenant_id, settings.sparse_top_k),
+            return_exceptions=True,
         )
+        dense: list[RetrievedChunk] = []
+        sparse: list[RetrievedChunk] = []
+        for leg, outcome in (("dense", dense_out), ("sparse", sparse_out)):
+            if isinstance(outcome, BaseException):
+                logger.error("retrieval_leg_failed", leg=leg, kb_id=kb_id, tenant_id=tenant_id, error=str(outcome), error_type=type(outcome).__name__)
+                continue
+            if leg == "dense":
+                dense = outcome
+            else:
+                sparse = outcome
+        if not dense and not sparse:
+            first = dense_out if isinstance(dense_out, BaseException) else sparse_out
+            if isinstance(first, BaseException):
+                raise first
+            return []
+        if not dense or not sparse:
+            logger.error("hybrid_retrieval_degraded_to_single_leg", kb_id=kb_id, dense_ok=bool(dense), sparse_ok=bool(sparse))
         return rrf_fusion(dense, sparse, k=settings.rrf_k, top_k=top_k)
 
     async def _rerank(self, query: str, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
@@ -198,7 +216,7 @@ class Retriever:
 
         query_vector = vectors[0]
         scored: list[tuple[float, RetrievedChunk]] = []
-        for chunk, vector in zip(chunks, vectors[1:]):
+        for chunk, vector in zip(chunks, vectors[1:], strict=True):
             similarity = _cosine_similarity(query_vector, vector)
             chunk.rerank_score = similarity
             scored.append((similarity, chunk))

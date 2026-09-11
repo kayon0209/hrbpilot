@@ -21,9 +21,19 @@ export interface ApiErrorBody {
   request_id?: string
 }
 
+export type DependencyTier = 'critical' | 'optional'
+export type DependencyStatus = 'ok' | 'unavailable' | 'error'
+
+export interface ReadinessCheck {
+  status: DependencyStatus
+  tier: DependencyTier
+}
+
 export interface Readiness {
-  status: string
-  checks?: Record<string, boolean | string | { status?: string; detail?: string }>
+  status: 'ok' | 'degraded' | 'not_ready'
+  checks?: Record<string, ReadinessCheck>
+  critical_failed?: string[]
+  optional_unavailable?: string[]
   request_id?: string
 }
 

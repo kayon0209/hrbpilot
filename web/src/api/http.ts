@@ -59,6 +59,13 @@ export class ApiClient {
     const contentType = response.headers.get('content-type') ?? ''
     return (contentType.includes('json') ? response.json() : response.text()) as Promise<T>
   }
+
+  async probe<T>(path: string, tolerated: number[] = []): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+    if (!response.ok && !tolerated.includes(response.status)) throw await normalizeError(response)
+    if (response.status === 204) return undefined as T
+    return (await response.json()) as T
+  }
 }
 
 export async function normalizeError(response: Response): Promise<ApiError> {

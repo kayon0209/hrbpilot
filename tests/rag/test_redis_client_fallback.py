@@ -29,3 +29,31 @@ async def test_get_redis_short_circuits_on_same_loop_after_failure(monkeypatch):
     monkeypatch.setattr(rc, "_client_loop", asyncio.get_running_loop())
 
     assert await rc.get_redis() is None
+
+
+async def test_get_redis_retries_after_cooldown(monkeypatch):
+    import redis.asyncio
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def ping(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionError("temporary outage")
+            return True
+
+        async def aclose(self):
+            return None
+
+    client = FakeClient()
+    monkeypatch.setattr(redis.asyncio, "from_url", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(rc, "_client", None)
+    monkeypatch.setattr(rc, "_client_loop", None)
+    monkeypatch.setattr(rc, "_client_unavailable", False)
+    monkeypatch.setattr(rc, "RETRY_COOLDOWN_SECONDS", 0.0)
+
+    assert await rc.get_redis() is None
+    assert await rc.get_redis() is client
+    assert client.calls == 2
