@@ -106,8 +106,15 @@ class InterviewDigestOrchestrator:
         risk_level = RiskLevel.LOW
         try:
             risk_level = RiskLevel(parsed.get("risk_level", "LOW"))
-        except ValueError:
-            pass
+        except ValueError as exc:
+            # 模型返回枚举外的风险等级时降级为 LOW —— 但"降级为最低风险"本身是
+            # 安全相关动作，必须留痕，否则提示词/模型漂移会表现为静默的风险低估。
+            logger.warning(
+                "interview_risk_level_unrecognised",
+                raw_level=str(parsed.get("risk_level"))[:40],
+                fallback=RiskLevel.LOW.value,
+                error=str(exc)[:120],
+            )
 
         confidence = 0.8 if parsed else 0.3
         latency_ms = int((time.time() - start_time) * 1000)

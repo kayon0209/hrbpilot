@@ -143,8 +143,14 @@ def _wecom_callback_config_summary(row) -> tuple[bool, str | None, str | None]:
         agent_id = payload.get("agent_id")
         if isinstance(corp_id, str) and isinstance(agent_id, str):
             return True, corp_id, agent_id
-    except (InvalidToken, TypeError, ValueError):
-        pass
+    except (InvalidToken, TypeError, ValueError) as exc:
+        # 凭据解密失败与「压根没绑定」此前无法区分（都返回 False）——密钥轮换后
+        # 数据源会看起来"未配置"，所以补一条可检索的线索。
+        logger.warning(
+            "data_source_credential_unreadable",
+            tenant_id=getattr(row, "tenant_id", None),
+            error=type(exc).__name__,
+        )
     return False, None, None
 
 

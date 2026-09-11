@@ -10,7 +10,7 @@ GET  /api/interview-digest/records/{record_id} → Full record detail incl. comp
 """
 
 import base64
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import and_, or_, select
@@ -96,7 +96,10 @@ async def upload_document(
             logger.warning("docx_parse_failed", error=str(e))
             raw_text = f"[文档解析失败: {e!s}]"
     elif content_type == "application/pdf":
-        # TODO: Use pypdf for real parsing
+        # pypdf text-layer extraction (the old comment claimed this was still a
+        # TODO, which made a working path look unfinished).  Scanned/image PDFs
+        # have no text layer; that used to flow downstream as an empty document,
+        # so it is now surfaced as an explicit validation error instead.
         try:
             import io
 
@@ -106,7 +109,11 @@ async def upload_document(
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as e:
             logger.warning("pdf_parse_failed", error=str(e))
-            raw_text = f"[PDF解析失败: {e!s}]"
+            raise ValidationError(f"PDF 解析失败：{e!s}。修复方法：另存为 Word 或 txt 后重新上传。") from e
+        if not raw_text.strip():
+            raise ValidationError(
+                "该 PDF 没有可提取的文本层（常见于扫描件/图片版）。修复方法：上传文字版 PDF，或先用 OCR 转换后上传。"
+            )
 
     logger.info(
         "interview_document_uploaded",
@@ -322,7 +329,12 @@ async def get_history(
         result = None
         try:
             result = InterviewDigestResponse.model_validate_json(row.result_json or "")
-        except Exception:
+        except Exception as exc:
+            # A stored result that no longer validates (schema drift, or a row
+            # written by an older release) must not break the whole list — but
+            # it must not vanish silently either: the UI would just show an
+            # empty analysis and nobody could tell why.
+            logger.warning("interview_digest_result_unreadable", task_id=row.id, error=str(exc))
             result = None
         digests.append(
             {
@@ -365,8 +377,10 @@ def _summarize_record(record: InterviewRecord, task: AsyncTask | None) -> dict:
             risk_level = parsed.risk_level.value
             summary = parsed.summary
             confidence = parsed.confidence
-        except Exception:
-            pass
+        except Exception as exc:
+            # Summary falls back to empty strings in the list view; log so the
+            # degraded row is traceable instead of looking like "not analysed".
+            logger.warning("interview_record_summary_unreadable", record_id=record.id, error=str(exc))
     return {
         "record_id": record.id,
         "employee_name": record.employee_name,
@@ -390,15 +404,21 @@ def _summarize_record(record: InterviewRecord, task: AsyncTask | None) -> dict:
 async def list_records(
     request: Request,
     q: str = "",
+    interview_type: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
     limit: int = 20,
     cursor: str = "",
     session: AsyncSession = Depends(get_db),
 ):
-    """Material list — summary rows with keyset pagination and search.
+    """Material list — summary rows with keyset pagination, search and filters.
 
-    Search `q` matches employee name, title or raw corpus (ILIKE). At the
-    500-5000 record scale this is comfortably served by Postgres; full-text
-    (tsvector) is a later upgrade, not needed here yet.
+    Search `q` matches employee name, title or raw corpus. At the 500-5000
+    record scale this is comfortably served by Postgres; full-text (tsvector)
+    is a later upgrade, not needed here yet. Risk-level lives inside the
+    result JSON (no materialized summary table yet), so it is not a SQL
+    filter — filtering on it would break keyset pagination.
     """
     tenant_id = require_tenant_id(request)
     visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
@@ -429,6 +449,26 @@ async def list_records(
                 InterviewRecord.raw_text.ilike(like),
             )
         )
+    if interview_type.strip():
+        stmt = stmt.where(InterviewRecord.interview_type == interview_type.strip())
+    if status.strip():
+        stage = status.strip()
+        if stage == "completed":
+            stmt = stmt.where(AsyncTask.status == "completed")
+        elif stage == "failed":
+            stmt = stmt.where(AsyncTask.status == "failed")
+        else:  # analyzing — pending or running worker stage
+            stmt = stmt.where(AsyncTask.status.in_(("pending", "running")))
+    if date_from.strip():
+        try:
+            stmt = stmt.where(InterviewRecord.interview_date >= date.fromisoformat(date_from.strip()))
+        except ValueError as exc:
+            raise ValidationError("date_from 需为 YYYY-MM-DD 格式") from exc
+    if date_to.strip():
+        try:
+            stmt = stmt.where(InterviewRecord.interview_date <= date.fromisoformat(date_to.strip()))
+        except ValueError as exc:
+            raise ValidationError("date_to 需为 YYYY-MM-DD 格式") from exc
     if cursor:
         last_dt, last_id = _decode_cursor(cursor)
         stmt = stmt.where(
@@ -490,7 +530,8 @@ async def get_record_detail(
     if task is not None and task.result_json:
         try:
             result = InterviewDigestResponse.model_validate_json(task.result_json).model_dump()
-        except Exception:
+        except Exception as exc:
+            logger.warning("interview_record_result_unreadable", record_id=record.id, error=str(exc))
             result = None
 
     return {

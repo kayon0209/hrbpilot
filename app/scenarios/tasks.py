@@ -150,6 +150,28 @@ async def _persist_voice_insight(tenant_id: str, task_id: str, result) -> None:
         await db.commit()
 
 
+async def _inc_batch(tenant_id: str, batch_id: str | None, *, success: bool) -> None:
+    if not batch_id:
+        return
+    from app.data.database import get_session_factory
+    from app.data.models.material import MaterialBatch
+
+    factory = get_session_factory()
+    async with factory() as db:
+        db.info["tenant_id"] = tenant_id
+        batch = await db.get(MaterialBatch, batch_id)
+        if batch is None:
+            return
+        if success:
+            batch.completed = int(batch.completed or 0) + 1
+        else:
+            batch.failed = int(batch.failed or 0) + 1
+        done = int(batch.completed or 0) + int(batch.failed or 0)
+        if done >= int(batch.total or 0):
+            batch.status = "completed"
+        await db.commit()
+
+
 @celery_app.task(name="scenario.interview_digest", acks_late=True)  # type: ignore[untyped-decorator]
 def interview_digest_task(task_id: str, document_content: str, tenant_id: str, user_id: str) -> None:
     """Run interview digest analysis and persist the result."""
@@ -186,6 +208,33 @@ def interview_digest_task(task_id: str, document_content: str, tenant_id: str, u
                 completed_at=datetime.now(UTC),
             )
         )
+
+
+@celery_app.task(name="scenario.interview_digest_batch", acks_late=True)  # type: ignore[untyped-decorator]
+def interview_digest_batch_task(
+    task_id: str, document_content: str, tenant_id: str, user_id: str, batch_id: str | None = None
+) -> None:
+    """Batch variant — same as single but also advances the MaterialBatch aggregate."""
+    from datetime import datetime
+
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", started_at=datetime.now(UTC)))
+    try:
+        from app.scenarios.interview_digest.orchestrator import InterviewDigestOrchestrator
+
+        result = run_async_in_worker(InterviewDigestOrchestrator().digest(document_content, tenant_id, user_id))
+        run_async_in_worker(
+            _update_task(
+                task_id, tenant_id, status="completed", result_json=result.model_dump_json(), completed_at=datetime.now(UTC)
+            )
+        )
+        run_async_in_worker(_persist_interview_digest(tenant_id, result))
+        run_async_in_worker(_inc_batch(tenant_id, batch_id, success=True))
+    except Exception as exc:
+        logger.error("interview_digest_batch_failed", task_id=task_id, batch_id=batch_id, error=str(exc))
+        run_async_in_worker(
+            _update_task(task_id, tenant_id, status="failed", error_message=str(exc), completed_at=datetime.now(UTC))
+        )
+        run_async_in_worker(_inc_batch(tenant_id, batch_id, success=False))
 
 
 @celery_app.task(name="scenario.voice_insight", acks_late=True)  # type: ignore[untyped-decorator]
@@ -225,3 +274,31 @@ def voice_insight_task(task_id: str, documents_json: str, tenant_id: str, user_i
                 completed_at=datetime.now(UTC),
             )
         )
+
+
+@celery_app.task(name="scenario.voice_insight_batch", acks_late=True)  # type: ignore[untyped-decorator]
+def voice_insight_batch_task(
+    task_id: str, documents_json: str, tenant_id: str, user_id: str, batch_id: str | None = None
+) -> None:
+    """Batch variant — advances the MaterialBatch aggregate."""
+    from datetime import datetime
+
+    run_async_in_worker(_update_task(task_id, tenant_id, status="running", started_at=datetime.now(UTC)))
+    try:
+        from app.scenarios.voice_insight.orchestrator import VoiceInsightOrchestrator
+
+        documents = json.loads(documents_json)
+        result = run_async_in_worker(VoiceInsightOrchestrator().analyze(documents, tenant_id, user_id))
+        run_async_in_worker(
+            _update_task(
+                task_id, tenant_id, status="completed", result_json=result.model_dump_json(), completed_at=datetime.now(UTC)
+            )
+        )
+        run_async_in_worker(_persist_voice_insight(tenant_id, task_id, result))
+        run_async_in_worker(_inc_batch(tenant_id, batch_id, success=True))
+    except Exception as exc:
+        logger.error("voice_insight_batch_failed", task_id=task_id, batch_id=batch_id, error=str(exc))
+        run_async_in_worker(
+            _update_task(task_id, tenant_id, status="failed", error_message=str(exc), completed_at=datetime.now(UTC))
+        )
+        run_async_in_worker(_inc_batch(tenant_id, batch_id, success=False))

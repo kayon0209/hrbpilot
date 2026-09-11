@@ -274,7 +274,10 @@ async def get_history(
             try:
                 value = json.loads(raw)
                 return value if isinstance(value, list) else []
-            except Exception:
+            except (TypeError, ValueError) as exc:
+                # 坏 JSON 会让周报静默少掉一整段（例如行动项），所以留下线索，
+                # 而不是用空列表把问题藏起来。
+                logger.warning("weekly_report_list_field_unreadable", error=str(exc)[:200])
                 return []
 
         reports.append(

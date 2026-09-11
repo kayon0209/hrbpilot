@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import {
   getInterviewHistory,
   getInterviewProgress,
   getInterviewRecord,
-  getInterviewRecords,
+  getInterviewRecordsPaged,
   getInterviewResult,
   startInterviewAnalysis,
   uploadInterviewDocument,
@@ -15,6 +16,7 @@ import { ResultDocument } from '../../components/ResultDocument'
 import { useSessionStore } from '../../app/session-store'
 import { PermissionNotice } from '../../components/PermissionNotice'
 import { useTaskPolling } from '../async-workbench/useTaskPolling'
+import { BatchPanel } from './BatchPanel'
 import styles from '../async-workbench/AsyncWorkbench.module.css'
 import { hasMinimumRole } from '../../app/roles'
 
@@ -105,15 +107,26 @@ export function InterviewDigestPage() {
   const [starting, setStarting] = useState(false)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filterType = searchParams.get('type') ?? ''
+  const filterStatus = searchParams.get('status') ?? ''
+  const filterDateFrom = searchParams.get('date_from') ?? ''
+  const filterDateTo = searchParams.get('date_to') ?? ''
   const task = useTaskPolling(taskId, getInterviewProgress, getInterviewResult)
   const allowed = hasMinimumRole(user?.role, 'hrbp')
   // Only the newest completed result powers the right-hand panel — one full
   // JSON payload, not the whole history (list rows below are summaries).
   const latestQuery = useQuery({ queryKey: ['interview-history'], queryFn: () => getInterviewHistory(1), enabled: allowed })
   const latest = latestQuery.data?.digests?.find(d => d.result) ?? null
+  const filters = useMemo(() => ({
+    interview_type: filterType,
+    status: filterStatus,
+    date_from: filterDateFrom,
+    date_to: filterDateTo,
+  }), [filterType, filterStatus, filterDateFrom, filterDateTo])
   const records = useInfiniteQuery({
-    queryKey: ['interview-records', query],
-    queryFn: ({ pageParam }) => getInterviewRecords(query, pageParam ?? ''),
+    queryKey: ['interview-records', query, filters],
+    queryFn: ({ pageParam }) => getInterviewRecordsPaged(query, filters, pageParam ?? ''),
     initialPageParam: '',
     getNextPageParam: lastPage => lastPage.next_cursor,
     enabled: allowed,
@@ -178,7 +191,25 @@ export function InterviewDigestPage() {
           placeholder="搜索员工姓名、标题或正文关键词，回车确认"
           aria-label="搜索面谈材料"
         />
-        {query && <button type="button" className="link-button" onClick={() => { setSearch(''); setQuery('') }}>清除</button>}
+        <select value={filterType} onChange={e => { const v = e.target.value; if (v) searchParams.set('type', v); else searchParams.delete('type'); setSearchParams(searchParams); }} aria-label="类型筛选">
+          <option value="">全部类型</option>
+          <option value="general">综合面谈</option>
+          <option value="performance">绩效面谈</option>
+          <option value="exit">离职面谈</option>
+          <option value="onboarding">入职面谈</option>
+          <option value="communication">日常沟通</option>
+        </select>
+        <select value={filterStatus} onChange={e => { const v = e.target.value; if (v) searchParams.set('status', v); else searchParams.delete('status'); setSearchParams(searchParams); }} aria-label="状态筛选">
+          <option value="">全部状态</option>
+          <option value="analyzing">分析中</option>
+          <option value="completed">已完成</option>
+          <option value="failed">失败</option>
+        </select>
+        <input type="date" value={filterDateFrom} onChange={e => { const v = e.target.value; if (v) searchParams.set('date_from', v); else searchParams.delete('date_from'); setSearchParams(searchParams); }} aria-label="开始日期" />
+        <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>
+        <input type="date" value={filterDateTo} onChange={e => { const v = e.target.value; if (v) searchParams.set('date_to', v); else searchParams.delete('date_to'); setSearchParams(searchParams); }} aria-label="结束日期" />
+        {query && <button type="button" className="link-button" onClick={() => { setSearch(''); setQuery('') }}>清除搜索</button>}
+        {(filterType || filterStatus || filterDateFrom || filterDateTo) && <button type="button" className="link-button" onClick={() => { searchParams.delete('type'); searchParams.delete('status'); searchParams.delete('date_from'); searchParams.delete('date_to'); setSearchParams(searchParams); }}>清除筛选</button>}
       </div>
       {records.isPending && <AsyncState kind="loading" title="正在读取材料" />}
       {records.isError && (
@@ -205,6 +236,7 @@ export function InterviewDigestPage() {
         </div>
       )}
     </section>
+    <BatchPanel type="interview" />
   </main>
 }
 

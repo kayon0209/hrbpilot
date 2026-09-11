@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import {
-  getVoiceEntries,
+  getVoiceEntriesPaged,
   getVoiceEntry,
   getVoiceHistory,
   getVoiceProgress,
@@ -14,6 +15,7 @@ import { ResultDocument } from '../../components/ResultDocument'
 import { PermissionNotice } from '../../components/PermissionNotice'
 import { useSessionStore } from '../../app/session-store'
 import { useTaskPolling } from '../async-workbench/useTaskPolling'
+import { BatchPanel } from '../interview/BatchPanel'
 import styles from '../async-workbench/AsyncWorkbench.module.css'
 import { hasMinimumRole } from '../../app/roles'
 
@@ -102,14 +104,18 @@ export function VoiceInsightPage() {
   const [starting, setStarting] = useState(false)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filterChannel = searchParams.get('channel') ?? ''
+  const filterStatus = searchParams.get('status') ?? ''
   const task = useTaskPolling(taskId, getVoiceProgress, getVoiceResult)
   const allowed = hasMinimumRole(user?.role, 'hrbp')
   // Only the newest completed report powers the right-hand panel.
   const latestQuery = useQuery({ queryKey: ['voice-history'], queryFn: () => getVoiceHistory(1), enabled: allowed })
   const latest = latestQuery.data?.reports?.find(r => r.result) ?? null
+  const voiceFilters = useMemo(() => ({ channel: filterChannel, status: filterStatus }), [filterChannel, filterStatus])
   const entries = useInfiniteQuery({
-    queryKey: ['voice-entries', query],
-    queryFn: ({ pageParam }) => getVoiceEntries(query, pageParam ?? ''),
+    queryKey: ['voice-entries', query, voiceFilters],
+    queryFn: ({ pageParam }) => getVoiceEntriesPaged(query, voiceFilters, pageParam ?? ''),
     initialPageParam: '',
     getNextPageParam: lastPage => lastPage.next_cursor,
     enabled: allowed,
@@ -151,7 +157,21 @@ export function VoiceInsightPage() {
           placeholder="搜索员工姓名、渠道或正文关键词，回车确认"
           aria-label="搜索员工声音条目"
         />
-        {query && <button type="button" className="link-button" onClick={() => { setSearch(''); setQuery('') }}>清除</button>}
+        <select value={filterChannel} onChange={e => { const v = e.target.value; if (v) searchParams.set('channel', v); else searchParams.delete('channel'); setSearchParams(searchParams); }} aria-label="渠道筛选">
+          <option value="">全部渠道</option>
+          <option value="survey">调研问卷</option>
+          <option value="inbox">意见箱</option>
+          <option value="townhall">座谈会</option>
+          <option value="interview">访谈</option>
+        </select>
+        <select value={filterStatus} onChange={e => { const v = e.target.value; if (v) searchParams.set('status', v); else searchParams.delete('status'); setSearchParams(searchParams); }} aria-label="状态筛选">
+          <option value="">全部状态</option>
+          <option value="analyzing">分析中</option>
+          <option value="completed">已完成</option>
+          <option value="failed">失败</option>
+        </select>
+        {query && <button type="button" className="link-button" onClick={() => { setSearch(''); setQuery('') }}>清除搜索</button>}
+        {(filterChannel || filterStatus) && <button type="button" className="link-button" onClick={() => { searchParams.delete('channel'); searchParams.delete('status'); setSearchParams(searchParams); }}>清除筛选</button>}
       </div>
       {entries.isPending && <AsyncState kind="loading" title="正在读取条目" />}
       {entries.isError && (
@@ -178,6 +198,7 @@ export function VoiceInsightPage() {
         </div>
       )}
     </section>
+    <BatchPanel type="voice" />
   </main>
 }
 

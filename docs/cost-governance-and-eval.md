@@ -20,9 +20,27 @@
 | 质量评测（线上异步 auto_eval） | ✅ **真实 LLM-as-judge，已接真实实现** | `auto_eval.py` 用 LLM judge 评估；judge 失败→skipped 不写入库（c7b9462 修复）；与黄金集离线评测是两回事 |
 | 指标聚合器 | ✅ **框架真实，过滤历史 stub** | `metrics.py` 聚合前过滤 `is_stub=true` 的占位行（PR-00A），stub 不参与均值/趋势/发布判断 |
 | 黄金集评测运行器 | ✅ **已落地、已真实跑通** | `evaluation/run_golden_eval.py`：REAL-LLM 模式产出真实分 + 真实 token |
-| 真实 token 消耗 | ✅ **真实（224,640 token，占月度预算 2.25%）** | 2026-07-30 真实运行记录（见 §6） |
-| 成本效率（token 预算视角） | ✅ **真实** | 单次全量 sweep = 2.25% 预算 → ~44 次/租户月（见 §6 指标 1） |
+| 真实 token 消耗 | ✅ **真实（554,387 token，占月度预算 5.54%）** | 最新一轮 2026-08-28 REAL-LLM 全量 250 样本（见 §6） |
+| 成本效率（token 预算视角） | ✅ **真实** | 单次全量 sweep = 5.54% 预算 → ~18 次/租户月（见 §6 指标 1） |
 | 检索成本效率（ΔRecall/Δ成本% 延迟代理） | ❌ **未测** | 无已提交检索消融 CSV；语义不同于上面的 token 成本效率 |
+
+### 0.1 两套评测口径不可混用（引用数字前先看这里）
+
+这个仓库里存在**两套独立的评测**，指标名相似但样本、算法、用途都不同。混用会被面试官一问即穿：
+
+| | **口径 A：黄金集全量评测** | **口径 B：线上异步 auto_eval** |
+|---|---|---|
+| 代码 | `evaluation/run_golden_eval.py` + `golden_metrics.py` | `app/evaluation/auto_eval.py`（`rag/pipeline.py`、`policy_qa/orchestrator.py` 调用） |
+| 样本 | 固定 250 条（5 场景各 50），离线 | 线上每次真实提问，样本数 = 提问量 |
+| 指标 | guardrail 命中/误拦 + 场景级 **keyword_recall / citation_recall** | LLM-as-judge：**answer_relevance / citation_accuracy / faithfulness** 等 |
+| 产物 | `evaluation/results/golden_eval_*.json` | `eval_results` 表（`is_stub=false` 行为真实分） |
+| 用途 | **对外引用**（简历、汇报） | **线上监控**（发现问题，不对外报数） |
+| 现状 | 最新一轮 2026-08-28（对外可声明 `for_external_claims=true`） | 已真实接入，judge 失败记 `skipped_metrics` 不写库 |
+
+三条纪律：
+1. 两套的分数**不能相加、不能互相印证**——一个是离线回归，一个是在线打分
+2. 对外只用口径 A，并声明是哪一轮（文件名可查）
+3. `faithfulness` 属于口径 B，**只在小样本上触发过**（见 `auto-eval-faithfulness-2026-09-09.md`），不要当成果引用
 
 ---
 
@@ -160,7 +178,7 @@ CRITICAL_THRESHOLD    = 0.90          # 90% 严重告警
 替换了 auto_eval 的占位 stub 思路）。运行：
 
 ```powershell
-cd D:\demo\hrp-ai-workben            
+cd <repo-root>        # 克隆后的 hrbpilot 仓库根目录
 $env:PYTHONPATH = "."
 python evaluation/run_golden_eval.py
 ```
@@ -190,13 +208,35 @@ python evaluation/run_golden_eval.py
 
 ---
 
-## 6. 真实评测运行结果（2026-07-30, REAL-LLM 模式）
+## 6. 真实评测运行结果
 
-> 来源：`evaluation/results/golden_eval_20260730T213019Z.json`
-> 运行模式：**REAL-LLM**（.env 配了真实 LLM key，输出真实、token 真实计入）。
-> 这是一次**全真实**运行：250 样本全部跑通，无 stub、无估算填充（除 5 条被拦注入样本）。
+### 6.0 最新一轮（2026-08-28）——对外引用用这一轮
 
-### 6.1 Guardrail（离线、真实）
+> 来源：`evaluation/results/golden_eval_20260828T215711Z.json`
+> `mode=REAL-LLM`、`for_external_claims=true`、model=`qwen3.8-flash`、250 样本、`error_count=0`
+
+| 场景 | n | errors | avg keyword_recall | avg citation_recall |
+|------|---|--------|--------------------|---------------------|
+| policy_qa | 50 | 0 | 0.908 | 0.900 |
+| interview_digest | 50 | 0 | 0.790 | 1.000 |
+| voice_insight | 50 | 0 | 0.910 | 1.000 |
+| weekly_report | 50 | 0 | 0.536 | 1.000 |
+| culture_content | 50 | 0 | **0.104** | 1.000 |
+
+Guardrail：`overall_match_rate=1.0`、`injection_recall=1.0`（5/5）、`false_positive_rate=0.0`（245 条零误拦）。
+
+Token：`total_tokens=554,387`（real 553,894 / estimated 493）→ **`budget_pct=5.5439%`** ⇒ 单租户月 ≈ **18 次全量 sweep**。
+
+**必须如实标注的两点**（被别人问出来不如自己先说）：
+
+1. **`culture_content` 的关键词召回 0.104 不是"退步"，是指标不适用**：keyword_recall 衡量"答案是否包含标准话术"，对创意内容本身没有意义。这一类应改用"采纳率"衡量，现在拿它报数只会显得指标设计不成熟。本轮与 7-30 那轮的差异（0.616 → 0.104）**尚未定位原因**，不要解释成模型变差或变好。
+2. **两轮相差 2.46 倍 token（225,133 → 554,387）**：目前只知道都是 REAL-LLM 模式，**差异原因未做归因**（prompt/检索注入量/供应商计费口径都在候选里）。若被追问必须答"没查过"，不要编原因。
+
+### 6.1 历史轮次（2026-07-30）——保留作对照，不要再对外引用
+
+> 来源：`evaluation/results/golden_eval_20260730T213019Z.json`（已被 8-28 那轮取代）
+
+#### Guardrail（离线、真实）
 
 | 指标 | 值 |
 |------|-----|
@@ -268,16 +308,23 @@ python evaluation/run_golden_eval.py
 > 预算、75%/90% 两级告警、按模型拆分统计，已接入生产检索链路；
 > 建立了 **250 条标注回归评测集**（覆盖 5 大 HR 场景、含 5 条 prompt-injection
 > 拒答用例），并写到真实评测运行器，跑出**真实指标**：prompt-injection 拦截率
-> 100%、正常查询误拦率 0%、真实质量分（interview_digest/voice_insight/culture_content
-> citation_recall 均 1.0）、单次全量回归仅耗 2.25% 月度预算（~44.4 次/租户月，CI 可高频跑）。
+> 100%、正常查询误拦率 0%、制度问答场景 keyword/citation recall 0.908/0.900、
+> 面谈纪要与员工声音 citation_recall 1.0、单次全量回归耗 5.54% 月度预算
+> （~18 次/租户月，可纳入 CI 回归）。
 > *（线上异步 auto_eval 已切换为真实 LLM-as-judge（2026-08-27 c7b9462），失败记入
 > skipped_metrics 不写入库；检索阶段延迟/Recall 消融尚未做——这两点别写进简历当已完成。）*
 
-**可上简历的真实数字（来自 2026-07-30 REAL-LLM 运行，非编造）**：
-- 安全：prompt-injection 拦截率 **100%**（含中文注入），误拦率 **0%**
-- 成本：单次 250 样本评测 = **225,133 token ≈ 2.25%** 月度预算，~44 次/租户月
-- 质量（golden_metrics 真实算分）：citation_recall 在访谈/舆情/文化三场景 **1.0**，
-  keyword_recall 0.32（周报）–0.89（舆情）区间，已知周报/制度问答要点覆盖偏低
+**可上简历的真实数字（来自 2026-08-28 REAL-LLM 运行，`for_external_claims=true`，非编造）**：
 
-如写"检索阶段省了 X% 延迟/成本"，**必须等检索消融 CSV 跑出后再填**；
-当前只承诺 token 预算视角的成本效率（已实测）。
+- 安全：prompt-injection 拦截率 **100%**（5/5，含中文注入），245 条正常查询误拦率 **0%**
+- 成本：单次 250 样本评测 = **554,387 token ≈ 5.54%** 月度预算，~18 次/租户月
+- 质量（`golden_metrics` 真实算分）：制度问答 keyword/citation **0.908 / 0.900**、
+  面谈纪要 **0.790 / 1.000**、员工声音 **0.910 / 1.000**、周报 **0.536 / 1.000**、
+  创作类 keyword **0.104 / 1.000** —— 创作类那 0.104 是**指标不适用**（关键词召回
+  对创意内容无意义），照实说明"已识别指标不适用并改用采纳率"，**不要包装成成果**
+
+**引用纪律**：
+- 只用**口径 A**（黄金集全量评测）对外报数，且声明轮次（见 §6.0）；口径 B（线上 auto_eval）不对外报数
+- 7-30 那轮（2.25% / ~44 次）已被取代，**不要再引用**；两轮 token 差 2.46 倍的原因**尚未归因**，被追问就答"没查过"
+- 如写"检索阶段省了 X% 延迟/成本"，**必须等检索消融 CSV 跑出后再填**；
+  当前只承诺 token 预算视角的成本效率（已实测）

@@ -204,7 +204,10 @@ async def get_history(
         result = None
         try:
             result = InsightReportResponse.model_validate_json(row.result_json or "")
-        except Exception:
+        except Exception as exc:
+            # Same rule as the interview digest list: degrade this row, not the
+            # response — but leave a trace so the empty card is explainable.
+            logger.warning("voice_insight_result_unreadable", task_id=row.id, error=str(exc))
             result = None
         reports.append(
             {
@@ -249,8 +252,8 @@ def _summarize_entry(entry: VoiceEntry, task: AsyncTask | None) -> dict:
             severities = [s.severity for s in parsed.risk_signals]
             if severities:
                 top_severity = max(severities, key=lambda s: _SEVERITY_ORDER[s]).value
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("voice_entry_summary_unreadable", entry_id=entry.id, error=str(exc))
     return {
         "entry_id": entry.id,
         "employee_name": entry.employee_name,
@@ -273,11 +276,17 @@ def _summarize_entry(entry: VoiceEntry, task: AsyncTask | None) -> dict:
 async def list_entries(
     request: Request,
     q: str = "",
+    channel: str = "",
+    status: str = "",
     limit: int = 20,
     cursor: str = "",
     session: AsyncSession = Depends(get_db),
 ):
-    """Material list — summary rows with keyset pagination and search."""
+    """Material list — summary rows with keyset pagination, search and filters.
+
+    Severity lives inside the result JSON (no materialized summary table yet),
+    so it is not a SQL filter — filtering on it would break keyset pagination.
+    """
     tenant_id = require_tenant_id(request)
     visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
     limit = max(1, min(limit, 100))
@@ -307,6 +316,16 @@ async def list_entries(
                 VoiceEntry.raw_text.ilike(like),
             )
         )
+    if channel.strip():
+        stmt = stmt.where(VoiceEntry.channel == channel.strip())
+    if status.strip():
+        stage = status.strip()
+        if stage == "completed":
+            stmt = stmt.where(AsyncTask.status == "completed")
+        elif stage == "failed":
+            stmt = stmt.where(AsyncTask.status == "failed")
+        else:  # analyzing — pending or running worker stage
+            stmt = stmt.where(AsyncTask.status.in_(("pending", "running")))
     if cursor:
         last_dt, last_id = _decode_cursor(cursor)
         stmt = stmt.where(
@@ -364,7 +383,8 @@ async def get_entry_detail(
     if task is not None and task.result_json:
         try:
             result = InsightReportResponse.model_validate_json(task.result_json).model_dump()
-        except Exception:
+        except Exception as exc:
+            logger.warning("voice_entry_result_unreadable", entry_id=entry.id, error=str(exc))
             result = None
 
     return {

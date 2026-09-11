@@ -393,7 +393,13 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
                 task.error_message = str(e)[:2000]
                 task.completed_at = datetime.now(UTC)
                 await session.commit()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — 失败状态写不回时仍需留痕（见下）
+            # 上面已经 logger.error 过原始失败；这里若再失败，任务会永远停在 running，
+            # 所以不能静默 —— 这是"任务卡住"类问题的唯一线索。
+            logger.error(
+                "ingestion_failure_state_persist_failed",
+                task_id=task_id,
+                error=f"{type(exc).__name__}: {str(exc)[:200]}",
+            )
     finally:
         await session.close()

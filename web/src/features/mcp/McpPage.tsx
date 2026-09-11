@@ -73,14 +73,26 @@ export function McpPage() {
         <div>
           <span className="eyebrow">外部工具</span>
           <h1>MCP 外部工具</h1>
-          <p>复用同一套工具白名单与审批门禁：只读可直接试，写操作仅创建审批请求，不直执。</p>
+          <p>这一页是给 <strong>AI 助手（如 Cursor、Claude Desktop）接入本系统</strong>用的工具目录——不是员工申请。员工从企业微信/飞书提交的申请请在「员工服务 → 员工请求」查看。</p>
         </div>
       </header>
 
       <section style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr', maxWidth: 980 }}>
         <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
-          <h2 style={{ fontSize: 14, margin: 0 }}>如何接入</h2>
+          <h2 style={{ fontSize: 14, margin: 0 }}>这是什么 / 怎么用</h2>
           <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+            <div>
+              <strong style={{ fontSize: 13 }}>这一页解决什么问题：</strong>
+              <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0 0' }}>
+                把本系统的能力（查制度、建案件、派任务等）以标准 MCP 协议开放给外部 AI 助手。员工以后不对着本系统操作，而是对着自己常用的 AI 助手说「帮我查一下请假制度」，AI 通过下面的工具调用完成——但写操作（建案件、改状态）一律只创建审批请求，由 HR 在本系统里批准后才执行。
+              </p>
+            </div>
+            <div>
+              <strong style={{ fontSize: 13 }}>下方工具卡里的 JSON 是什么：</strong>
+              <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0 0' }}>
+                每个工具的参数说明（Schema），是给 AI 客户端看的「接口文档」，不是业务数据——不需要人读懂，点「试调」可以直接体验真实调用效果。
+              </p>
+            </div>
             <div>
               <strong style={{ fontSize: 13 }}>本页试调（无需另配）：</strong>
               <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0 0' }}>登录后直接在下方选工具、改参数、点「执行」，结果走同一套白名单校验；写工具会返回 <code>approval_id</code>，去「团队待处理」批准后才进 Outbox。</p>
