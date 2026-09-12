@@ -47,7 +47,7 @@ def sha256_hex(data: bytes) -> str:
 
 
 def stable_chunk_id(tenant_id: str, kb_id: str, document_id: str, chunk_index: int) -> str:
-    """Deterministic chunk id (P2): the same document rebuilt at the same
+    """Deterministic chunk id (P2-09): the same document rebuilt at the same
     chunk position yields the same id, so PG + Milvus upserts are naturally
     idempotent and unchanged chunks keep a stable identity across rebuilds."""
     return str(uuid5(NAMESPACE_URL, f"hrbpilot://chunk/{tenant_id}/{kb_id}/{document_id}/{chunk_index}"))
