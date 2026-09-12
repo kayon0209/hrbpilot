@@ -131,6 +131,7 @@ class Retriever:
         sql = text(
             """
             SELECT c.id, c.document_id, c.kb_id, c.content, c.section, d.filename,
+                   c.page_number,
                    ts_rank_cd(c.search_vector, to_tsquery('simple', :q)) AS rank
             FROM document_chunks c
             JOIN documents d ON d.id = c.document_id
@@ -162,6 +163,7 @@ class Retriever:
                     source=row.filename,
                     section=row.section or "",
                     content=row.content,
+                    page_number=row.page_number,
                     score=float(row.rank or 0.0),
                     confidence=sparse_confidence(float(row.rank or 0.0)),
                     sparse_score=float(row.rank or 0.0),
@@ -304,6 +306,7 @@ class Retriever:
                     source=filename,
                     section=chunk.section or "",
                     content=chunk.content,
+                    page_number=chunk.page_number,
                     score=float(score),
                     confidence=dense_confidence(float(score)),
                     dense_score=float(score) if dense else None,

@@ -96,6 +96,10 @@ class DocumentChunk(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     section: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     start_char: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     end_char: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 1-based source page, populated for PDFs by mapping start_char back onto
+    # the parser's page spans. NULL for formats with no page concept
+    # (txt/docx) — the API reports it as absent rather than inventing a number.
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")  # active | stale

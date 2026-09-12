@@ -16,6 +16,7 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
+import bisect
 import hashlib
 import io
 import json
@@ -56,8 +57,10 @@ OCR_NEEDS_RATIO = 0.5
 _PIPE_TABLE_ROW_RE = re.compile(r"\S\s*\|\s*\S")
 
 
-def _stitch_pages(page_texts: list[str]) -> str:
-    """Join per-page text so words/sentences split by a page break survive.
+def _stitch_pages_with_spans(
+    page_texts: list[str],
+) -> tuple[str, list[tuple[int, int, int]]]:
+    """Join per-page text and report where each page lands in the result.
 
     ``"\\n".join(pages)`` — the naive join — silently breaks two things:
       * a hyphenated word continued across the break ("poli-" + "cy"), and
@@ -66,29 +69,69 @@ def _stitch_pages(page_texts: list[str]) -> str:
     Both are repaired here. A page that ends on terminal punctuation keeps its
     own line, because that is a real paragraph/section boundary and merging it
     would smear unrelated content together.
+
+    Returns ``(text, spans)`` where each span is ``(page_no, start, end)`` —
+    the character range that page occupies in the returned text. Pages glued
+    onto their predecessor still contribute a span, so every chunk can be
+    traced back to the page it came from.
     """
-    parts: list[str] = []
-    for raw in page_texts:
+    out = ""
+    spans: list[tuple[int, int, int]] = []
+    for page_no, raw in enumerate(page_texts, start=1):
         text = raw.rstrip()
         if not text:
+            # an empty page owns no characters — record a zero-width span so
+            # page numbers stay aligned with the real document
+            spans.append((page_no, len(out), len(out)))
             continue
-        if not parts:
-            parts.append(text)
+        if not out:
+            out = text
+            spans.append((page_no, 0, len(out)))
             continue
-        prev = parts[-1]
-        # (1) hyphen continuation: drop the hyphen and glue the word back.
-        if prev[-1] in _HYPHENS:
-            parts[-1] = prev[:-1] + text.lstrip()
+        start = len(out)
+        if out[-1] in _HYPHENS:
+            # (1) hyphen continuation: drop the hyphen, glue the word back
+            start -= 1
+            out = out[:-1] + text.lstrip()
+        elif out[-1] not in _SENTENCE_ENDINGS:
+            # (2) mid-sentence continuation: NO separator. A page break cuts at
+            # an arbitrary byte — often mid-word ("applica"+"tion") or
+            # mid-phrase (适用范围如 + 下) — so inserting a space would
+            # manufacture a word boundary that was never there.
+            out = out + text.lstrip()
+        else:
+            out = out + "\n" + text
+        spans.append((page_no, start, len(out)))
+    return out, spans
+
+
+def _stitch_pages(page_texts: list[str]) -> str:
+    """Join per-page text so words/sentences split by a page break survive."""
+    return _stitch_pages_with_spans(page_texts)[0]
+
+
+def page_numbers_for_offsets(
+    spans: list[tuple[int, int, int]],
+    offsets: list[int],
+) -> list[int | None]:
+    """Map character offsets back to 1-based page numbers in one pass.
+
+    The start-offset index is built once and then binary-searched, so
+    attributing a document's chunks costs ``O(pages + chunks·log pages)``
+    instead of rescanning every page for every chunk.
+    """
+    if not spans:
+        return [None] * len(offsets)
+    starts = [span[1] for span in spans]
+    result: list[int | None] = []
+    for char_idx in offsets:
+        pos = bisect.bisect_right(starts, char_idx) - 1
+        if pos < 0:
+            result.append(None)
             continue
-        # (2) mid-sentence continuation: glue it back with NO separator. A page
-        # break cuts at an arbitrary byte — often mid-word ("applica"+"tion")
-        # or mid-phrase (适用范围如 + 下), so inserting a space would
-        # manufacture a word boundary that was never there.
-        if prev[-1] not in _SENTENCE_ENDINGS:
-            parts[-1] = prev + text.lstrip()
-            continue
-        parts.append(text)
-    return "\n".join(parts)
+        page_no, start, end = spans[pos]
+        result.append(page_no if start <= char_idx < end else None)
+    return result
 
 
 def _detect_table_continuations(page_texts: list[str]) -> list[int]:
@@ -137,11 +180,19 @@ class DocumentParser:
 
     def __init__(self) -> None:
         self.last_diagnostics: dict[str, Any] = {}
+        # (page_no, start, end) character spans for the last parsed document.
+        # Only PDFs populate it; txt/docx have no page concept, so it stays
+        # empty and page attribution degrades to "unknown" instead of guessing.
+        self.last_page_spans: list[tuple[int, int, int]] = []
 
     def parse(self, content: bytes, file_type: str) -> str:
         ft = (file_type or "").lower().lstrip(".")
         if ft not in SUPPORTED_TYPES:
             raise ValueError(f"Unsupported file type: {file_type}. Supported: {', '.join(sorted(SUPPORTED_TYPES))}")
+
+        # Reset per parse: spans from a previous document must never leak into
+        # this one (the parser instance is reused across an ingestion run).
+        self.last_page_spans = []
 
         if ft == "txt":
             text = content.decode("utf-8", errors="replace")
@@ -228,7 +279,8 @@ class DocumentParser:
                 ocr_required_pages.append(page_no)
             page_texts.append(page_text)
         total_pages = len(reader.pages)
-        text = _stitch_pages(page_texts)
+        text, page_spans = _stitch_pages_with_spans(page_texts)
+        self.last_page_spans = page_spans
         empty_pages = len(ocr_required_pages)
         self.last_diagnostics = {
             "file_type": "pdf",
@@ -450,7 +502,14 @@ class IngestionService:
         # 6. Write new chunks to PostgreSQL + build Milvus rows
         milvus_rows: list[dict[str, Any]] = []
         embed_iter = iter(fresh_embeddings)
-        for c in raw_chunks:
+        # Page attribution: map each chunk's start offset back to its source
+        # page. PDFs populate the spans; txt/docx leave them empty, so chunks
+        # resolve to None rather than a guessed page number.
+        page_numbers = page_numbers_for_offsets(
+            self.parser.last_page_spans, [c["start_char"] for c in raw_chunks]
+        )
+
+        for position, c in enumerate(raw_chunks):
             chunk_sha = sha256_hex(c["content"].encode("utf-8"))
             emb = sha_to_vector.get(chunk_sha)
             if emb is None:
@@ -468,6 +527,7 @@ class IngestionService:
                     section=c["section"],
                     start_char=c["start_char"],
                     end_char=c["end_char"],
+                    page_number=page_numbers[position],
                     content_sha256=sha256_hex(c["content"].encode("utf-8")),
                     embedding_model=settings.embedding_model,
                     status="active",

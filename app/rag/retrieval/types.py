@@ -33,6 +33,10 @@ class RetrievedChunk:
     dense_score: float | None = None  # raw cosine similarity
     sparse_score: float | None = None  # raw ts_rank_cd
     rerank_score: float | None = None  # query↔chunk cosine when rerank is enabled
+    # 1-based source page for PDFs; None when the source has no page concept.
+    # Answer builders surface it as "第 N 页" — for policy questions, being
+    # able to point at the page is part of the answer's credibility.
+    page_number: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the unified dict shape consumed by orchestrators/citations."""
@@ -50,6 +54,7 @@ class RetrievedChunk:
             "dense_score": self.dense_score,
             "sparse_score": self.sparse_score,
             "rerank_score": self.rerank_score,
+            "page_number": self.page_number,
         }
 
 

@@ -74,7 +74,7 @@ def _chunk(cid: str, score: float) -> RetrievedChunk:
 
 
 async def test_dense_returns_hydrated_chunks(monkeypatch):
-    chunk = _Row(id="c1", document_id="d1", kb_id="k1", content="内容", section="第一节")
+    chunk = _Row(id="c1", document_id="d1", kb_id="k1", content="内容", section="第一节", page_number=3)
     fs = _FakeSession(rows=[(chunk, "制度.pdf")])
 
     async def fake_make(tenant_id):
@@ -87,10 +87,13 @@ async def test_dense_returns_hydrated_chunks(monkeypatch):
     assert chunks[0].chunk_id == "c1"
     assert chunks[0].source == "制度.pdf"
     assert chunks[0].score == 0.95
+    # the source page must survive retrieval, otherwise citations cannot
+    # point at the page a policy statement came from
+    assert chunks[0].page_number == 3
 
 
 async def test_sparse_returns_ranked_chunks(monkeypatch):
-    row = _Row(id="c2", document_id="d2", kb_id="k2", content="条款", section="第三章", filename="手册.pdf", rank=7.5)
+    row = _Row(id="c2", document_id="d2", kb_id="k2", content="条款", section="第三章", filename="手册.pdf", rank=7.5, page_number=7)
     fs = _FakeSession(rows=[row])
 
     async def fake_make(tenant_id):
@@ -102,6 +105,7 @@ async def test_sparse_returns_ranked_chunks(monkeypatch):
     assert len(chunks) == 1
     assert chunks[0].chunk_id == "c2"
     assert chunks[0].sparse_score == 7.5
+    assert chunks[0].page_number == 7
 
 
 async def test_hybrid_fuses_and_dedups(monkeypatch):

@@ -12,6 +12,8 @@ from app.rag.ingestion.pipeline import (
     IngestionService,
     _detect_table_continuations,
     _stitch_pages,
+    _stitch_pages_with_spans,
+    page_numbers_for_offsets,
     sha256_hex,
 )
 
@@ -162,6 +164,43 @@ def test_stitch_pages_preserves_real_paragraph_boundary():
 def test_stitch_pages_skips_blank_pages():
     assert _stitch_pages(["", "唯一有内容的页"]) == "唯一有内容的页"
     assert _stitch_pages(["", ""]) == ""
+
+
+def test_stitch_pages_with_spans_tracks_where_each_page_lands():
+    """Spans must describe the joined text, so a chunk can be traced back."""
+    text, spans = _stitch_pages_with_spans(["第一页内容。", "第二页内容。"])
+
+    assert text == "第一页内容。\n第二页内容。"
+    assert [span[0] for span in spans] == [1, 2]
+    assert spans[0] == (1, 0, len("第一页内容。"))
+    # page 2 starts at/after the newline that separates it from page 1
+    assert spans[1][1] >= spans[0][2]
+
+
+def test_stitch_pages_with_spans_handles_glued_pages():
+    """A page glued onto its predecessor still gets a span (non-empty)."""
+    _text, spans = _stitch_pages_with_spans(["适用范围如", "下：全体员工。"])
+
+    assert [span[0] for span in spans] == [1, 2]
+    assert spans[1][2] > spans[1][1]  # page 2 owns real characters
+
+
+def test_page_numbers_for_offsets_maps_chunk_to_source_page():
+    _text, spans = _stitch_pages_with_spans(["第一页内容。", "第二页内容。"])
+    second_page_start = spans[1][1]
+
+    assert page_numbers_for_offsets(spans, [0, second_page_start]) == [1, 2]
+
+
+def test_page_numbers_for_offsets_without_spans_reports_unknown():
+    """txt/docx have no pages: report None rather than inventing a number."""
+    assert page_numbers_for_offsets([], [0, 10]) == [None, None]
+
+
+def test_page_numbers_for_offsets_out_of_range_is_none():
+    _text, spans = _stitch_pages_with_spans(["只有一页。"])
+
+    assert page_numbers_for_offsets(spans, [9999]) == [None]
 
 
 # --- cross-page table continuation (report-only) ---
