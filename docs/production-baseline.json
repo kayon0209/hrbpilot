@@ -1,0 +1,32 @@
+{
+  "frozen_at": "2026-09-12T10:26:15.064126+00:00",
+  "commit": "796faaa675e9869c0e79f02d891d6a96f98a7b11",
+  "dirty": false,
+  "python": "3.12.0",
+  "pytest": {
+    "command": "python -m pytest tests/ -q",
+    "exit_code": 0,
+    "passed": 438,
+    "skipped": 50,
+    "failed": 0,
+    "errors": 0
+  },
+  "ruff": {
+    "command": "python -m ruff check app tests",
+    "exit_code": 1,
+    "errors": 74,
+    "note": "known pre-existing findings (fullwidth-punctuation comments, unused noqa); baseline=74 at freeze time"
+  },
+  "mypy": {
+    "command": "python -m mypy app",
+    "exit_code": 1,
+    "errors": 2,
+    "note": "known pre-existing findings in retrieval/retriever.py and material_batches.py; baseline=2 at freeze time"
+  },
+  "locks": {
+    "pyproject": "73f4937252b37432f2e519416caa6239a91b1947351e967ae18416040fcee61b",
+    "pnpm_lock": "07c6668339f046fcf246c2c8a1a8dff1da53425c47ad846163fc69b98b7b1498"
+  },
+  "skips_policy": "every pytest skip is env-gated (HRBP_RUN_* / DATABASE_URL); no owner-less permanent skips",
+  "content_hash": "d33a629f6ba4036da57d1a255dbd59b367cf787343ac6810e4a5f7efc86d0584"
+}
