@@ -42,6 +42,78 @@ logger = get_logger(__name__)
 
 SUPPORTED_TYPES = {"txt", "pdf", "docx"}
 
+# --- page-stitching / page-level quality signals (batch #2, §6.2) ----------
+# Characters that legitimately terminate a sentence in zh/en source docs.
+_SENTENCE_ENDINGS = "。！？；!?;…"
+# Hyphen variants that signal a word continued on the next line/page.
+_HYPHENS = "-‐‑"
+# Share of pages with no extractable text above which we stop pretending the
+# document indexed cleanly and report it as OCR-required instead.
+OCR_NEEDS_RATIO = 0.5
+# A row rendered with pipe separators (docx tables come through this way).
+# Deliberately matches a single inner separator ("表头 | 金额"), not just
+# fully-bordered rows ("| 表头 | 金额 |").
+_PIPE_TABLE_ROW_RE = re.compile(r"\S\s*\|\s*\S")
+
+
+def _stitch_pages(page_texts: list[str]) -> str:
+    """Join per-page text so words/sentences split by a page break survive.
+
+    ``"\\n".join(pages)`` — the naive join — silently breaks two things:
+      * a hyphenated word continued across the break ("poli-" + "cy"), and
+      * a sentence that simply continues onto the next page.
+
+    Both are repaired here. A page that ends on terminal punctuation keeps its
+    own line, because that is a real paragraph/section boundary and merging it
+    would smear unrelated content together.
+    """
+    parts: list[str] = []
+    for raw in page_texts:
+        text = raw.rstrip()
+        if not text:
+            continue
+        if not parts:
+            parts.append(text)
+            continue
+        prev = parts[-1]
+        # (1) hyphen continuation: drop the hyphen and glue the word back.
+        if prev[-1] in _HYPHENS:
+            parts[-1] = prev[:-1] + text.lstrip()
+            continue
+        # (2) mid-sentence continuation: glue it back with NO separator. A page
+        # break cuts at an arbitrary byte — often mid-word ("applica"+"tion")
+        # or mid-phrase (适用范围如 + 下), so inserting a space would
+        # manufacture a word boundary that was never there.
+        if prev[-1] not in _SENTENCE_ENDINGS:
+            parts[-1] = prev + text.lstrip()
+            continue
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def _detect_table_continuations(page_texts: list[str]) -> list[int]:
+    """Flag pages that open with table rows right after a page ending in one.
+
+    Conservative by design: it only *reports* a page number, never rewrites
+    text. Scope caveat — pypdf emits plain text with no ``|`` separators, so
+    this fires for pipe-rendered sources and stays quiet on typical PDFs.
+    Recovering a genuine cross-page table needs a layout-aware extractor
+    (pdfplumber / camelot), which is NOT installed in this environment; that
+    remains an honest gap rather than a fake fix.
+    """
+
+    def _has_pipe_row(chunk: str) -> bool:
+        return any(_PIPE_TABLE_ROW_RE.search(line) for line in chunk.splitlines() if line.strip())
+
+    flags: list[int] = []
+    prev_tail_has_table = False
+    for page_no, raw in enumerate(page_texts, start=1):
+        head = "\n".join(raw.strip().splitlines()[:3])
+        if prev_tail_has_table and page_no > 1 and _has_pipe_row(head):
+            flags.append(page_no)
+        prev_tail_has_table = _has_pipe_row("\n".join(raw.strip().splitlines()[-3:]))
+    return flags
+
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -128,37 +200,46 @@ class DocumentParser:
         return "\n".join(lines)
 
     def _parse_pdf(self, content: bytes) -> str:
-        """Page-by-page extraction with per-page diagnostics.
+        """Page-by-page extraction, stitched across page breaks, with diagnostics.
 
-        A page whose extraction returns nothing (scanned image / embedded
-        font without ToUnicode map) is NOT silently dropped: the empty-page
-        count is recorded so ingest logging can flag "this document is
-        mostly unparseable, it needs OCR" instead of pretending it indexed.
+        A page whose extraction returns nothing (scanned image / embedded font
+        without a ToUnicode map) is NOT silently dropped: its page number is
+        recorded in ``ocr_required_pages`` so ingest logging can flag "this
+        document is mostly unparseable, it needs OCR" instead of pretending it
+        indexed cleanly.
+
+        Note: the old counter double-counted a page that *raised* during
+        extraction — it was bumped in the ``except`` branch and then bumped
+        again by the empty-text check. Collecting page numbers removes that.
         """
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(content))
         page_texts: list[str] = []
-        empty_pages = 0
-        for page in reader.pages:
+        ocr_required_pages: list[int] = []
+        for page_no, page in enumerate(reader.pages, start=1):
             try:
                 page_text = page.extract_text() or ""
             except Exception:
                 # A single malformed page must not abort the whole document;
-                # count it as empty and keep the rest.
+                # count it as needing OCR and keep the rest.
                 page_text = ""
-                empty_pages += 1
             if not page_text.strip():
-                empty_pages += 1
+                ocr_required_pages.append(page_no)
             page_texts.append(page_text)
         total_pages = len(reader.pages)
+        text = _stitch_pages(page_texts)
+        empty_pages = len(ocr_required_pages)
         self.last_diagnostics = {
             "file_type": "pdf",
-            "chars": sum(len(t) for t in page_texts),
+            "chars": len(text),
             "pages": total_pages,
             "empty_pages": empty_pages,
+            "ocr_required_pages": ocr_required_pages,
+            "needs_ocr": bool(total_pages) and (empty_pages / total_pages) > OCR_NEEDS_RATIO,
+            "table_continuation_pages": _detect_table_continuations(page_texts),
         }
-        return "\n".join(page_texts)
+        return text
 
 
 class Chunker:

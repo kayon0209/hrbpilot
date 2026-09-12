@@ -5,7 +5,15 @@ import io
 
 import pytest
 
-from app.rag.ingestion.pipeline import Chunker, DocumentParser, IngestionService, sha256_hex
+from app.rag.ingestion.pipeline import (
+    OCR_NEEDS_RATIO,
+    Chunker,
+    DocumentParser,
+    IngestionService,
+    _detect_table_continuations,
+    _stitch_pages,
+    sha256_hex,
+)
 
 # --- parser ---
 
@@ -83,6 +91,89 @@ def test_parse_pdf_records_empty_page_diagnostics():
     assert parser.last_diagnostics["pages"] == 1
     assert parser.last_diagnostics["empty_pages"] == 1
     assert text == ""  # honest: nothing was extracted
+
+
+def test_parse_pdf_reports_ocr_required_pages_and_needs_ocr():
+    """Empty pages surface as page numbers + an explicit needs_ocr flag,
+    instead of only a count that nothing downstream could act on."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    writer.add_blank_page(width=595, height=842)
+    buf = io.BytesIO()
+    writer.write(buf)
+
+    parser = DocumentParser()
+    parser.parse(buf.getvalue(), "pdf")
+    diag = parser.last_diagnostics
+
+    assert diag["pages"] == 2
+    assert diag["empty_pages"] == 2
+    assert diag["ocr_required_pages"] == [1, 2]
+    # every page is empty, so it is unambiguously over the OCR threshold
+    assert diag["needs_ocr"] is True
+    assert OCR_NEEDS_RATIO < 1.0
+
+
+def test_extraction_error_page_is_counted_exactly_once(monkeypatch):
+    """Regression guard: a page that RAISED during extraction used to be
+    counted twice (once in the except branch, once by the empty-text check),
+    which could push empty_pages above the real page count."""
+    import pypdf
+
+    class _BoomPage:
+        def extract_text(self):  # pragma: no cover - called by the parser
+            raise RuntimeError("boom")
+
+    class _FakeReader:
+        def __init__(self, _stream):
+            self.pages = [_BoomPage(), _BoomPage()]
+
+    monkeypatch.setattr(pypdf, "PdfReader", _FakeReader)
+
+    parser = DocumentParser()
+    parser._parse_pdf(b"%PDF-1.4 fake")
+
+    assert parser.last_diagnostics["pages"] == 2
+    assert parser.last_diagnostics["empty_pages"] == 2  # not 4
+    assert parser.last_diagnostics["ocr_required_pages"] == [1, 2]
+
+
+# --- cross-page stitching (§6.2) ---
+
+
+def test_stitch_pages_rejoins_hyphenated_word_across_page_break():
+    """'poli-' + 'cy' must come back as 'policy', not two broken tokens."""
+    assert _stitch_pages(["报销标准按 poli-", "cy 执行"]) == "报销标准按 policy 执行"
+
+
+def test_stitch_pages_rejoins_sentence_split_across_pages():
+    """A sentence cut in half by a page break must read as one unit."""
+    out = _stitch_pages(["第一章 考勤管理的适用范围如", "下：全体员工适用。"])
+    assert out == "第一章 考勤管理的适用范围如下：全体员工适用。"
+
+
+def test_stitch_pages_preserves_real_paragraph_boundary():
+    """A page ending on terminal punctuation is a real boundary — keep the break."""
+    assert _stitch_pages(["这是第一段。", "这是第二段。"]) == "这是第一段。\n这是第二段。"
+
+
+def test_stitch_pages_skips_blank_pages():
+    assert _stitch_pages(["", "唯一有内容的页"]) == "唯一有内容的页"
+    assert _stitch_pages(["", ""]) == ""
+
+
+# --- cross-page table continuation (report-only) ---
+
+
+def test_detect_table_continuations_flags_continuation_page():
+    pages = ["表头 | 金额\n100 | 200", "300 | 400"]
+    assert _detect_table_continuations(pages) == [2]
+
+
+def test_detect_table_continuations_ignores_plain_text_pages():
+    assert _detect_table_continuations(["普通正文", "更多正文"]) == []
 
 
 # --- chunker ---
