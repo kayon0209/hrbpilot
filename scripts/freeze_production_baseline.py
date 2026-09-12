@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -32,6 +33,20 @@ _HASH_EXCLUDED = {"content_hash"}
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:
+    # Windows: shutil.which() inserts an extensionless candidate first and the
+    # nodejs dir ships a POSIX shell shim named plain "corepack" —
+    # CreateProcess cannot execute it (WinError 193). Resolve an explicit
+    # PATHEXT executable instead; POSIX is unaffected.
+    exe = shutil.which(cmd[0])
+    if sys.platform == "win32" and (not exe or not exe.lower().endswith((".exe", ".cmd", ".bat"))):
+        exe = None
+        for ext in (".cmd", ".bat", ".exe"):
+            candidate = shutil.which(cmd[0] + ext)
+            if candidate:
+                exe = candidate
+                break
+    if exe:
+        cmd = [exe, *cmd[1:]]
     proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
