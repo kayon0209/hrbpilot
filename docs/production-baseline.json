@@ -1,6 +1,6 @@
 {
-  "frozen_at": "2026-09-12T11:39:31.228782+00:00",
-  "commit": "3d0ab8be44ad155d366af3cf290d4310faf8ee21",
+  "frozen_at": "2026-09-12T11:56:22.389707+00:00",
+  "commit": "5b7c9135b9c68e508adc1e47d433289d613cda2f",
   "dirty": false,
   "python": "3.12.0",
   "pytest": {
@@ -28,5 +28,14 @@
     "pnpm_lock": "07c6668339f046fcf246c2c8a1a8dff1da53425c47ad846163fc69b98b7b1498"
   },
   "skips_policy": "every pytest skip is env-gated (HRBP_RUN_* / DATABASE_URL); no owner-less permanent skips",
-  "content_hash": "4b4ba84a19a90a8a8488ffcce460eeafeff84690c08523dd00ce2d76b148f740"
+  "environment": {
+    "milvus_reachable": true,
+    "postgres_reachable": true,
+    "redis_reachable": true,
+    "minio_reachable": true,
+    "embedding_mode": "cloud",
+    "config_fingerprint": "dbe6e204923410e3",
+    "note": "deps reachable at freeze time; a skipped integration test means a missing container, not a regression"
+  },
+  "content_hash": "64c181c4b1d8565d1682d55bef688fc6afc8bc1ef5d7d2efe13b83ec47e68d3e"
 }
