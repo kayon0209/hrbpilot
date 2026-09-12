@@ -8,6 +8,7 @@ This is the per-scenario entry point that coordinates the pipeline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -27,6 +28,11 @@ from app.scenarios.policy_qa.schemas import CitationSource, QAResponse, SSEEvent
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _fingerprint(text: str) -> str:
+    """Short content hash for log correlation — never log raw query text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 class PolicyQAOrchestrator:
@@ -50,18 +56,16 @@ class PolicyQAOrchestrator:
     ) -> QAResponse:
         start_time = time.time()
         timer = SegmentTimer()
-        timer.start("rewrite")
-        rewritten_query = await rewrite_query(question, self.config)
-        timer.stop("rewrite")
-        logger.info("policy_qa_query_rewritten", original=question, rewritten=rewritten_query)
 
-        guarded_input = rewritten_query
+        # P0-01: guardrails run on the RAW input before anything touches an
+        # LLM. Injection detection is a local regex — zero model cost — so no
+        # hostile text may reach the rewrite model. PII is desensitized here
+        # so retrieval and generation only ever see masked content.
+        guarded_input = question
         input_flags: dict[str, object] = {}
         if self.config.guardrail_rules.input:
             timer.start("input_guard")
-            guarded_input, input_flags = await self.input_guard.check(
-                rewritten_query, self.config.guardrail_rules.input
-            )
+            guarded_input, input_flags = await self.input_guard.check(question, self.config.guardrail_rules.input)
             timer.stop("input_guard")
         if input_flags.get("blocked"):
             return QAResponse(
@@ -73,6 +77,34 @@ class PolicyQAOrchestrator:
                 latency_ms=int((time.time() - start_time) * 1000),
                 tokens_used=0,
             )
+
+        timer.start("rewrite")
+        rewritten_query = await rewrite_query(guarded_input, self.config)
+        timer.stop("rewrite")
+        logger.info(
+            "policy_qa_query_rewritten",
+            input_len=len(guarded_input),
+            output_len=len(rewritten_query),
+            input_hash=_fingerprint(guarded_input),
+            output_hash=_fingerprint(rewritten_query),
+        )
+
+        # P0-01: re-check the rewrite output. The rewrite model is also an
+        # LLM and can produce injected or out-of-bound text; if it does, fall
+        # back to the guarded (desensitized) input instead of trusting it.
+        if (
+            self.config.guardrail_rules.input
+            and "prompt_injection" in self.config.guardrail_rules.input
+            and contains_prompt_injection(rewritten_query)
+        ):
+            logger.warning(
+                "policy_qa_rewrite_injection_fallback",
+                input_len=len(rewritten_query),
+                input_hash=_fingerprint(rewritten_query),
+            )
+            rewritten_query = guarded_input
+
+        guarded_input = rewritten_query
 
         context_chunks = []
         target_kb_id = kb_id or self.config.knowledge_base_id
@@ -205,13 +237,16 @@ class PolicyQAOrchestrator:
     ) -> AsyncIterator[str]:
         start_time = time.time()
         timer = SegmentTimer()
-        timer.start("rewrite")
-        rewritten_query = await rewrite_query(question, self.config)
-        timer.stop("rewrite")
 
+        # P0-01: mirror the non-stream order — guard the RAW input before the
+        # rewrite LLM sees it, and keep the desensitized text (P0-01b: the
+        # previous code discarded the processed text and fed the raw query to
+        # retrieval and generation).
+        guarded_input = question
+        input_flags: dict[str, object] = {}
         if self.config.guardrail_rules.input:
             timer.start("input_guard")
-            _, input_flags = await self.input_guard.check(rewritten_query, self.config.guardrail_rules.input)
+            guarded_input, input_flags = await self.input_guard.check(question, self.config.guardrail_rules.input)
             timer.stop("input_guard")
             if input_flags.get("blocked"):
                 event = SSEEvent(
@@ -223,12 +258,31 @@ class PolicyQAOrchestrator:
                 yield json.dumps({"event": event.event, "data": event.data})
                 return
 
+        timer.start("rewrite")
+        rewritten_query = await rewrite_query(guarded_input, self.config)
+        timer.stop("rewrite")
+
+        # Re-check the rewrite output for injection before retrieval.
+        if (
+            self.config.guardrail_rules.input
+            and "prompt_injection" in self.config.guardrail_rules.input
+            and contains_prompt_injection(rewritten_query)
+        ):
+            logger.warning(
+                "policy_qa_stream_rewrite_injection_fallback",
+                input_len=len(rewritten_query),
+                input_hash=_fingerprint(rewritten_query),
+            )
+            rewritten_query = guarded_input
+
+        guarded_input = rewritten_query
+
         context_chunks = []
         target_kb_id = kb_id or self.config.knowledge_base_id
         if target_kb_id:
             timer.start("retrieval")
             context_chunks = await self.retriever.retrieve(
-                query=rewritten_query,
+                query=guarded_input,
                 kb_id=target_kb_id,
                 strategy=self.config.retrieval_strategy,
                 top_k=self.config.retrieval_top_k,
@@ -279,14 +333,14 @@ class PolicyQAOrchestrator:
             timer.start("llm_first_chunk")
             structured_messages = build_policy_qa_messages(
                 prompt_template=self.config.prompt_template,
-                query=rewritten_query,
+                query=guarded_input,
                 evidence=context_chunks,
                 history=history,
             )
             async for chunk_text in self.llm.generate_stream(
                 prompt_template=self.config.prompt_template,
                 context=context_chunks,
-                query=rewritten_query,
+                query=guarded_input,
                 max_tokens=self.config.max_tokens,
                 temperature=self.config.temperature,
                 messages=structured_messages,
@@ -334,11 +388,11 @@ class PolicyQAOrchestrator:
         message_id = f"msg_{user_id}_{int(start_time * 1000)}"
 
         if self.config.eval_metrics:
-            evaluator = AutoEvaluator()
-            _schedule_background_task(
-                evaluator.evaluate(
-                    output=final_output,
-                    query=rewritten_query,
+                evaluator = AutoEvaluator()
+                _schedule_background_task(
+                    evaluator.evaluate(
+                        output=final_output,
+                        query=guarded_input,
                     sources=context_chunks,
                     metrics=self.config.eval_metrics,
                     tenant_id=tenant_id,
@@ -366,7 +420,7 @@ class PolicyQAOrchestrator:
                         "confidence": confidence,
                         "has_evidence": confidence >= settings.guardrail_confidence_threshold,
                         "latency_ms": latency_ms,
-                        "guardrail_flags": {"input": {}, "output": output_flags, "history": meta},
+                        "guardrail_flags": {"input": input_flags, "output": output_flags, "history": meta},
                         "tokens_used": output_tokens,
                     }
                 ),

@@ -4,13 +4,26 @@ Converts colloquial user questions into retrieval-friendly queries.
 Examples:
   "年假怎么休" → "年假申请流程 条件 天数 规定"
   "加班费怎么算" → "加班费计算标准 法定节假日 工作日"
+
+Logging contract (P0-02): observability logs never carry the raw or
+rewritten query text. They record only the rewrite route, input/output
+lengths and hashes — enough to correlate and debug without persisting
+potentially sensitive HR questions.
 """
+
+import hashlib
 
 from app.rag.config_loader import ScenarioConfig
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _fingerprint(text: str) -> str:
+    """Short content hash for log correlation — not reversible to text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
 
 # Common colloquial → formal mappings for quick local rewrite
 LOCAL_REWRITE_MAP: dict[str, str] = {
@@ -56,7 +69,14 @@ async def rewrite_query(query: str, config: ScenarioConfig) -> str:
     # Step 1: Local exact match
     if query in LOCAL_REWRITE_MAP:
         rewritten = LOCAL_REWRITE_MAP[query]
-        logger.info("query_rewritten_local", original=query, rewritten=rewritten)
+        logger.info(
+            "query_rewritten_local",
+            route="local",
+            input_len=len(query),
+            output_len=len(rewritten),
+            input_hash=_fingerprint(query),
+            output_hash=_fingerprint(rewritten),
+        )
         return rewritten
 
     # Step 2: LLM rewrite (for non-trivial queries)
@@ -84,12 +104,24 @@ async def rewrite_query(query: str, config: ScenarioConfig) -> str:
         # Clean up: remove quotes, punctuation, extra whitespace
         rewritten = result.strip().strip('"').strip("'").strip("。").strip("，")
         if rewritten and len(rewritten) >= len(query):
-            logger.info("query_rewritten_llm", original=query, rewritten=rewritten)
+            logger.info(
+                "query_rewritten_llm",
+                route="llm",
+                input_len=len(query),
+                output_len=len(rewritten),
+                input_hash=_fingerprint(query),
+                output_hash=_fingerprint(rewritten),
+            )
             return rewritten
 
     except Exception as e:
-        logger.warning("query_rewrite_llm_failed", error=str(e), query=query)
+        logger.warning(
+            "query_rewrite_llm_failed",
+            error=str(e),
+            input_len=len(query),
+            input_hash=_fingerprint(query),
+        )
 
     # Step 3: Fallback to original
-    logger.info("query_rewrite_fallback", original=query)
+    logger.info("query_rewrite_fallback", route="fallback", input_len=len(query), input_hash=_fingerprint(query))
     return query

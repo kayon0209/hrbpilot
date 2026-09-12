@@ -50,12 +50,21 @@ INJECTION_PATTERNS = [
 ]
 
 
-def contains_prompt_injection(text: str) -> bool:
-    """Return True when text contains common instruction-hijack patterns."""
+def matched_injection_pattern(text: str) -> str | None:
+    """Return the first injection pattern that matches, or None.
+
+    Used by the guardrail so block logs can name the matched rule class
+    without ever persisting the input text itself (P0-02).
+    """
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
-            return True
-    return False
+            return pattern
+    return None
+
+
+def contains_prompt_injection(text: str) -> bool:
+    """Return True when text contains common instruction-hijack patterns."""
+    return matched_injection_pattern(text) is not None
 
 
 class InputGuardrail:
@@ -87,11 +96,16 @@ class InputGuardrail:
 
         # Prompt injection — block immediately
         if "prompt_injection" in rules:
-            if self._detect_prompt_injection(processed):
+            matched = matched_injection_pattern(processed)
+            if matched is not None:
                 flags["injection_detected"] = True
                 flags["blocked"] = True
                 flags["block_message"] = "输入包含潜在 Prompt 注入内容，已被安全拦截。请正常提问。"
-                logger.warning("prompt_injection_blocked", input=input_text[:100])
+                logger.warning(
+                    "prompt_injection_blocked",
+                    input_len=len(input_text),
+                    matched_pattern=matched,
+                )
                 return processed, flags
 
         return processed, flags
