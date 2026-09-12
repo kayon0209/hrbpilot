@@ -173,6 +173,33 @@ def _mypy() -> dict:
     }
 
 
+def _web_suite() -> dict:
+    """Frontend verification surface: eslint, tsc+vite build, vitest.
+
+    Each entry records the command, exit code and parsed summary counts so
+    the artifact states what the web workbench actually passed at freeze time.
+    """
+
+    def run_web(cmd: list[str], patterns: dict[str, str]) -> dict:
+        code, out = _run(cmd)
+        entry: dict = {"command": " ".join(cmd), "exit_code": code}
+        for key, pattern in patterns.items():
+            m = re.search(pattern, out)
+            if m:
+                entry[key] = int(m.group(1))
+        return entry
+
+    pnpm = ["corepack", "pnpm", "--dir", "web"]
+    return {
+        "eslint": {**run_web([*pnpm, "lint"], {"errors": r"(\d+)\s+error"}), "note": "exit_code 0 == clean"},
+        "build": {**run_web([*pnpm, "build"], {}), "note": "tsc -b && vite build; exit_code 0 == clean"},
+        "vitest": run_web(
+            [*pnpm, "test:run"],
+            {"test_files": r"Test Files\s+(\d+)\s+passed", "tests_passed": r"Tests\s+(\d+)\s+passed"},
+        ),
+    }
+
+
 def _content_hash(payload: dict) -> str:
     material = json.dumps(
         {k: v for k, v in payload.items() if k not in _HASH_EXCLUDED}, sort_keys=True, ensure_ascii=False
@@ -199,6 +226,7 @@ def freeze() -> int:
         "pytest": _pytest(),
         "ruff": _ruff(),
         "mypy": _mypy(),
+        "web": _web_suite(),
         "locks": {
             "pyproject": _sha256_file(REPO / "pyproject.toml"),
             "pnpm_lock": _sha256_file(REPO / "web" / "pnpm-lock.yaml"),
@@ -214,6 +242,11 @@ def freeze() -> int:
     print(f"  commit {sha[:12]}  pytest {payload['pytest']['passed']} passed / {payload['pytest']['skipped']} skipped")
     print(f"  ruff {payload['ruff']['errors']} errors (pre-existing baseline)")
     print(f"  mypy {payload['mypy']['errors']} errors (pre-existing baseline)")
+    web = payload["web"]
+    print(
+        f"  web: eslint exit {web['eslint']['exit_code']}, build exit {web['build']['exit_code']}, "
+        f"vitest {web['vitest'].get('tests_passed', '?')} tests in {web['vitest'].get('test_files', '?')} files"
+    )
     return 0
 
 

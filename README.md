@@ -60,7 +60,7 @@ HR 场景真正的痛点是**风险与成本**，不是「能不能答出来」�
 |  |  |  |
 | :-- | :-- | :-- |
 | 🛡️ **护栏是一等公民** | 💰 **成本可核算** | 🔍 **RAG 不作假** |
-| 输入先过护栏、输出再过护栏，中间还有合规校验与限流。注入攻击在 golden 集上 **5/5 全拦，误拦率 0.0** | 每次调用都计入租户月度 token 预算（默认 1000 万），**75% 预警 / 90% 严重告警**，成本随时可查 | dense + sparse + RRF 融合，**无 mock 回退**。外部服务不可用时抛出明确的基础设施错误，绝不假装检索成功 |
+| 原始输入**先过护栏再进任何模型**：注入检测在查询改写之前完成，PII 先脱敏、改写结果再复检；观测日志只留长度与哈希，**不落原文**。注入攻击在 golden 集上 **5/5 全拦，误拦率 0.0** | 每次调用都计入租户月度 token 预算（默认 1000 万），**75% 预警 / 90% 严重告警**，成本随时可查 | dense + sparse + RRF 融合，**无 mock 回退**。外部服务不可用时抛出明确的基础设施错误，绝不假装检索成功 |
 
 > [!NOTE]
 > 所有回答强制携带引用（citation）。检索不到证据时走 `no_evidence_fallback` 明确拒答，而不是编造答案。
@@ -102,7 +102,8 @@ HRBPilot 不是把一个通用聊天模型包装成 HR 工具，而是围绕 HR 
 | **受控写操作** | `create_hr_case`、`assign_case_owner`、`update_case_status` 与 `create_work_task` 必须满足审批已通过、未过期、参数哈希一致且未消费。`/execute` 只原子受理并返回 `202`，不会在 HTTP 请求中直接产生外部副作用。 |
 | **可靠派发** | ToolExecution、精确 ExecutionGrant 与 `tool.dispatch` Outbox 同一事务落库。Worker 使用 lease/fencing 与稳定 `request_id` 执行，确定性失败可重试或进入 DLQ；结果不确定时标记为 `UNKNOWN`，禁止盲目重试。 |
 | **全链路查看** | `GET /api/v1/hr-cases/{id}/runs/{run_id}` 可返回计划、工具执行、审批与事件轨迹。状态机只允许 `NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED` 的合法迁移。 |
-| **策略问答保护** | Policy QA 只在当前租户、用户、会话与场景范围内加载有限上下文；请求按场景/风险/成本选择不可变的模型配置及故障回退顺序，不会修改全局模型选择。流式请求也须先完成输出护栏和无证据回退，才返回可显示内容。 |
+| **审批角色单一来源** | 审批只能由 `hr_manager` 决定。平台 admin 与 RBAC 能力矩阵对齐——不持有任何 HR 业务能力（读案件、审批均拒绝），角色×能力×对象范围三层同源，防止「路由进不来、服务层却能批」的语义漂移。 |
+| **策略问答保护** | Policy QA 只在当前租户、用户、会话与场景范围内加载有限上下文，多轮历史**预算紧张时优先保留最新一轮**；检索证据作为**不可信数据降权注入**（user-role 边界块，永不进入 system 消息）。请求按场景/风险/成本选择不可变的模型配置，**每个 provider 用自己的模型名**做请求级故障回退，绝不修改全局模型选择。流式请求也须先完成输出护栏和无证据回退，才返回可显示内容。 |
 | **站内通知** | `GET /api/notifications` 和已读接口只返回当前收件人的通知元数据；跨收件人 ID 返回 404，案件正文仍须通过案件 ACL 访问。 |
 
 运行受控写操作时，必须有独立的 Outbox Worker。Docker Compose 已配置该进程；本地或其他部署方式请启动：
@@ -273,6 +274,12 @@ uvicorn app.main:app --reload --port 8000
 
 重建失败会**保留上一版可用向量**，新旧版本按 chunk id 精确补偿清理。
 
+**确定性 Chunk ID 与增量 Embedding**
+
+- chunk id 由 `(tenant, kb, document, chunk_index)` 确定性派生，同一文档同一位置重建后 **ID 不变**，PostgreSQL + Milvus 的写入天然幂等；
+- 重建时按 `content_sha256` 比对新旧 chunk：**内容未变的块直接复用旧向量，不重新 embedding**（也要求 embedding model 一致）；只有真正变化的文本才重新计费；
+- 日志如实记录 `embeddings_reused / embeddings_computed`，重建成本可审计。
+
 **查询（读取）**
 
 PostgreSQL 关键词召回（`plainto_tsquery('simple', jieba_query)`）与 Milvus 稠密召回（`tenant_id` + `kb_id` 标量过滤）**并发执行** → RRF 融合 → 独立证据置信度校准 → top-k → LLM 引用。
@@ -320,6 +327,12 @@ pytest -m "not integration"         # 跳过需要真实 PostgreSQL / Milvus 的
 ```
 
 CI 在每次 push 与 PR 上执行后端（`ruff check` · `ruff format --check` · `mypy` · `pytest`）与前端（`pnpm lint` · `tsc -b` · `vitest run`）双 job 检查。
+
+### 生产基线（可复现冻结）
+
+每个里程碑用 `scripts/freeze_production_baseline.py` 冻结一份**不可手改**的验证基线：绑定 commit SHA、依赖锁哈希与冻结时间，记录后端（pytest / ruff / mypy）与前端（lint / tsc / vitest）的实测结果，产物自带内容校验哈希，`--verify` 可检出任何手改。
+
+当前冻结基线见 [`docs/production-baseline.json`](./docs/production-baseline.json)。测试中的 skip 全部为环境门控（`HRBP_RUN_*` / `DATABASE_URL`），不存在无人认领的永久 skip。
 
 ### Web 工作台
 
