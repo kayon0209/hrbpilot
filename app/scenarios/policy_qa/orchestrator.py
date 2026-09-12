@@ -21,6 +21,7 @@ from app.rag.config_loader import ScenarioConfig, load_scenario_config
 from app.rag.llm.model_router import ModelRouter
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.rag.pipeline import SegmentTimer, _schedule_background_task
+from app.rag.retrieval.fusion import fuse_query_variants
 from app.rag.retrieval.retriever import Retriever
 from app.scenarios.policy_qa.context_manager import ContextManager, build_policy_qa_messages
 from app.scenarios.policy_qa.postprocessors import no_evidence_fallback
@@ -44,6 +45,44 @@ class PolicyQAOrchestrator:
         self.input_guard = InputGuardrail()
         self.output_guard = OutputGuardrail()
         self.context = ContextManager()
+
+    async def _retrieve_with_query_variants(
+        self,
+        original_query: str,
+        rewritten_query: str,
+        kb_id: str,
+        tenant_id: str,
+    ) -> list[dict]:
+        """Retrieve with BOTH the original and the rewritten query, then fuse.
+
+        §6.1: replacing the original query with the rewrite is a regression
+        risk — if the rewrite drops the user's intent, recall gets worse than
+        not rewriting at all. Running both and fusing with RRF keeps the
+        original's recall and adds whatever the rewrite found.
+
+        The second retrieval runs ONLY when the rewrite actually changed the
+        text; an unchanged rewrite would just repeat the identical query and
+        pay for it twice.
+        """
+        chunks = await self.retriever.retrieve(
+            query=original_query,
+            kb_id=kb_id,
+            strategy=self.config.retrieval_strategy,
+            top_k=self.config.retrieval_top_k,
+            rerank=self.config.rerank_enabled,
+            tenant_id=tenant_id,
+        )
+        if not rewritten_query or rewritten_query == original_query:
+            return chunks
+        variant = await self.retriever.retrieve(
+            query=rewritten_query,
+            kb_id=kb_id,
+            strategy=self.config.retrieval_strategy,
+            top_k=self.config.retrieval_top_k,
+            rerank=self.config.rerank_enabled,
+            tenant_id=tenant_id,
+        )
+        return fuse_query_variants(chunks, variant, top_k=self.config.retrieval_top_k)
 
     def _model_request(self, *, latency_sensitive: bool = False):
         """Frozen per-request model selection (P1-05): provider, model and
@@ -115,19 +154,15 @@ class PolicyQAOrchestrator:
             )
             rewritten_query = guarded_input
 
-        guarded_input = rewritten_query
-
+        # §6.1: the rewrite does NOT replace the original query. Retrieval runs
+        # on both and fuses them, so a rewrite that drops the user's intent
+        # cannot make recall worse than not rewriting at all.
         context_chunks = []
         target_kb_id = kb_id or self.config.knowledge_base_id
         if target_kb_id:
             timer.start("retrieval")
-            context_chunks = await self.retriever.retrieve(
-                query=guarded_input,
-                kb_id=target_kb_id,
-                strategy=self.config.retrieval_strategy,
-                top_k=self.config.retrieval_top_k,
-                rerank=self.config.rerank_enabled,
-                tenant_id=tenant_id,
+            context_chunks = await self._retrieve_with_query_variants(
+                guarded_input, rewritten_query, target_kb_id, tenant_id
             )
             timer.stop("retrieval")
 
@@ -287,19 +322,15 @@ class PolicyQAOrchestrator:
             )
             rewritten_query = guarded_input
 
-        guarded_input = rewritten_query
-
+        # §6.1: the rewrite does NOT replace the original query. Retrieval runs
+        # on both and fuses them, so a rewrite that drops the user's intent
+        # cannot make recall worse than not rewriting at all.
         context_chunks = []
         target_kb_id = kb_id or self.config.knowledge_base_id
         if target_kb_id:
             timer.start("retrieval")
-            context_chunks = await self.retriever.retrieve(
-                query=guarded_input,
-                kb_id=target_kb_id,
-                strategy=self.config.retrieval_strategy,
-                top_k=self.config.retrieval_top_k,
-                rerank=self.config.rerank_enabled,
-                tenant_id=tenant_id,
+            context_chunks = await self._retrieve_with_query_variants(
+                guarded_input, rewritten_query, target_kb_id, tenant_id
             )
             timer.stop("retrieval")
 

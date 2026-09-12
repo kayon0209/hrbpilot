@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from typing import Any
 
 from app.rag.retrieval.types import RetrievedChunk
 
@@ -71,3 +72,57 @@ def rrf_fusion(
     if top_k is not None:
         fused = fused[:top_k]
     return fused
+
+
+def fuse_query_variants(
+    primary: list[dict[str, Any]],
+    variant: list[dict[str, Any]],
+    top_k: int | None = None,
+    k: int = DEFAULT_K,
+) -> list[dict[str, Any]]:
+    """Fuse two retrieval runs that differ only in the query text (§6.1).
+
+    A rewrite can silently drop the user's intent. Replacing the original query
+    with it then makes retrieval WORSE than not rewriting at all. Running both
+    queries and fusing with RRF keeps the original's recall while adding
+    whatever the rewrite found.
+
+    Differences from ``rrf_fusion``:
+      * operates on the unified dicts returned by ``Retriever.retrieve``;
+      * does NOT stamp dense_rank/sparse_rank — both lists come from the same
+        strategy, so those fields would be meaningless here;
+      * leaves ``score`` untouched and ranks by a new ``fused_score``, so
+        downstream code that thresholds on the native score keeps working.
+
+    Deduplicated by chunk_id; a chunk found by both paths accumulates score
+    from both.
+    """
+    if k <= 0:
+        raise ValueError("RRF k must be positive")
+
+    scores: dict[str, float] = {}
+    merged: dict[str, dict[str, Any]] = {}
+
+    def _absorb(ranked: list[dict[str, Any]]) -> None:
+        for rank0, chunk in enumerate(ranked):
+            cid = chunk.get("chunk_id")
+            if not cid:
+                continue
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank0)
+            existing = merged.get(cid)
+            if existing is None:
+                merged[cid] = dict(chunk)
+            elif existing.get("page_number") is None and chunk.get("page_number") is not None:
+                # keep the more informative record when one path knows the page
+                existing["page_number"] = chunk["page_number"]
+
+    _absorb(primary)
+    _absorb(variant)
+
+    fused: list[dict[str, Any]] = []
+    for cid, score in scores.items():
+        item = dict(merged[cid])
+        item["fused_score"] = score
+        fused.append(item)
+    fused.sort(key=lambda item: item["fused_score"], reverse=True)
+    return fused[:top_k] if top_k is not None else fused

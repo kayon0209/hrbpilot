@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.rag.retrieval.fusion import rrf_fusion
+from app.rag.retrieval.fusion import fuse_query_variants, rrf_fusion
 from app.rag.retrieval.types import RetrievedChunk
 
 
@@ -69,3 +69,63 @@ def test_rrf_preserves_native_scores():
     assert b.sparse_score == 12.3
     assert 0.0 <= a.confidence <= 1.0
     assert 0.0 <= b.confidence <= 1.0
+
+
+# --- dual-path (original + rewritten query) fusion, §6.1 ---
+
+
+def _hit(cid: str, score: float = 0.9, page: int | None = None) -> dict:
+    return {"chunk_id": cid, "content": f"content-{cid}", "score": score, "page_number": page}
+
+
+def test_fuse_query_variants_unions_both_paths():
+    """A rewrite must ADD recall, never replace the original query's recall."""
+    original = [_hit("a"), _hit("b")]
+    rewritten = [_hit("c")]
+
+    fused = fuse_query_variants(original, rewritten)
+
+    assert {item["chunk_id"] for item in fused} == {"a", "b", "c"}
+
+
+def test_fuse_query_variants_dedups_and_boosts_chunks_found_by_both():
+    original = [_hit("a"), _hit("b")]
+    rewritten = [_hit("a"), _hit("c")]
+
+    fused = fuse_query_variants(original, rewritten)
+    ids = [item["chunk_id"] for item in fused]
+
+    assert ids.count("a") == 1  # deduplicated
+    assert ids[0] == "a"  # found by both -> highest fused score
+
+
+def test_fuse_query_variants_preserves_native_score():
+    """Downstream code thresholds on the native score, so it must survive."""
+    fused = fuse_query_variants([_hit("a", score=0.42)], [_hit("b")])
+    a = next(item for item in fused if item["chunk_id"] == "a")
+
+    assert a["score"] == 0.42
+    assert "fused_score" in a
+
+
+def test_fuse_query_variants_respects_top_k():
+    fused = fuse_query_variants([_hit("a"), _hit("b")], [_hit("c")], top_k=2)
+    assert len(fused) == 2
+
+
+def test_fuse_query_variants_keeps_page_number_from_either_path():
+    """One path may know the page while the other does not; keep the fact."""
+    fused = fuse_query_variants([_hit("a", page=None)], [_hit("a", page=7)])
+    a = next(item for item in fused if item["chunk_id"] == "a")
+
+    assert a["page_number"] == 7
+
+
+def test_fuse_query_variants_handles_empty_paths():
+    assert fuse_query_variants([], []) == []
+    assert [item["chunk_id"] for item in fuse_query_variants([_hit("a")], [])] == ["a"]
+
+
+def test_fuse_query_variants_rejects_non_positive_k():
+    with pytest.raises(ValueError, match="k must be positive"):
+        fuse_query_variants([_hit("a")], [], k=0)
