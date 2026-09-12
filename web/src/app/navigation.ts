@@ -43,16 +43,20 @@ const navigation: NavItem[] = [
 
 export function getVisibleNav(role: UserRole | null | undefined): NavItem[] {
   if (role === 'admin') {
-    // 管理后台首页：管理员不做 HR 业务，不显示业务入口
+    // 管理后台首页：管理员不做 HR 业务，不显示业务入口。
+    //
+    // 8 个入口拆成 3 组：AppShell 只在 group 变化时渲染标题，所以分组必须
+    // 在数组里连续；这里的顺序与 roles.test.ts 的断言一致，不要重排。
+    // 拆组前这 8 项挤在同一个标题下平铺，超过一次扫视能记住的量（5-7 项）。
     return [
-      { to: '/admin', label: '系统状态', group: '管理后台' },
-      { to: '/users', label: '用户与权限', group: '管理后台' },
-      { to: '/evaluation', label: 'AI 质量', group: '管理后台' },
-      { to: '/knowledge-base', label: '知识库管理', group: '管理后台' },
-      { to: '/data-sources', label: '数据接入', group: '管理后台' },
-      { to: '/mcp', label: 'MCP 外部工具', group: '管理后台' },
-      { to: '/settings', label: '服务设置', group: '管理后台' },
-      { to: '/audit', label: '审计记录', group: '管理后台' },
+      { to: '/admin', label: '系统状态', group: '平台状态' },
+      { to: '/users', label: '用户与权限', group: '平台状态' },
+      { to: '/evaluation', label: 'AI 质量', group: '平台状态' },
+      { to: '/knowledge-base', label: '知识库管理', group: '数据与接入' },
+      { to: '/data-sources', label: '数据接入', group: '数据与接入' },
+      { to: '/mcp', label: 'MCP 外部工具', group: '数据与接入' },
+      { to: '/settings', label: '服务设置', group: '服务与审计' },
+      { to: '/audit', label: '审计记录', group: '服务与审计' },
     ]
   }
   if (role === 'employee') {

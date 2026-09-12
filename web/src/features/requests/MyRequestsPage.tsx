@@ -52,7 +52,7 @@ export function MyRequestsPage() {
         <div>
           <span className="eyebrow">员工服务</span>
           <h1>我的请求</h1>
-          <p>制度问题先到「问 HR」查询；无法通过制度解答的个人情形，在这里提交请求并跟踪处理。</p>
+          <p>制度问题先到「问 HR」查询；制度没覆盖到的个人情况，在这里提交请求并跟踪处理。</p>
         </div>
       </header>
 
@@ -84,7 +84,7 @@ export function MyRequestsPage() {
         )}
         {mine.data && requests.length === 0 && (
           <div>
-            <p>还没有提交过请求。一般制度问题可以在<Link to="/policy">问 HR</Link>中直接得到答案。</p>
+            <p>还没有提交过请求。一般制度问题直接问 HR 就有答案：<Link to="/policy">去提问</Link>。</p>
           </div>
         )}
         {requests.length > 0 && (
