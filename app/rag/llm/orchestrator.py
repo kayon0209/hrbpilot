@@ -11,12 +11,15 @@ Active provider can be switched at runtime via the /api/settings/llm-provider en
 
 import re
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
 from app.config.settings import settings
 from app.shared.logger import get_logger
+
+if TYPE_CHECKING:
+    from app.rag.llm.model_router import ModelRequest
 
 logger = get_logger(__name__)
 
@@ -277,6 +280,24 @@ def _build_system_prompt(prompt_template: str, context: list[dict]) -> str:
 # ---- LLM Orchestrator ----
 
 
+def _as_model_request(model_request: dict | object | None) -> "ModelRequest | None":
+    """Normalize the caller's model_request argument into a ModelRequest.
+
+    Accepts a ModelRequest, its field dict, or None (global active provider).
+    Imported lazily: model_router imports this module's registry at call time,
+    so a module-level import would be circular.
+    """
+    if model_request is None:
+        return None
+    from app.rag.llm.model_router import ModelRequest as ModelRequestType
+
+    if isinstance(model_request, ModelRequestType):
+        return model_request
+    if isinstance(model_request, dict):
+        return ModelRequestType(**{str(k): v for k, v in model_request.items()})
+    raise ValueError("model_request must be a ModelRequest or its field dict")
+
+
 class LLMOrchestrator:
     """Generate LLM responses with context-aware prompts."""
 
@@ -299,13 +320,8 @@ class LLMOrchestrator:
             model = get_active_model()
             return messages, client, model
 
-        from app.rag.llm.model_router import ModelRequest as ModelRequestType
-
-        if isinstance(model_request, ModelRequestType):
-            req = model_request
-        elif isinstance(model_request, dict):
-            req = ModelRequestType(**{str(k): v for k, v in model_request.items()})
-        else:
+        req = _as_model_request(model_request)
+        if req is None:  # unreachable: model_request is not None here
             raise ValueError("model_request must be a ModelRequest or its field dict")
         client = _client_for_provider(req.provider)
         return messages, client, req.model
@@ -324,7 +340,9 @@ class LLMOrchestrator:
 
         ``messages`` is the PR-02 structured path. The legacy prompt-template
         path remains for backward compatibility with other scenarios.
-        ``model_request`` enables the request-level Model Router path.
+        ``model_request`` enables the request-level Model Router path: the
+        call is served by the request's own provider chain with per-provider
+        model names and request-scoped fallback (P1-05).
         """
         if messages is None:
             system_prompt = _build_system_prompt(prompt_template, context)
@@ -332,7 +350,21 @@ class LLMOrchestrator:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ]
-        _, client, model = self._resolve_call(messages, model_request)
+
+        req = _as_model_request(model_request)
+        if req is not None:
+            # Request-level path: delegate to the fallback machinery so each
+            # provider is called with ITS OWN model and failures roll to the
+            # next configured provider. Lazy import — fallback ↔ orchestrator
+            # are mutually referential at module level.
+            from app.rag.llm.fallback import generate_with_fallback
+
+            content, tokens, _provider_used = await generate_with_fallback(
+                messages, req, max_tokens=max_tokens, temperature=temperature
+            )
+            return content, tokens
+
+        _, client, model = self._resolve_call(messages, None)
 
         logger.info(
             "llm_call_starting",
@@ -392,7 +424,21 @@ class LLMOrchestrator:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ]
-        _, client, model = self._resolve_call(messages, model_request)
+
+        req = _as_model_request(model_request)
+        if req is not None:
+            # Request-level path with per-provider models and fallback —
+            # mirrors generate(). Lazy import: fallback ↔ orchestrator are
+            # mutually referential at module level.
+            from app.rag.llm.fallback import stream_with_fallback
+
+            async for content, _provider_used in stream_with_fallback(
+                messages, req, max_tokens=max_tokens, temperature=temperature
+            ):
+                yield content
+            return
+
+        _, client, model = self._resolve_call(messages, None)
 
         logger.info(
             "llm_stream_starting",

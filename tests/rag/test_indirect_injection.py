@@ -24,14 +24,14 @@ class _FakeLLM:
         self.calls = 0
         self.messages = None
 
-    async def generate(self, prompt_template, context, query, max_tokens, temperature, messages=None):
+    async def generate(self, prompt_template, context, query, max_tokens, temperature, messages=None, model_request=None):
         self.calls += 1
         self.messages = messages
         self.system_prompt = _build_system_prompt(prompt_template, context)
         self.query = query
         return "依据员工手册，年假可在次年 3 月 31 日前顺延。", 12
 
-    async def generate_stream(self, prompt_template, context, query, max_tokens, temperature, messages=None):
+    async def generate_stream(self, prompt_template, context, query, max_tokens, temperature, messages=None, model_request=None):
         self.calls += 1
         self.messages = messages
         self.system_prompt = _build_system_prompt(prompt_template, context)

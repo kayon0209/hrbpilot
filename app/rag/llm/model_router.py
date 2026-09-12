@@ -51,7 +51,10 @@ class ModelRequest:
 
     ``provider`` and ``model`` name the exact endpoint; ``fallback_order`` is
     the ordered list of providers to try in this request when the primary
-    fails. No field may be mutated after construction.
+    fails. ``fallback_models`` carries a per-provider model name so each
+    fallback attempt uses a model that actually exists on that provider —
+    model names are NOT portable across providers (P1-05). No field may be
+    mutated after construction.
     """
 
     provider: str
@@ -59,6 +62,7 @@ class ModelRequest:
     timeout: float = 60.0
     max_retries: int = 2
     fallback_order: tuple[str, ...] = ()
+    fallback_models: tuple[tuple[str, str], ...] = ()
     scenario_id: str = "default"
     risk_level: str = "LOW"
     latency_sensitive: bool = False
@@ -78,7 +82,26 @@ class ModelRequest:
             "tenant_policy": self.tenant_policy,
             "cost_tier": self.cost_tier,
             "fallback_order": list(self.fallback_order),
+            "fallback_models": {p: m for p, m in self.fallback_models},
         }
+
+
+def resolve_model_for(provider: str, model_request: ModelRequest) -> str:
+    """Resolve the model name for ``provider`` within this request.
+
+    Order: the request's per-provider mapping → the provider's registry
+    model → the primary model name. The registry lookup is what makes
+    cross-provider fallback viable: ``deepseek-chat`` does not exist on
+    zhipu/openai endpoints, so reusing the primary name across providers
+    made every fallback attempt fail before this mapping existed.
+    """
+    mapping = dict(model_request.fallback_models)
+    if provider in mapping:
+        return mapping[provider]
+    registry_model = _orch._PROVIDER_REGISTRY.get(provider, {}).get("model")
+    if registry_model:
+        return str(registry_model)
+    return model_request.model
 
 
 class ModelRouter:
@@ -179,6 +202,9 @@ class ModelRouter:
 
         # Fallback order: primary first, then every configured provider once.
         fallback = [p for p in providers if p != provider]
+        fallback_models = tuple(
+            (pid, str(providers[pid].get("model", model))) for pid in [provider, *fallback] if pid in providers
+        )
         return ModelRequest(
             provider=provider,
             model=model,
@@ -189,6 +215,7 @@ class ModelRouter:
             tenant_policy=tenant_policy,
             cost_tier=tier,
             fallback_order=tuple(fallback),
+            fallback_models=fallback_models,
         )
 
 

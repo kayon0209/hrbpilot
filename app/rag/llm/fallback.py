@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
-from app.rag.llm.model_router import ModelRequest
+from app.rag.llm.model_router import ModelRequest, resolve_model_for
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,10 +37,13 @@ async def generate_with_fallback(
     errors: list[str] = []
     providers = [model_request.provider, *model_request.fallback_order]
     for provider in providers:
+        # Each provider is called with ITS OWN model name — the primary
+        # model is not portable across providers (P1-05).
+        model = resolve_model_for(provider, model_request)
         try:
             client = _client_for_provider(provider)
             response = await client.chat.completions.create(
-                model=model_request.model,
+                model=model,
                 messages=cast(Any, messages),
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -51,7 +54,7 @@ async def generate_with_fallback(
             logger.info(
                 "llm_request_generated",
                 provider=provider,
-                model=model_request.model,
+                model=model,
                 tokens=tokens,
                 response_len=len(content),
             )
@@ -61,7 +64,7 @@ async def generate_with_fallback(
             logger.warning(
                 "llm_request_provider_failed",
                 provider=provider,
-                model=model_request.model,
+                model=model,
                 error=str(e)[:200],
             )
 
@@ -90,10 +93,12 @@ async def stream_with_fallback(
     errors: list[str] = []
     providers = [model_request.provider, *model_request.fallback_order]
     for provider in providers:
+        # Per-provider model resolution — see generate_with_fallback.
+        model = resolve_model_for(provider, model_request)
         try:
             client = _client_for_provider(provider)
             stream = await client.chat.completions.create(
-                model=model_request.model,
+                model=model,
                 messages=cast(Any, messages),
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -108,7 +113,7 @@ async def stream_with_fallback(
             logger.info(
                 "llm_request_streamed",
                 provider=provider,
-                model=model_request.model,
+                model=model,
                 chunks=collected,
             )
             return
@@ -117,7 +122,7 @@ async def stream_with_fallback(
             logger.warning(
                 "llm_request_stream_provider_failed",
                 provider=provider,
-                model=model_request.model,
+                model=model,
                 error=str(e)[:200],
             )
 

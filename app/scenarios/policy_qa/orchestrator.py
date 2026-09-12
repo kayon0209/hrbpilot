@@ -18,6 +18,7 @@ from app.evaluation.auto_eval import AutoEvaluator
 from app.guardrails.input_guard import InputGuardrail, contains_prompt_injection
 from app.guardrails.output_guard import OutputGuardrail
 from app.rag.config_loader import ScenarioConfig, load_scenario_config
+from app.rag.llm.model_router import ModelRouter
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.rag.pipeline import SegmentTimer, _schedule_background_task
 from app.rag.retrieval.retriever import Retriever
@@ -43,6 +44,16 @@ class PolicyQAOrchestrator:
         self.input_guard = InputGuardrail()
         self.output_guard = OutputGuardrail()
         self.context = ContextManager()
+
+    def _model_request(self, *, latency_sensitive: bool = False):
+        """Frozen per-request model selection (P1-05): provider, model and
+        fallback order are explicit for this request and never mutate the
+        global active provider. ModelRouter is stateless-per-request."""
+        return ModelRouter().route(
+            scenario_id="policy_qa",
+            risk_level="LOW",
+            latency_sensitive=latency_sensitive,
+        )
 
     async def execute(
         self,
@@ -150,6 +161,7 @@ class PolicyQAOrchestrator:
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,
             messages=structured_messages,
+            model_request=self._model_request(),
         )
         timer.stop("llm")
 
@@ -344,6 +356,7 @@ class PolicyQAOrchestrator:
                 max_tokens=self.config.max_tokens,
                 temperature=self.config.temperature,
                 messages=structured_messages,
+                model_request=self._model_request(latency_sensitive=True),
             ):
                 if first_chunk_ms is None:
                     first_chunk_ms = int((time.time() - start_time) * 1000)
