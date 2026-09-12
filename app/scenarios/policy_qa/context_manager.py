@@ -256,8 +256,8 @@ def build_policy_qa_messages(
     The template interleaves instructions with an evidence slot and a query
     placeholder. Split it so only the instruction head and the output-format
     tail (headings must be preserved) become the task; evidence goes into its
-    own untrusted system block and the current question is the final user
-    message.
+    own untrusted user-role block (never a system message; see P1-04) and the
+    current question is the final user message.
     """
     head, _, rest = prompt_template.partition("## 系统边界与制度文档片段")
     tail = ""
