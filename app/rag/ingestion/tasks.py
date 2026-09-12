@@ -5,7 +5,7 @@ from collections.abc import Coroutine
 from typing import Any, TypeVar
 
 from app.rag.ingestion.pipeline import run_ingestion_task
-from app.shared.celery_app import celery_app
+from app.shared.celery_app import QUEUE_INGEST, celery_app, check_backpressure
 
 T = TypeVar("T")
 
@@ -37,4 +37,7 @@ def ingest_task(task_id: str, tenant_id: str) -> None:
 
 
 def dispatch_ingestion_task(task_id: str, tenant_id: str) -> None:
-    celery_app.send_task("rag.ingest", args=[task_id, tenant_id])
+    # Backpressure: a saturated ingest queue rejects new work loudly instead
+    # of accepting messages that would sit for hours.
+    check_backpressure(QUEUE_INGEST)
+    celery_app.send_task("rag.ingest", args=[task_id, tenant_id], queue=QUEUE_INGEST)

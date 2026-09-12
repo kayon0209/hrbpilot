@@ -115,6 +115,39 @@ services:
         condition: service_started
     command: ["python", "-m", "app.outbox.worker", "--poll-interval", "2", "--max-messages", "100"]
 
+  # Celery worker for async jobs. Queue isolation (batch C): ingestion and
+  # scenario tasks run in separate queues; this worker consumes both with
+  # prefetch=1 so one heavy document rebuild cannot starve scenario batches.
+  # Scale independently: docker compose up --scale celery-worker=2
+  celery-worker:
+    build:
+      context: .
+      target: runtime
+    user: "10001:10001"
+    env_file: env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+      redis:
+        condition: service_started
+    command:
+      [
+        "python",
+        "-m",
+        "celery",
+        "-A",
+        "app.shared.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=2",
+        "-Q",
+        "kb_ingest,scenario",
+      ]
+
   test:
     build:
       context: .

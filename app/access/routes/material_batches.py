@@ -114,6 +114,11 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
 
     factory = get_session_factory()
     retried = 0
+    # Backpressure gate BEFORE the loop: retrying hundreds of failed items
+    # into an already-saturated scenario queue just recreates the pileup.
+    from app.shared.celery_app import check_backpressure
+
+    check_backpressure("scenario")
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         if batch.type == "interview":
