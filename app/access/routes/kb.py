@@ -25,18 +25,17 @@ from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db
 from app.data.models.infra import AsyncTask
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
-from app.rag.ingestion.pipeline import SUPPORTED_TYPES, sha256_hex
+from app.rag.ingestion.pipeline import sha256_hex
 from app.rag.ingestion.tasks import dispatch_ingestion_task
+from app.rag.security.file_upload import validate_upload
 from app.rag.storage.milvus import MilvusStore
 from app.rag.storage.object_store import ObjectStore
-from app.shared.errors import ConflictError, NotFoundError, ValidationError
+from app.shared.errors import ConflictError, NotFoundError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
-
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 class CreateKBBody(BaseModel):
@@ -239,16 +238,13 @@ async def upload_document(
     if kb is None:
         raise NotFoundError("KnowledgeBase", kb_id)
 
-    filename = file.filename or ""
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in SUPPORTED_TYPES:
-        raise ValidationError(f"不支持的文件类型 .{ext or '(无扩展名)'}；仅支持 {', '.join(sorted(SUPPORTED_TYPES))}")
-
     content = await file.read()
-    if len(content) == 0:
-        raise ValidationError("文件内容为空")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise ValidationError(f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+
+    # Full upload gate: extension whitelist, declared-MIME cross-check,
+    # magic-number sniffing, PDF page cap, size cap, filename sanitization
+    # (the cleaned name shapes the object key — traversal cannot survive it).
+    filename = validate_upload(filename=file.filename or "", declared_mime=file.content_type, content=content)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     content_sha256 = sha256_hex(content)
 

@@ -33,6 +33,7 @@ from app.data.models.infra import AsyncTask
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.rag.embedding import EmbeddingClient, get_embedder
 from app.rag.retrieval.tokenizer import tokenize
+from app.rag.security.file_upload import MAX_PARSED_TEXT_CHARS
 from app.rag.storage.milvus import MilvusStore
 from app.rag.storage.object_store import ObjectStore
 from app.shared.logger import get_logger
@@ -62,19 +63,27 @@ class DocumentParser:
             raise ValueError(f"Unsupported file type: {file_type}. Supported: {', '.join(sorted(SUPPORTED_TYPES))}")
 
         if ft == "txt":
-            return content.decode("utf-8", errors="replace")
-
-        if ft == "docx":
+            text = content.decode("utf-8", errors="replace")
+        elif ft == "docx":
             from docx import Document as DocxDocument
 
             doc = DocxDocument(io.BytesIO(content))
-            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        else:
+            # pdf
+            from pypdf import PdfReader
 
-        # pdf
-        from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
 
-        reader = PdfReader(io.BytesIO(content))
-        return "\n".join((page.extract_text() or "") for page in reader.pages)
+        # Decompression-bomb guard (upload gate caps the raw bytes; this caps
+        # what they expand INTO): a small file ballooning into millions of
+        # parsed characters is a bomb signature, not a legitimate policy doc.
+        if len(text) > MAX_PARSED_TEXT_CHARS:
+            raise ValueError(
+                f"解析后文本超出上限 {MAX_PARSED_TEXT_CHARS} 字符（疑似压缩炸弹），已拒绝入库"
+            )
+        return text
 
 
 class Chunker:
