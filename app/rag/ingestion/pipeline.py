@@ -6,6 +6,10 @@ Key invariants:
   - No zero-vector fallback: if embedding fails the document is marked error.
   - Rebuilding keeps the old Milvus vectors until the new PostgreSQL version
     commits. Failed rebuilds therefore leave the last good index available.
+  - Chunk ids are deterministic (tenant/kb/document/index): a rebuild at the
+    same position yields the same id, making the PG+Milvus upserts idempotent.
+  - A chunk whose content_sha256 already existed in the previous version
+    keeps its old embedding vector — identical text is never re-embedded.
   - Only txt / pdf / docx are supported. .doc / .xls / .ppt are rejected.
 """
 
@@ -18,7 +22,7 @@ import json
 import re
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +44,13 @@ SUPPORTED_TYPES = {"txt", "pdf", "docx"}
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def stable_chunk_id(tenant_id: str, kb_id: str, document_id: str, chunk_index: int) -> str:
+    """Deterministic chunk id (P2): the same document rebuilt at the same
+    chunk position yields the same id, so PG + Milvus upserts are naturally
+    idempotent and unchanged chunks keep a stable identity across rebuilds."""
+    return str(uuid5(NAMESPACE_URL, f"hrbpilot://chunk/{tenant_id}/{kb_id}/{document_id}/{chunk_index}"))
 
 
 class DocumentParser:
@@ -204,11 +215,55 @@ class IngestionService:
         if not raw_chunks:
             raise ValueError("No chunks produced from document")
 
-        # 4. Embed (raises on failure — no zero-vector fallback)
-        contents = [c["content"] for c in raw_chunks]
-        embeddings = await self._get_embedder().embed(contents)
-        if len(embeddings) != len(contents):
-            raise ValueError(f"Embedding count {len(embeddings)} != chunk count {len(contents)}")
+        # 4a. Snapshot the previous version's chunks for embedding reuse.
+        # A chunk whose content_sha256 already exists keeps its old vector —
+        # identical text must not be re-embedded (and re-billed) on rebuild.
+        # The vectors are read BEFORE any delete/upsert touches Milvus.
+        old_rows = (
+            (
+                await session.execute(
+                    select(DocumentChunk.id, DocumentChunk.content_sha256).where(
+                        DocumentChunk.document_id == doc_id,
+                        DocumentChunk.embedding_model == settings.embedding_model,
+                    )
+                )
+            )
+            .all()
+        )
+        old_sha_ids: dict[str, list[str]] = {}
+        for row in old_rows:
+            # Row supports positional access (id, content_sha256).
+            old_sha_ids.setdefault(str(row[1]), []).append(str(row[0]))
+        reusable_vectors: dict[str, list[float]] = {}
+        reuse_candidate_ids = {cid for ids in old_sha_ids.values() for cid in ids}
+        if reuse_candidate_ids:
+            try:
+                reusable_vectors = await self._get_milvus().fetch_embeddings_by_ids_async(list(reuse_candidate_ids))
+            except Exception as e:
+                # Vector fetch is an optimization only — fall back to full embed.
+                logger.warning("ingestion_embedding_reuse_fetch_failed", document_id=doc_id, error=str(e)[:200])
+                reusable_vectors = {}
+        sha_to_vector = {
+            sha: vec
+            for sha, ids in old_sha_ids.items()
+            if (vec := next((reusable_vectors[cid] for cid in ids if cid in reusable_vectors), None)) is not None
+        }
+
+        # 4b. Embed only the chunks whose content is new (raises on failure —
+        # no zero-vector fallback).
+        to_embed = [
+            c
+            for c in raw_chunks
+            if sha256_hex(c["content"].encode("utf-8")) not in sha_to_vector
+        ]
+        if to_embed:
+            contents = [c["content"] for c in to_embed]
+            fresh_embeddings = await self._get_embedder().embed(contents)
+            if len(fresh_embeddings) != len(contents):
+                raise ValueError(f"Embedding count {len(fresh_embeddings)} != chunk count {len(contents)}")
+        else:
+            fresh_embeddings = []
+        reused = len(raw_chunks) - len(to_embed)
 
         # 5. Record the last good vector ids, then replace PG chunks inside the
         # current transaction. Old Milvus rows remain searchable until commit.
@@ -218,8 +273,13 @@ class IngestionService:
 
         # 6. Write new chunks to PostgreSQL + build Milvus rows
         milvus_rows: list[dict[str, Any]] = []
-        for c, emb in zip(raw_chunks, embeddings, strict=False):
-            chunk_id = str(uuid4())
+        embed_iter = iter(fresh_embeddings)
+        for c in raw_chunks:
+            chunk_sha = sha256_hex(c["content"].encode("utf-8"))
+            emb = sha_to_vector.get(chunk_sha)
+            if emb is None:
+                emb = next(embed_iter)
+            chunk_id = stable_chunk_id(tenant_id, kb_id, doc_id, c["index"])
             session.add(
                 DocumentChunk(
                     id=chunk_id,
@@ -279,11 +339,17 @@ class IngestionService:
             await session.rollback()
             raise
 
-        # The new PG version is now authoritative. Cleanup failure is harmless
-        # to recall correctness: hydration drops old vector ids whose PG rows no
-        # longer exist, and a later maintenance pass can retry the deletion.
+        # The new PG version is now authoritative. Obsolete vectors are the
+        # OLD ids the new version no longer uses — with stable chunk ids an
+        # unchanged position keeps the same id (its vector was just
+        # re-upserted), so deleting every old id would erase current vectors.
+        new_chunk_ids = {str(row["chunk_id"]) for row in milvus_rows}
+        obsolete_ids = [cid for cid in old_chunk_ids if cid not in new_chunk_ids]
+        # Cleanup failure is harmless to recall correctness: hydration drops
+        # old vector ids whose PG rows no longer exist, and a later
+        # maintenance pass can retry the deletion.
         try:
-            await self._get_milvus().delete_by_ids_async(old_chunk_ids)
+            await self._get_milvus().delete_by_ids_async(obsolete_ids)
         except Exception as cleanup_error:
             logger.warning(
                 "ingestion_old_vector_cleanup_failed",
@@ -291,7 +357,13 @@ class IngestionService:
                 error=str(cleanup_error),
             )
 
-        logger.info("ingestion_document_indexed", document_id=doc_id, chunks=len(milvus_rows))
+        logger.info(
+            "ingestion_document_indexed",
+            document_id=doc_id,
+            chunks=len(milvus_rows),
+            embeddings_reused=reused,
+            embeddings_computed=len(to_embed),
+        )
 
 
 async def run_ingestion_task(task_id: str, tenant_id: str) -> None:

@@ -167,6 +167,36 @@ class MilvusStore:
 
     # --- search ---
 
+    def fetch_embeddings_by_ids(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        """Fetch stored embedding vectors for exact chunk ids (embed reuse).
+
+        Returns {chunk_id: vector} for the ids that exist. Used by ingestion
+        to reuse the vector of an unchanged chunk (same content_sha256) so a
+        document rebuild does not re-embed identical text.
+        """
+        if not chunk_ids:
+            return {}
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return {}
+        safe_ids = [validate_filter_id(chunk_id) for chunk_id in chunk_ids]
+        id_list = ", ".join(f'"{sid}"' for sid in safe_ids)
+        rows = client.query(
+            collection_name=self.collection_name,
+            filter=f"id in [{id_list}]",
+            output_fields=[VECTOR_FIELD],
+        )
+        out: dict[str, list[float]] = {}
+        for row in rows:
+            chunk_id = str(row.get("id", ""))
+            vector = row.get(VECTOR_FIELD)
+            if chunk_id and vector:
+                out[chunk_id] = list(vector)
+        return out
+
+    async def fetch_embeddings_by_ids_async(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        return await asyncio.to_thread(self.fetch_embeddings_by_ids, chunk_ids)
+
     def search(
         self,
         query_vector: list[float],
