@@ -14,6 +14,30 @@ logger = get_logger(__name__)
 SAFE_RESPONSE = "抱歉，系统检测到输出内容不符合安全规范，已替换为安全回复。请重新提问。"
 CITATION_WARNING = "\n\n⚠️ 部分回答内容未能在提供的引用来源中找到明确对应，请谨慎参考。"
 
+# Hard-block terms: unambiguous personal attacks / hate speech. Any output
+# containing these is replaced wholesale by SAFE_RESPONSE.
+_TOXIC_BLOCK_PATTERNS = (
+    "fuck",
+    "shit",
+    "kill yourself",
+    "hate speech",
+    "去死",
+    "傻逼",
+    "杀了你",
+    "蠢货",
+)
+
+# Warn-only terms: words that are ALSO core HR business vocabulary
+# (harassment / discrimination complaints are the most common content of
+# interview digests and employee-voice analysis). Reporting an anti-harassment
+# procedure must not be censored — flag for review instead of blocking.
+_TOXIC_WARN_PATTERNS = (
+    "discriminate",
+    "harassment",
+    "歧视",
+    "骚扰",
+)
+
 
 class OutputGuardrail:
     async def check(self, output: str, rules: list[str], sources: list[dict] | None = None) -> tuple[str, dict]:
@@ -34,12 +58,23 @@ class OutputGuardrail:
                 flags["pii_detected"] = True
                 flags["warnings"].append({"pii_types": pii_types})
 
-        if "toxicity_detection" in rules and self._detect_toxicity(processed):
-            flags["toxicity_detected"] = True
-            flags["blocked"] = True
-            flags["warnings"].append("toxic_content_replaced")
-            logger.warning("output_guardrail_toxicity_blocked")
-            return SAFE_RESPONSE, flags
+        if "toxicity_detection" in rules:
+            matched = self._match_toxicity(processed)
+            if matched is not None:
+                flags["toxicity_detected"] = True
+                flags["blocked"] = True
+                flags["warnings"].append("toxic_content_replaced")
+                logger.warning("output_guardrail_toxicity_blocked")
+                return SAFE_RESPONSE, flags
+            warned = self._match_toxicity_warn(processed)
+            if warned:
+                # HR-business vocabulary (harassment/discrimination reports):
+                # pass through, flag for review. Blocking here would censor the
+                # exact scenarios (interview digests, employee voice) whose
+                # core content these words describe.
+                flags["toxicity_review_flagged"] = True
+                flags["warnings"].append("toxic_term_review")
+                logger.warning("output_guardrail_toxicity_review_flagged")
 
         if "citation_verification" in rules and sources and self._verify_citations(processed, sources):
             flags["citation_issues"] = True
@@ -59,22 +94,20 @@ class OutputGuardrail:
         return processed, flags
 
     def _detect_toxicity(self, text: str) -> bool:
-        toxic_patterns = [
-            "fuck",
-            "shit",
-            "kill yourself",
-            "hate speech",
-            "discriminate",
-            "harassment",
-            "去死",
-            "傻逼",
-            "歧视",
-            "骚扰",
-            "杀了你",
-            "蠢货",
-        ]
+        """Kept for callers that only need the block verdict."""
+        return self._match_toxicity(text) is not None
+
+    @staticmethod
+    def _match_toxicity(text: str) -> str | None:
+        """Return the first hard-block toxic term, or None."""
         text_lower = text.lower()
-        return any(pattern in text_lower for pattern in toxic_patterns)
+        return next((pattern for pattern in _TOXIC_BLOCK_PATTERNS if pattern in text_lower), None)
+
+    @staticmethod
+    def _match_toxicity_warn(text: str) -> str | None:
+        """Return the first HR-business-vocabulary toxic term, or None."""
+        text_lower = text.lower()
+        return next((pattern for pattern in _TOXIC_WARN_PATTERNS if pattern in text_lower), None)
 
     def _detect_and_desensitize_pii(self, text: str) -> tuple[str, list[str]]:
         guard = InputGuardrail()
