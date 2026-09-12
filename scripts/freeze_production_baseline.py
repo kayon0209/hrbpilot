@@ -32,6 +32,9 @@ ARTIFACT = REPO / "docs" / "production-baseline.json"
 _HASH_EXCLUDED = {"content_hash"}
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
 def _run(cmd: list[str]) -> tuple[int, str]:
     # Windows: shutil.which() inserts an extensionless candidate first and the
     # nodejs dir ships a POSIX shell shim named plain "corepack" —
@@ -48,7 +51,10 @@ def _run(cmd: list[str]) -> tuple[int, str]:
     if exe:
         cmd = [exe, *cmd[1:]]
     proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    # vitest/pnpm emit ANSI color codes even when piped; strip so the summary
+    # regexes see plain text.
+    return proc.returncode, _ANSI_RE.sub("", out)
 
 
 def _sha256_file(path: Path) -> str:

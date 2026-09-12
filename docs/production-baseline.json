@@ -1,6 +1,6 @@
 {
-  "frozen_at": "2026-09-12T11:56:22.389707+00:00",
-  "commit": "5b7c9135b9c68e508adc1e47d433289d613cda2f",
+  "frozen_at": "2026-09-12T13:03:20.479855+00:00",
+  "commit": "3efa0387f6a9b671ff551be8a9a986440a178dfb",
   "dirty": false,
   "python": "3.12.0",
   "pytest": {
@@ -23,8 +23,26 @@
     "errors": 2,
     "note": "known pre-existing findings in retrieval/retriever.py and material_batches.py; baseline=2 at freeze time"
   },
+  "web": {
+    "eslint": {
+      "command": "corepack pnpm --dir web lint",
+      "exit_code": 0,
+      "note": "exit_code 0 == clean"
+    },
+    "build": {
+      "command": "corepack pnpm --dir web build",
+      "exit_code": 0,
+      "note": "tsc -b && vite build; exit_code 0 == clean"
+    },
+    "vitest": {
+      "command": "corepack pnpm --dir web test:run",
+      "exit_code": 0,
+      "test_files": 13,
+      "tests_passed": 37
+    }
+  },
   "locks": {
-    "pyproject": "73f4937252b37432f2e519416caa6239a91b1947351e967ae18416040fcee61b",
+    "pyproject": "66b6336762a6ef55178bf26a23b1b346b4f20a389d2c5dae16570f52fe28ff99",
     "pnpm_lock": "07c6668339f046fcf246c2c8a1a8dff1da53425c47ad846163fc69b98b7b1498"
   },
   "skips_policy": "every pytest skip is env-gated (HRBP_RUN_* / DATABASE_URL); no owner-less permanent skips",
@@ -37,5 +55,5 @@
     "config_fingerprint": "dbe6e204923410e3",
     "note": "deps reachable at freeze time; a skipped integration test means a missing container, not a regression"
   },
-  "content_hash": "64c181c4b1d8565d1682d55bef688fc6afc8bc1ef5d7d2efe13b83ec47e68d3e"
+  "content_hash": "a995952d9eae011f32290f56eaf6cce87ddbf57d966962412ea6d608b7951c10"
 }
