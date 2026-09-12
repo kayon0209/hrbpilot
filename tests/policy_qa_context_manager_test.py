@@ -171,7 +171,18 @@ def test_build_policy_qa_messages_splits_system_evidence_and_query():
     assert "【系统规则】" in messages[0]["content"]
     assert any(msg["role"] == "assistant" for msg in messages)
     assert any(msg["role"] == "user" and msg["content"] == "年假能顺延吗？" for msg in messages)
-    assert any(msg["role"] == "system" and "UNTRUSTED_EVIDENCE" in msg["content"] for msg in messages)
+    # Evidence is untrusted data: it must NOT ride in a system-role message.
+    # It arrives as a user-role block wrapped in explicit boundary markers.
+    # (Filter on the boundary marker: the task message derived from the
+    # template also mentions "UNTRUSTED_EVIDENCE" in its instructions.)
+    evidence_msgs = [msg for msg in messages if "<<<EVIDENCE_BEGIN>>>" in msg.get("content", "")]
+    assert evidence_msgs, "expected an evidence block carrying the untrusted marker"
+    assert all(msg["role"] == "user" for msg in evidence_msgs)
+    assert all("<<<EVIDENCE_BEGIN>>>" in msg["content"] and "<<<EVIDENCE_END>>>" in msg["content"] for msg in evidence_msgs)
+    # The untrusted evidence payload itself never rides in a system message.
+    evidence_payload = "年假可顺延"
+    system_contents = [msg["content"] for msg in messages if msg["role"] == "system"]
+    assert all(evidence_payload not in c for c in system_contents)
 
 
 async def test_policy_qa_route_wires_history_into_orchestrator(monkeypatch, session_factory):
