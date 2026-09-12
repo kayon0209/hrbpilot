@@ -53,6 +53,7 @@ from app.evaluation.golden_metrics import (  # noqa: E402
     estimate_token_split,
     keyword_recall,
 )
+from app.evaluation.scenario_metrics import is_applicable  # noqa: E402
 from app.guardrails.input_guard import InputGuardrail  # noqa: E402
 from app.guardrails.output_guard import OutputGuardrail  # noqa: E402
 from app.rag.config_loader import load_scenario_config  # noqa: E402
@@ -170,6 +171,14 @@ def rebuild_summaries(result: dict) -> None:
     }
     result["sample_count"] = sum(a["n"] for a in acc.values())
     result["error_count"] = sum(a["errors"] for a in acc.values())
+    # §7.2 reading frame: which of the reported scores are actually fair for
+    # each scenario. The scores themselves are unchanged on purpose (frozen
+    # baseline) — this annotates them so a low number is not misread as poor
+    # quality when it really means "this metric does not apply here".
+    result["metric_applicability"] = {
+        sid: {metric: is_applicable(sid, metric) for metric in ("keyword_recall", "citation_recall")}
+        for sid in GOLDEN
+    }
 
 
 async def repair(path: Path) -> None:
