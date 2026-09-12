@@ -126,6 +126,23 @@ def test_fuse_query_variants_handles_empty_paths():
     assert [item["chunk_id"] for item in fuse_query_variants([_hit("a")], [])] == ["a"]
 
 
+def test_fuse_query_variants_keeps_chunks_without_chunk_id():
+    """Regression: chunks without a chunk_id are still evidence. Keying only on
+    chunk_id silently dropped them and left the answer with no context at all."""
+    no_id = [{"content": "年假可顺延", "source": "员工手册.pdf"}]
+
+    fused = fuse_query_variants(no_id, [])
+
+    assert len(fused) == 1
+    assert fused[0]["content"] == "年假可顺延"
+
+
+def test_fuse_query_variants_dedups_identical_content_without_id():
+    same = [{"content": "年假可顺延"}, {"content": "年假可顺延"}]
+
+    assert len(fuse_query_variants(same, [])) == 1
+
+
 def test_fuse_query_variants_rejects_non_positive_k():
     with pytest.raises(ValueError, match="k must be positive"):
         fuse_query_variants([_hit("a")], [], k=0)

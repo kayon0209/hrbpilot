@@ -105,9 +105,9 @@ def fuse_query_variants(
 
     def _absorb(ranked: list[dict[str, Any]]) -> None:
         for rank0, chunk in enumerate(ranked):
-            cid = chunk.get("chunk_id")
-            if not cid:
-                continue
+            # Key on chunk_id, falling back to content: a chunk without an id
+            # is still evidence and must be fused, not silently dropped.
+            cid = str(chunk.get("chunk_id") or f"__content__:{chunk.get('content', '')}")
             scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank0)
             existing = merged.get(cid)
             if existing is None:
