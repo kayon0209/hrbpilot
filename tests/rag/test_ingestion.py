@@ -1,6 +1,7 @@
 """Ingestion tests: parsing, idempotent rebuild, failure status, no zero-vector fallback."""
 
 import hashlib
+import io
 
 import pytest
 
@@ -32,6 +33,56 @@ def test_parse_docx():
     d.save(buf)
     text = DocumentParser().parse(buf.getvalue(), "docx")
     assert "制度第一条" in text
+
+
+def test_parse_docx_extracts_tables_in_document_order():
+    """doc.paragraphs drops embedded tables —报销标准这类核心制度内容常以
+    表格承载，必须被提取且保持与段落的相对顺序（批次 B）。"""
+    import io
+
+    from docx import Document
+
+    buf = io.BytesIO()
+    d = Document()
+    d.add_paragraph("第一条 报销标准如下：")
+    table = d.add_table(rows=2, cols=3)
+    table.cell(0, 0).text = "费用类型"
+    table.cell(0, 1).text = "上限"
+    table.cell(0, 2).text = "凭证"
+    table.cell(1, 0).text = "交通费"
+    table.cell(1, 1).text = "500元"
+    table.cell(1, 2).text = "发票"
+    d.add_paragraph("第二条 凭证需当月提交。")
+    d.save(buf)
+
+    parser = DocumentParser()
+    text = parser.parse(buf.getvalue(), "docx")
+
+    # table content survives, rendered as readable rows
+    assert "费用类型" in text and "交通费" in text and "500元" in text
+    assert "费用类型 | 上限 | 凭证" in text
+    # document order preserved: intro paragraph, table, closing paragraph
+    assert text.index("第一条") < text.index("费用类型") < text.index("第二条")
+    assert parser.last_diagnostics["tables"] == 1
+    assert parser.last_diagnostics["file_type"] == "docx"
+
+
+def test_parse_pdf_records_empty_page_diagnostics():
+    """A page with no extractable text is counted, not silently dropped —
+    the diagnostics make a scanned (needs-OCR) document visible."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)  # A4, no text at all
+    buf = io.BytesIO()
+    writer.write(buf)
+
+    parser = DocumentParser()
+    text = parser.parse(buf.getvalue(), "pdf")
+
+    assert parser.last_diagnostics["pages"] == 1
+    assert parser.last_diagnostics["empty_pages"] == 1
+    assert text == ""  # honest: nothing was extracted
 
 
 # --- chunker ---

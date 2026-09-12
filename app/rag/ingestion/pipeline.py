@@ -55,7 +55,16 @@ def stable_chunk_id(tenant_id: str, kb_id: str, document_id: str, chunk_index: i
 
 
 class DocumentParser:
-    """Parse uploaded files into plain text. Raises on any failure."""
+    """Parse uploaded files into plain text. Raises on any failure.
+
+    Diagnostics: ``last_diagnostics`` carries per-file parse statistics
+    (page/text coverage for PDFs) so callers can log honest quality signals
+    instead of silently indexing a document whose text extraction mostly
+    failed (e.g. scanned pages with no OCR).
+    """
+
+    def __init__(self) -> None:
+        self.last_diagnostics: dict[str, Any] = {}
 
     def parse(self, content: bytes, file_type: str) -> str:
         ft = (file_type or "").lower().lstrip(".")
@@ -64,17 +73,11 @@ class DocumentParser:
 
         if ft == "txt":
             text = content.decode("utf-8", errors="replace")
+            self.last_diagnostics = {"file_type": "txt", "chars": len(text)}
         elif ft == "docx":
-            from docx import Document as DocxDocument
-
-            doc = DocxDocument(io.BytesIO(content))
-            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            text = self._parse_docx(content)
         else:
-            # pdf
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(content))
-            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            text = self._parse_pdf(content)
 
         # Decompression-bomb guard (upload gate caps the raw bytes; this caps
         # what they expand INTO): a small file ballooning into millions of
@@ -84,6 +87,78 @@ class DocumentParser:
                 f"解析后文本超出上限 {MAX_PARSED_TEXT_CHARS} 字符（疑似压缩炸弹），已拒绝入库"
             )
         return text
+
+    def _parse_docx(self, content: bytes) -> str:
+        """Extract paragraphs AND tables in document order.
+
+        ``doc.paragraphs`` drops embedded tables entirely —报销标准、考勤表
+        这类核心 HR 制度内容恰恰常以表格承载。``iter_inner_content`` keeps
+        the real body order; tables are rendered row-by-row with cell
+        separators so the chunker sees their text.
+        """
+        from docx import Document as DocxDocument
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        doc = DocxDocument(io.BytesIO(content))
+        parts: list[str] = []
+        table_count = 0
+        for block in doc.iter_inner_content():
+            if isinstance(block, Paragraph):
+                if block.text.strip():
+                    parts.append(block.text.strip())
+            elif isinstance(block, Table):
+                table_count += 1
+                parts.append(self._render_docx_table(block))
+        self.last_diagnostics = {
+            "file_type": "docx",
+            "chars": sum(len(p) for p in parts),
+            "tables": table_count,
+        }
+        return "\n".join(parts)
+
+    @staticmethod
+    def _render_docx_table(table: Any) -> str:
+        """Render one table as readable lines: 列1 | 列2 | 列3 per row."""
+        lines: list[str] = []
+        for row in table.rows:
+            cells = [c.text.strip().replace("\n", " ") for c in row.cells]
+            if any(cells):
+                lines.append(" | ".join(cells))
+        return "\n".join(lines)
+
+    def _parse_pdf(self, content: bytes) -> str:
+        """Page-by-page extraction with per-page diagnostics.
+
+        A page whose extraction returns nothing (scanned image / embedded
+        font without ToUnicode map) is NOT silently dropped: the empty-page
+        count is recorded so ingest logging can flag "this document is
+        mostly unparseable, it needs OCR" instead of pretending it indexed.
+        """
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content))
+        page_texts: list[str] = []
+        empty_pages = 0
+        for page in reader.pages:
+            try:
+                page_text = page.extract_text() or ""
+            except Exception:
+                # A single malformed page must not abort the whole document;
+                # count it as empty and keep the rest.
+                page_text = ""
+                empty_pages += 1
+            if not page_text.strip():
+                empty_pages += 1
+            page_texts.append(page_text)
+        total_pages = len(reader.pages)
+        self.last_diagnostics = {
+            "file_type": "pdf",
+            "chars": sum(len(t) for t in page_texts),
+            "pages": total_pages,
+            "empty_pages": empty_pages,
+        }
+        return "\n".join(page_texts)
 
 
 class Chunker:
@@ -214,10 +289,21 @@ class IngestionService:
         # 1. Fetch raw bytes from object storage
         content = await self._get_object_store().get_async(document.s3_key)
 
-        # 2. Parse
+        # 2. Parse (thread-offloaded; the parser records page-level stats)
         text = await asyncio.to_thread(self.parser.parse, content, document.file_type)
         if not text.strip():
             raise ValueError("Parsed document produced empty text")
+        diagnostics = dict(self.parser.last_diagnostics)
+        # A mostly-unparseable PDF (scanned pages) is indexed with an honest
+        # warning — the operator sees the document needs OCR instead of a
+        # silently near-empty index.
+        if diagnostics.get("file_type") == "pdf" and diagnostics.get("pages") and diagnostics["empty_pages"]:
+            logger.warning(
+                "ingestion_pdf_low_text_coverage",
+                document_id=doc_id,
+                pages=diagnostics["pages"],
+                empty_pages=diagnostics["empty_pages"],
+            )
 
         # 3. Chunk
         raw_chunks = self.chunker.chunk(text, strategy=chunk_strategy, chunk_size=chunk_size, source=document.filename)
@@ -372,6 +458,7 @@ class IngestionService:
             chunks=len(milvus_rows),
             embeddings_reused=reused,
             embeddings_computed=len(to_embed),
+            parse_diagnostics=diagnostics,
         )
 
 
