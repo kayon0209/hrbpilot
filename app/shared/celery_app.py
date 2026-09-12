@@ -49,7 +49,11 @@ def queue_depth(queue: str) -> int | None:
 
         r = Redis.from_url(settings.celery_broker_url, decode_responses=True)
         try:
-            return int(r.llen(queue))
+            depth = r.llen(queue)
+            # sync client returns int; the Awaitable half of the stub union
+            # only applies to the async client variant.
+            assert isinstance(depth, int)
+            return depth
         finally:
             r.close()
     except Exception:
