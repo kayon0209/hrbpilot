@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "HRBP AI Workbench - unified AI platform for 5 HR scenarios"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "Proprietary"}
+license = {text = "MIT"}
 
 dependencies = [
     "fastapi>=0.115.0",
