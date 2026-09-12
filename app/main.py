@@ -22,6 +22,7 @@ from app.access.middleware.security_headers import SecurityHeadersMiddleware
 from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.routes.admin_users import router as admin_users_router
 from app.access.routes.audit import router as audit_router
+from app.access.routes.ops_reconciliation import router as ops_reconciliation_router
 from app.access.routes.auth import router as auth_router
 from app.access.routes.connector_webhooks import router as connector_webhooks_router
 from app.access.routes.culture_content import router as culture_router
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
     app.include_router(connector_webhooks_router)
     app.include_router(audit_router)
     app.include_router(admin_users_router)
+    app.include_router(ops_reconciliation_router)
 
     logger.info("app_created", app=settings.app_name, env=settings.app_env)
     return app

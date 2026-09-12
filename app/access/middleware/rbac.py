@@ -58,6 +58,8 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "audit_read",
         "data_source_admin",
         "user_admin",
+        # §4.1 reconciliation + dead-letter console (mutations are audited)
+        "ops_reconciliation",
     },
 }
 
