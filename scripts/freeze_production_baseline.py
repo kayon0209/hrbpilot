@@ -1,9 +1,10 @@
 """Freeze a reproducible production baseline for the current commit.
 
-Collects the verification surface (pytest / ruff / mypy), binds it to the
-exact commit SHA + dirty state + lockfile hashes, and writes an immutable
-``production-baseline.json`` (P0-07). The artifact carries a self-verifying
-content hash so hand-edits are detectable: ``verify()`` recomputes it.
+Collects the verification surface (pytest / ruff / mypy) *plus the environment
+it was measured in*, binds it to the exact commit SHA + dirty state + lockfile
+hashes, and writes an immutable ``production-baseline.json`` (P0-07). The
+artifact carries a self-verifying content hash so hand-edits are detectable:
+``verify()`` recomputes it.
 
 Usage:
     python scripts/freeze_production_baseline.py            # freeze now
@@ -16,10 +17,12 @@ import argparse
 import hashlib
 import json
 import re
+import socket
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 REPO = Path(__file__).resolve().parents[1]
 ARTIFACT = REPO / "docs" / "production-baseline.json"
@@ -35,6 +38,93 @@ def _run(cmd: list[str]) -> tuple[int, str]:
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+
+
+# Non-secret .env keys that can change test outcomes. Fingerprinted, not copied.
+_FINGERPRINTED_ENV_KEYS = (
+    "APP_ENV",
+    "RRF_K",
+    "DENSE_TOP_K",
+    "SPARSE_TOP_K",
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSION",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+)
+
+
+def _env_file() -> dict[str, str]:
+    """Read the repo .env as plain key/value pairs (no interpolation)."""
+    path = REPO / ".env"
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _tcp_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
+    """A probe must never raise: an unreachable dependency is an answer, not an error."""
+    sock = socket.socket()
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _url_reachable(url: str, default_port: int) -> bool:
+    parsed = urlparse(url or "")
+    if not parsed.hostname:
+        return False
+    return _tcp_reachable(parsed.hostname, parsed.port or default_port)
+
+
+def _endpoint_reachable(endpoint: str, default_port: int) -> bool:
+    """Accept both 'host:port' and 'scheme://host:port' spellings."""
+    if not endpoint:
+        return False
+    parsed = urlparse(endpoint if "//" in endpoint else f"//{endpoint}")
+    if not parsed.hostname:
+        return False
+    return _tcp_reachable(parsed.hostname, parsed.port or default_port)
+
+
+def _environment() -> dict:
+    """Snapshot the runtime dependencies the verification numbers depend on.
+
+    The same commit produces different numbers with and without Milvus running
+    (438 skipped-50 vs 439 skipped-49 at freeze time). Recording what was
+    actually up is what lets a reader tell a regression from a missing
+    container; ``embedding_mode`` matters because the end-to-end test only
+    exercises semantic matching when a cloud embedding key is present.
+    """
+    env = _env_file()
+    try:
+        milvus_port = int(env.get("VECTOR_DB_PORT") or 19530)
+    except ValueError:
+        milvus_port = 19530
+    fingerprint = hashlib.sha256(
+        json.dumps({k: env.get(k, "") for k in _FINGERPRINTED_ENV_KEYS}, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "milvus_reachable": _tcp_reachable(env.get("VECTOR_DB_HOST", "localhost"), milvus_port),
+        "postgres_reachable": _url_reachable(env.get("DATABASE_URL", ""), 5432),
+        "redis_reachable": _url_reachable(env.get("REDIS_URL", ""), 6379),
+        "minio_reachable": _endpoint_reachable(env.get("MINIO_ENDPOINT", ""), 9000),
+        "embedding_mode": "cloud" if env.get("EMBEDDING_API_KEY") else "deterministic",
+        "config_fingerprint": fingerprint,
+        "note": "deps reachable at freeze time; a skipped integration test means a missing container, not a regression",
+    }
 
 
 def _git_sha() -> tuple[str, bool]:
@@ -96,6 +186,10 @@ def freeze() -> int:
         print("ERROR: working tree is dirty — commit or stash before freezing a baseline.")
         return 1
 
+    # Snapshot before the suite runs: the numbers below only mean something
+    # next to the environment that produced them.
+    environment = _environment()
+
     print("Running verification suite (this takes a few minutes)...")
     payload: dict = {
         "frozen_at": datetime.now(UTC).isoformat(),
@@ -110,6 +204,7 @@ def freeze() -> int:
             "pnpm_lock": _sha256_file(REPO / "web" / "pnpm-lock.yaml"),
         },
         "skips_policy": "every pytest skip is env-gated (HRBP_RUN_* / DATABASE_URL); no owner-less permanent skips",
+        "environment": environment,
     }
     payload["content_hash"] = _content_hash(payload)
 
