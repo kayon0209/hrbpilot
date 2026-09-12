@@ -113,8 +113,11 @@ async def test_load_history_rejects_wrong_user(session_factory):
 
 
 async def test_history_is_clipped_oldest_first(session_factory):
+    """Under token pressure the OLDEST messages are dropped; the newest
+    turn — where the user's region/time/employee-type refinements live —
+    must survive (P0-03 direction fix)."""
     session_id = await _seed_session(session_factory)
-    manager = ContextManager(max_messages=8, max_history_tokens=2)
+    manager = ContextManager(max_messages=8, max_history_tokens=6)
 
     async with session_factory() as session:
         history = await manager.load_history(
@@ -127,6 +130,33 @@ async def test_history_is_clipped_oldest_first(session_factory):
 
     assert history.truncated is True
     assert history.message_count <= 2
+    # Content-level: the kept messages are the NEWEST ones, in order.
+    assert [m["content"] for m in history.messages] == ["如果没休完呢？", "可以顺延。"]
+
+
+async def test_history_clip_fills_budget_with_newest_turns(session_factory):
+    """A mid-size budget keeps as many NEWEST messages as fit; older turns
+    are dropped first. The kept slice stays chronological for the model."""
+    session_id = await _seed_session(session_factory)
+    manager = ContextManager(max_messages=8, max_history_tokens=100)
+
+    async with session_factory() as session:
+        history = await manager.load_history(
+            session,
+            tenant_id="t1",
+            user_id="u1",
+            session_id=session_id,
+            scenario_id="policy_qa",
+        )
+
+    contents = [m["content"] for m in history.messages]
+    # The oldest turn may be dropped, but the newest pair never is.
+    assert contents[-2:] == ["如果没休完呢？", "可以顺延。"]
+    assert "第一次提问" not in contents or contents[0].startswith("第一次提问")
+    # Chronological order preserved: user asks before assistant answers.
+    assert history.messages[0]["role"] in ("user", "assistant")
+    assert history.messages[-1]["role"] == "assistant"
+    assert history.token_count <= 100
 
 
 def test_build_policy_qa_messages_splits_system_evidence_and_query():

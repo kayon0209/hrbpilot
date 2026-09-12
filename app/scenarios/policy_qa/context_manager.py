@@ -138,17 +138,25 @@ class ContextManager:
         )
 
     def _clip_history(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        """Drop oldest messages until the token budget fits."""
+        """Keep the NEWEST messages that fit the token budget.
+
+        The budget is filled from the most recent message backwards; the
+        kept slice is then restored to chronological order. Under pressure
+        the oldest context is dropped — never the user's latest turn
+        (region/time/employee-type refinements), which previously happened
+        because the loop consumed oldest-first and broke at the budget.
+        """
         kept: list[dict[str, str]] = []
         token_count = 0
         truncated = False
-        for msg in messages:
+        for msg in reversed(messages):
             cost = estimate_tokens(msg.get("content", ""))
             if token_count + cost > self.max_history_tokens and kept:
                 truncated = True
                 break
             kept.append(msg)
             token_count += cost
+        kept.reverse()
         return {
             "messages": kept,
             "message_count": len(kept),
