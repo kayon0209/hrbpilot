@@ -19,7 +19,9 @@
 | 级别 | 依赖 | 不可用时状态 | 对整体的影响 |
 | --- | --- | --- | --- |
 | critical | database, redis | `error` | `not_ready` + HTTP 503（应从流量摘除） |
-| optional | milvus, minio, embedding | `unavailable` | `degraded` + HTTP 200（仍可服务） |
+| optional | milvus, minio, embedding, llm | `unavailable` | `degraded` + HTTP 200（仍可服务） |
+
+`llm` 是唯一一个**不发起探测**的依赖（2026-09-12 加入）：它汇报真实调用的结果——最近一次调用抛错、且此后没再成功的供应商，5 分钟窗口内记为不可用。原因是没有便宜的探测方式（真探测要花 token，且探测路径与实际服务路径不同，可能真请求全挂而探测是绿的）。**实测证据**：DeepSeek 余额不足持续 402，请求级 fallback 静默改由 Gitee 出答案，而当时 `/api/ready` 全程 `status: ok`。失败的供应商名只进结构化日志（`llm_provider_degraded`），不进这个对外公开的响应体。
 
 | 场景 | database | embedding | milvus | minio | redis |
 | --- | --- | --- | --- | --- | --- |

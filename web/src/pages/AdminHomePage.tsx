@@ -37,6 +37,11 @@ const DEPENDENCIES: Record<string, { label: string; impact: string }> = {
     label: '向量化服务',
     impact: '入库向量化与结果重排不可用；关键词检索与已有向量仍可用。',
   },
+  llm: {
+    label: '大模型服务',
+    impact:
+      '有供应商调用失败且尚未恢复：请求已自动回落到备用供应商，回答仍能生成，但延迟或质量可能受影响。若全部供应商都失败，问答会明确报错而不是编造答案。具体是哪家供应商请查服务日志 —— 该接口是对外公开的，不返回供应商名。',
+  },
 }
 
 function describe(name: string) {

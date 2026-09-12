@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from app.rag.llm.model_router import ModelRequest, resolve_model_for
+from app.rag.llm.provider_health import record_failure, record_success
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -58,6 +59,10 @@ async def generate_with_fallback(
                 tokens=tokens,
                 response_len=len(content),
             )
+            # Observed health: a provider that just served a request is not
+            # degraded. This is what surfaces on /api/ready, so it must reflect
+            # real traffic only — never a synthetic probe.
+            record_success(provider)
             return content, tokens, provider
         except Exception as e:
             errors.append(f"{provider}: {str(e)[:120]}")
@@ -67,6 +72,10 @@ async def generate_with_fallback(
                 model=model,
                 error=str(e)[:200],
             )
+            # A 402 from the primary provider is invisible today: the request
+            # still succeeds via the fallback. Recording it here is what makes
+            # the degradation show up in readiness instead of only in logs.
+            record_failure(provider)
 
     logger.error(
         "llm_request_all_providers_failed",
@@ -116,6 +125,10 @@ async def stream_with_fallback(
                 model=model,
                 chunks=collected,
             )
+            # Only a stream that ran to completion proves the provider is
+            # healthy — a stream that dies midway raises and lands in the
+            # except branch below instead.
+            record_success(provider)
             return
         except Exception as e:
             errors.append(f"{provider}: {str(e)[:120]}")
@@ -125,6 +138,9 @@ async def stream_with_fallback(
                 model=model,
                 error=str(e)[:200],
             )
+            # See generate_with_fallback: the fallback may still succeed, which
+            # is exactly the silent degradation this record exposes.
+            record_failure(provider)
 
     logger.error(
         "llm_request_stream_all_providers_failed",

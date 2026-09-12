@@ -26,6 +26,29 @@ Dependencies are therefore split by **blast radius**:
     ``Retriever._hybrid``).
   - ``minio``: object storage for uploads/attachments.
   - ``embedding``: dense vectors + rerank (sparse/FTS retrieval still works).
+  - ``llm``: **observed** provider health, not a probe — see below.
+
+Why ``llm`` is reported but not probed (added 2026-09-12)
+--------------------------------------------------------
+A provider can be failing on every real request while every other check is
+green: a 402 "insufficient balance" from the preferred provider still produces
+answers, because the request-level fallback silently serves them from the next
+provider. Measured on this machine — DeepSeek 402 on every policy-QA request,
+``/api/ready`` reporting ``status: ok`` throughout.
+
+There is no honest cheap probe (a real call costs tokens, and probing a
+different code path than the one serving traffic can be green while real
+requests fail), so ``llm`` reports **what actually happened**: providers whose
+last call raised and which have not succeeded since, within a 5-minute window
+(``app.rag.llm.provider_health``). Consequences:
+
+* a healthy instance that has served no LLM traffic yet reports ``ok`` —
+  we do not invent a failure out of zero observations;
+* a primary-provider failure that is masked by a successful fallback still
+  shows up as ``unavailable`` ⇒ ``degraded``;
+* the failing provider *names* go to structured logs only. The readiness
+  payload is public, and the discipline below (no hosts, no ports, no vendor
+  topology) is unchanged.
 
 Per-check status is intentionally three-valued so a reader never has to
 re-derive severity from the tier:
@@ -56,6 +79,10 @@ CHECK_TIMEOUT_SECONDS = 5.0
 
 CRITICAL = "critical"
 OPTIONAL = "optional"
+
+# Which providers were degraded the last time readiness reported them — used to
+# log transitions only, not every probe tick (see readiness_check).
+_last_degraded_llm: list[str] = []
 
 
 @router.get("/health")
@@ -123,6 +150,9 @@ async def _run_check(name: str, tier: str, probe) -> dict[str, str]:
 
 @router.get("/ready")
 async def readiness_check():
+    global _last_degraded_llm
+
+
     """Readiness probe — can this instance serve traffic?
 
     HTTP status carries the verdict so orchestrators can act on it directly:
@@ -147,6 +177,27 @@ async def readiness_check():
         logger.warning("embedding_unconfigured", detail="missing endpoint or API key")
     checks["embedding"] = {
         "status": "ok" if embedding_configured else "unavailable",
+        "tier": OPTIONAL,
+    }
+
+    # LLM health is OBSERVED, not probed: providers whose last real call raised
+    # and which have not succeeded since. See the module docstring. The payload
+    # carries status + tier only; which providers failed goes to the log.
+    from app.rag.llm.provider_health import degraded_providers
+
+    degraded = degraded_providers()
+    # Readiness is called by probes on a timer (the admin page polls every
+    # 60s, Kubernetes typically every 10s). Logging on every call would bury
+    # the signal in repeats, so log only when the failing set actually
+    # changes — including the transition back to healthy.
+    if degraded != _last_degraded_llm:
+        if degraded:
+            logger.warning("llm_provider_degraded", providers=degraded)
+        else:
+            logger.info("llm_provider_recovered", was=_last_degraded_llm)
+        _last_degraded_llm = degraded
+    checks["llm"] = {
+        "status": "unavailable" if degraded else "ok",
         "tier": OPTIONAL,
     }
 

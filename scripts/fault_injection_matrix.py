@@ -299,7 +299,7 @@ def render_markdown(rows: list[dict], model_probe: dict | None) -> str:
         "| 级别 | 依赖 | 不可用时状态 | 对整体的影响 |",
         "| --- | --- | --- | --- |",
         "| critical | database, redis | `error` | `not_ready` + HTTP 503（应从流量摘除） |",
-        "| optional | milvus, minio, embedding | `unavailable` | `degraded` + HTTP 200（仍可服务） |",
+        "| optional | milvus, minio, embedding, llm | `unavailable` | `degraded` + HTTP 200（仍可服务） |",
         "",
     ]
     deps = sorted({d for r in rows for d in (r["probe"]["readiness"]["checks"] or {})})

@@ -73,6 +73,12 @@ def deps_down(monkeypatch):
     from app.config import settings as settings_module
 
     monkeypatch.setattr(settings_module.settings, "embedding_base_url", "")
+    # LLM health is process-global observed state — every test starts from
+    # zero observations, otherwise a failure recorded by one test leaks into
+    # the next and makes the contract assertions order-dependent.
+    from app.rag.llm import provider_health
+
+    provider_health.reset()
 
 
 def test_health_is_liveness_only():
@@ -100,7 +106,7 @@ def test_ready_reports_dependency_status():
     checks = body["checks"]
     # Present keys are the known dependency set; anything else would leak
     # internal wiring that does not belong in a public readiness payload.
-    allowed = {"database", "redis", "milvus", "minio", "embedding"}
+    allowed = {"database", "redis", "milvus", "minio", "embedding", "llm"}
     assert set(checks).issubset(allowed)
     for _name, state in checks.items():
         # Public payload carries status + tier only — no host, port or
@@ -164,6 +170,108 @@ def test_ready_ok_when_everything_is_reachable(monkeypatch):
     assert body["status"] == "ok"
     assert body["critical_failed"] == []
     assert body["optional_unavailable"] == []
+
+
+# ---------------------------------------------------------------------------
+# LLM health is OBSERVED, not probed (added 2026-09-12).
+#
+# The bug this closes: DeepSeek returned 402 on every policy-QA request while
+# the request-level fallback silently served answers from Gitee, and
+# /api/ready still reported status=ok. These tests lock the new behaviour: a
+# masked provider failure must be visible as a degraded optional dependency.
+# ---------------------------------------------------------------------------
+
+
+def test_ready_llm_ok_when_no_llm_traffic_observed(monkeypatch):
+    """Zero observations ⇒ ok. Absence of evidence is not evidence of failure."""
+    _patch_healthy(monkeypatch)
+    with _client() as client:
+        body = client.get("/api/ready").json()
+    assert body["checks"]["llm"] == {"status": "ok", "tier": "optional"}
+    assert body["status"] == "ok"
+
+
+def test_ready_llm_unavailable_after_a_provider_failed(monkeypatch):
+    """A provider that raised and never recovered ⇒ degraded, not ok."""
+    from app.rag.llm import provider_health
+
+    _patch_healthy(monkeypatch)
+    provider_health.record_failure("deepseek")
+
+    with _client() as client:
+        resp = client.get("/api/ready")
+    assert resp.status_code == 200
+    body = resp.json()
+    # Still serving — this is a capability degradation, not an outage.
+    assert body["status"] == "degraded"
+    assert body["critical_failed"] == []
+    assert body["optional_unavailable"] == ["llm"]
+    assert body["checks"]["llm"] == {"status": "unavailable", "tier": "optional"}
+
+
+def test_ready_llm_recovers_once_the_provider_succeeds(monkeypatch):
+    """A later success clears the degradation — one failure does not pin it."""
+    from app.rag.llm import provider_health
+
+    _patch_healthy(monkeypatch)
+    provider_health.record_failure("deepseek")
+    provider_health.record_success("deepseek")
+
+    with _client() as client:
+        body = client.get("/api/ready").json()
+    assert body["checks"]["llm"]["status"] == "ok"
+    assert body["status"] == "ok"
+
+
+def test_ready_llm_failure_outside_the_window_is_forgotten(monkeypatch):
+    """A transient blip does not mark the instance degraded forever."""
+    import time
+
+    from app.rag.llm import provider_health
+
+    _patch_healthy(monkeypatch)
+    provider_health.record_failure("deepseek")
+
+    # Advance the clock the registry reads — and ONLY that one: replacing the
+    # module-level ``time`` name leaves the real ``time.monotonic`` (and thus
+    # asyncio's clock) untouched. Setting WINDOW_SECONDS to 0 instead would
+    # not work: `time.monotonic()` ticks at ~15ms on Windows, so the elapsed
+    # time within one test is exactly 0.0 and ``0.0 <= 0.0`` stays degraded.
+    class _ClockTenMinutesAhead:
+        @staticmethod
+        def monotonic() -> float:
+            return time.monotonic() + 600.0
+
+    monkeypatch.setattr(provider_health, "time", _ClockTenMinutesAhead)
+
+    with _client() as client:
+        body = client.get("/api/ready").json()
+    assert body["checks"]["llm"]["status"] == "ok"
+    assert body["status"] == "ok"
+
+
+def test_ready_llm_degradation_does_not_name_the_provider(monkeypatch):
+    """The payload is public: which vendor failed goes to logs, not to it."""
+    from app.rag.llm import provider_health
+
+    _patch_healthy(monkeypatch)
+    provider_health.record_failure("deepseek")
+
+    with _client() as client:
+        raw = client.get("/api/ready").text
+    assert '"llm"' in raw
+    assert "deepseek" not in raw
+
+
+def test_llm_health_registry_is_per_provider(monkeypatch):
+    """A healthy provider is not tainted by a different provider's failure."""
+    from app.rag.llm import provider_health
+
+    provider_health.reset()
+    provider_health.record_failure("deepseek")
+    provider_health.record_success("gitee")
+    assert provider_health.degraded_providers() == ["deepseek"]
+    provider_health.reset()
 
 
 def _patch_healthy(monkeypatch):
