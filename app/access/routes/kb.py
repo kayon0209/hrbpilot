@@ -27,7 +27,7 @@ from app.data.models.infra import AsyncTask
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.rag.ingestion.pipeline import sha256_hex
 from app.rag.ingestion.tasks import dispatch_ingestion_task
-from app.rag.security.file_upload import validate_upload
+from app.rag.security.file_upload import validate_upload, build_object_key
 from app.rag.storage.milvus import MilvusStore
 from app.rag.storage.object_store import ObjectStore
 from app.shared.errors import ConflictError, NotFoundError
@@ -265,7 +265,10 @@ async def upload_document(
         )
 
     doc_id = str(uuid.uuid4())
-    s3_key = f"{kb_id}/{doc_id}/{filename or 'document'}"
+    # Defense-in-depth: re-assert no path component can shape the storage key
+    # (the filename is already sanitized by the upload gate, but build_object_key
+    # re-validates kb/doc ids and the sanitized name before joining).
+    s3_key = build_object_key(kb_id, doc_id, filename)
 
     store = ObjectStore()
     await store.ensure_bucket_async()
