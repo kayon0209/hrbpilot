@@ -116,9 +116,9 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
     retried = 0
     # Backpressure gate BEFORE the loop: retrying hundreds of failed items
     # into an already-saturated scenario queue just recreates the pileup.
-    from app.shared.celery_app import check_backpressure
+    from app.shared.celery_app import QUEUE_SCENARIO, check_backpressure, dispatch_task
 
-    check_backpressure("scenario")
+    check_backpressure(QUEUE_SCENARIO)
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         if batch.type == "interview":
@@ -128,9 +128,11 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
                 if task is not None and task.status == "failed":
                     task.status = "pending"
                     task.error_message = None
-                    from app.shared.celery_app import celery_app
-
-                    celery_app.send_task("scenario.interview_digest_batch", args=[task.id, rec.raw_text or "", tenant_id, user_id, batch_id])
+                    dispatch_task(
+                        "scenario.interview_digest_batch",
+                        [task.id, rec.raw_text or "", tenant_id, user_id, batch_id],
+                        QUEUE_SCENARIO,
+                    )
                     retried += 1
         else:
             rows = (await db.execute(select(VoiceEntry).where(VoiceEntry.tenant_id == tenant_id, VoiceEntry.batch_id == batch_id))).scalars().all()
@@ -141,10 +143,12 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
 
                     task.status = "pending"
                     task.error_message = None
-                    from app.shared.celery_app import celery_app
-
                     docs_json = _json.dumps([{"id": "inline-001", "content": ent.raw_text or ""}], ensure_ascii=False)
-                    celery_app.send_task("scenario.voice_insight_batch", args=[task.id, docs_json, tenant_id, user_id, batch_id])
+                    dispatch_task(
+                        "scenario.voice_insight_batch",
+                        [task.id, docs_json, tenant_id, user_id, batch_id],
+                        QUEUE_SCENARIO,
+                    )
                     retried += 1
         await db.commit()
     return {"batch_id": batch_id, "retried": retried}

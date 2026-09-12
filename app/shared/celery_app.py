@@ -6,6 +6,8 @@ rebuild can never starve interactive scenario tasks, and each queue can
 be scaled independently (--concurrency per -Q worker).
 """
 
+from typing import Any
+
 from celery import Celery  # type: ignore[import-untyped]
 
 from app.config.settings import settings
@@ -69,3 +71,45 @@ def check_backpressure(queue: str) -> None:
         raise ValidationError(
             f"后台队列 {queue} 已积压 {depth} 个任务（上限 {QUEUE_DEPTH_LIMIT}），请稍后重试或增加 worker"
         )
+
+
+def remaining_capacity(queue: str) -> int | None:
+    """Free slots before ``queue`` reaches its ceiling (None when unknown).
+
+    Lets a batch caller reject the whole batch UP FRONT instead of dispatching
+    half of it and then failing — a partial dispatch leaves rows marked
+    "pending" that no worker will ever pick up, which is a silently broken
+    batch rather than a loud rejection.
+    """
+    depth = queue_depth(queue)
+    if depth is None:
+        return None
+    return max(0, QUEUE_DEPTH_LIMIT - depth)
+
+
+def ensure_capacity(queue: str, count: int) -> None:
+    """Reject a batch UP FRONT when ``count`` items would not fit.
+
+    Batch dispatch checks this once, before enqueueing anything: dispatching
+    half a batch and then failing leaves rows marked "pending" that no worker
+    will ever pick up, which is a silently broken batch rather than a loud
+    rejection.
+    """
+    from app.shared.errors import ValidationError
+
+    capacity = remaining_capacity(queue)
+    if capacity is not None and count > capacity:
+        raise ValidationError(
+            f"批量 {count} 条超过队列 {queue} 的剩余容量 {capacity}，请分批处理或增加 worker"
+        )
+
+
+def dispatch_task(name: str, args: list[Any], queue: str) -> None:
+    """The single dispatch entry point: backpressure first, then send.
+
+    Every dispatch must go through here. Calling ``celery_app.send_task``
+    directly silently bypasses the depth ceiling — that is exactly how a
+    500-record batch floods the queue the backpressure exists to protect.
+    """
+    check_backpressure(queue)
+    celery_app.send_task(name, args=args, queue=queue)

@@ -30,7 +30,7 @@ async def create_batch(
     tenant_id: str, user_id: str, batch_type: str, items: list[dict]
 ) -> MaterialBatch:
     """Create a batch and enqueue per-item Celery tasks."""
-    from app.shared.celery_app import celery_app
+    from app.shared.celery_app import QUEUE_SCENARIO, dispatch_task, ensure_capacity
 
     total = len(items)
     batch_id = str(uuid.uuid4())
@@ -41,6 +41,10 @@ async def create_batch(
         db.add(batch)
         await db.commit()
         await db.refresh(batch)
+
+    # Reject an oversized batch BEFORE dispatching any of it — a partial
+    # dispatch would leave rows marked "pending" that no worker will pick up.
+    ensure_capacity(QUEUE_SCENARIO, total)
 
     for item in items:
         task_id = str(uuid.uuid4())
@@ -136,17 +140,19 @@ async def create_batch(
             )
 
         if batch_type == "interview":
-            celery_app.send_task(
+            dispatch_task(
                 "scenario.interview_digest_batch",
-                args=[task_id, raw, tenant_id, user_id, batch_id],
+                [task_id, raw, tenant_id, user_id, batch_id],
+                QUEUE_SCENARIO,
             )
         else:
             import json as _json
 
             docs_json = _json.dumps([{"id": "inline-001", "content": raw}], ensure_ascii=False)
-            celery_app.send_task(
+            dispatch_task(
                 "scenario.voice_insight_batch",
-                args=[task_id, docs_json, tenant_id, user_id, batch_id],
+                [task_id, docs_json, tenant_id, user_id, batch_id],
+                QUEUE_SCENARIO,
             )
     return batch
 
