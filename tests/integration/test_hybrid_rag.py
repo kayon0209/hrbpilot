@@ -99,15 +99,18 @@ async def test_hybrid_rag_end_to_end():
 
     embedder = _build_embedder()
     milvus = MilvusStore(collection_name=collection, dim=settings.embedding_dimension)
-    await milvus.ensure_collection_async()
 
     store = _FakeStore(POLICY_TEXT.encode("utf-8"))
     service = IngestionService(embedder=embedder, milvus=milvus, object_store=store)
     retriever = Retriever(embedder=embedder, milvus=milvus)
 
-    # Set up PG: KB + Document
+    # The session is created before the collection exists: a database that is
+    # unreachable here cannot strand a Milvus collection behind it.
     session = await make_tenant_session(tenant_id)
     try:
+        await milvus.ensure_collection_async()
+
+        # Set up PG: KB + Document
         session.add(
             KnowledgeBase(
                 id=kb_id,
@@ -171,8 +174,16 @@ async def test_hybrid_rag_end_to_end():
             exact = await retriever._sparse("年假标准 入职满1年", kb_id, tenant_id, 5)
             assert any("年假" in c.content for c in exact)
         finally:
+            # Deleting rows is not enough to retire the throwaway collection:
+            # an empty shell stays in Milvus forever (111 had piled up before
+            # MilvusStore learned to drop). Keep delete-by-kb first — it is the
+            # production path, and this is its only real-Milvus coverage.
             await milvus.delete_by_kb_async(kb_id)
+            await milvus.drop_collection_async()
     finally:
+        # Idempotent safety net for failures before the inner finally (e.g.
+        # ingestion raising), so no run may leave a collection behind.
+        await milvus.drop_collection_async()
         await session.close()
 
     # This test runs on a pytest-asyncio event loop that closes when the test

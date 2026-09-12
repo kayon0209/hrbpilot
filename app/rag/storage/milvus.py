@@ -101,6 +101,24 @@ class MilvusStore:
     async def check_connection_async(self) -> None:
         await asyncio.to_thread(self.check_connection)
 
+    def drop_collection(self) -> bool:
+        """Drop the collection and everything in it (idempotent).
+
+        Deleting rows does not retire a throwaway collection: an empty shell
+        stays in ``list_collections`` forever, so every integration run leaked
+        one. Dropping is the only operation that reclaims it. Returns True when
+        a collection was actually dropped.
+        """
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return False
+        client.drop_collection(collection_name=self.collection_name)
+        logger.warning("milvus_collection_dropped", collection=self.collection_name)
+        return True
+
+    async def drop_collection_async(self) -> bool:
+        return await asyncio.to_thread(self.drop_collection)
+
     # --- writes ---
 
     def upsert(self, rows: list[dict[str, Any]]) -> None:
