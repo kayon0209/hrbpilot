@@ -128,6 +128,25 @@ async def test_full_lifecycle_through_service(session_factory):
         assert [e.seq for e in events] == sorted(e.seq for e in events)
 
 
+async def test_platform_admin_cannot_decide_approvals(session_factory):
+    """P0-05: admin holds no HR business capability, so it must be rejected
+    as an approver — the service no longer treats it as a decider role."""
+    case_id = await make_case(session_factory)
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        approval = await service.request_approval(
+            case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
+        )
+        with pytest.raises(CasePermissionDeniedError):
+            await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
+        # The approval is untouched — still PENDING.
+        await session.refresh(approval)
+        assert approval.status == "PENDING"
+
+
 async def test_cross_tenant_access_is_not_found(session_factory):
     case_id = await make_case(session_factory, tenant="tenant-a")
     async with session_factory() as session:
@@ -199,7 +218,7 @@ async def test_duplicate_request_id_is_idempotent(session_factory):
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )
-        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="hr_manager")
 
         first = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-dup", approval_id=approval.id
@@ -259,7 +278,7 @@ async def test_expired_approval_rejected(session_factory):
             ttl_seconds=-1,
         )
         with pytest.raises(ApprovalError):
-            await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
+            await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="hr_manager")
 
 
 async def test_employee_cannot_decide_approvals(session_factory):
@@ -338,7 +357,7 @@ async def test_failed_execution_cannot_rerun_under_consumed_approval(session_fac
         approval = await service.request_approval(
             case_id, tool_name="update_case_status", params={"status": "RESOLVED"}, plan_id=plan.id
         )
-        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="admin")
+        await service.decide_approval(case_id, approval.id, "u9", "approve", None, role="hr_manager")
 
         first = await service.begin_tool_execution(
             case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-f", approval_id=approval.id

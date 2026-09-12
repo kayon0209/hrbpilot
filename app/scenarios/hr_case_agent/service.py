@@ -60,7 +60,11 @@ class HighRiskWriteBlockedError(AppError):
 
 # Roles allowed to decide approvals and execute write tools. The HR Case
 # Agent itself never holds these roles — it only proposes.
-DECIDER_ROLES = frozenset({"hr_manager", "admin"})
+# Approvals are decided by the HR business role only. The platform admin
+# deliberately holds no HR business capability (spec §3.2), so it must not
+# decide HR case approvals either (P0-05: single source of truth = the RBAC
+# capability matrix).
+DECIDER_ROLES = frozenset({"hr_manager"})
 
 # Phase 5 tool whitelist: write tools ALWAYS require an approval request;
 # read tools do not. begin_tool_execution enforces this split.
