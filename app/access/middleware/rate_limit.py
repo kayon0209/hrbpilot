@@ -4,6 +4,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.access.protocol_paths import WELL_KNOWN_PREFIX
 from app.guardrails.rate_limiter import RateLimiter
 from app.shared.errors import RateLimitError
 from app.shared.logger import get_logger
@@ -36,6 +37,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if (
             path == "/mcp"
             or path.startswith("/mcp/")
+            # 协议发现端点必须匿名（RFC 9728/8414）：它是最先被请求的东西之一，
+            # 早于任何身份存在，因此不参与配额判定。
+            or path.startswith(WELL_KNOWN_PREFIX)
             or any(path == p or path.startswith(p + "/") for p in PUBLIC_PATH_PREFIXES)
         ):
             return await call_next(request)

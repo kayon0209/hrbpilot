@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.access.protocol_paths import WELL_KNOWN_PREFIX
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -172,6 +173,9 @@ class RBACMiddleware(BaseHTTPMiddleware):
             or path.startswith("/docs")
             or path.startswith("/api/connector-webhooks")
             or path.startswith("/mcp")
+            # 协议发现端点（RFC 9728/8414）必须匿名。用共享常量而不是就地硬编码：
+            # 本轮曾只改了认证层，请求被限流层拦下，症状指向错误的那一层。
+            or path.startswith(WELL_KNOWN_PREFIX)
         ):
             return await call_next(request)
 

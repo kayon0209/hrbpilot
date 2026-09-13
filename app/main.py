@@ -138,6 +138,10 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     app.include_router(health_router, prefix="/api")
+    from app.access.routes.well_known import router as well_known_router
+
+    # RFC 9728 发现面：挂在根路径（不是 /api），且必须匿名可读。
+    app.include_router(well_known_router)
     from app.access.routes.mcp import router as mcp_router
 
     app.include_router(mcp_router)
