@@ -8,11 +8,17 @@ from app.access.middleware.tenant import require_tenant_id
 from app.access.routes import auth
 from app.config.settings import Settings
 from app.guardrails.output_guard import OutputGuardrail
+from app.oauth.keys import generate_signing_key
 from app.shared.errors import AuthError
 
 # A real 32-byte master key for hermetic production Settings construction
 # (enforced since the connector backbone added credential encryption).
 REAL_MASTER_KEY = __import__("base64").urlsafe_b64encode(b"hermetic-master-key-32-bytes-ok!"[:32])
+
+#: 生产必须配置 AS 的签名密钥。这里**现场生成**一把 P-256 私钥，而不是写一个固定值 ——
+#: 把一把私钥（哪怕只是测试用的）提交进仓库是这一轮最不该发生的事：它会被扫描器
+#: 命中、被后来的人复制到真实环境，而删除它还要改写历史。
+OAUTH_SIGNING_PEM = generate_signing_key().private_pem.decode()
 
 
 def _production_settings(**overrides: object) -> Settings:
@@ -27,6 +33,10 @@ def _production_settings(**overrides: object) -> Settings:
     它会出现在 OAuth 元数据与令牌 audience 里，是**对外身份**；而 ``vector_db_host``
     一类是**内部连接地址**，localhost 在生产是正常的。两者性质不同，所以后者不受
     这条约束，前者受。
+
+    ``oauth_issuer`` 与 ``mcp_authorization_servers`` 同理受这条约束：前者是授权服务器
+    的对外身份（写进 RFC 8414 元数据），后者是 Resource Server 的**信任列表** ——
+    里面出现一个明文地址，等于允许任何能在链路上改写响应的人伪造一个受信任的 issuer。
     """
     base: dict[str, object] = {
         "_env_file": None,  # hermetic: 不继承本机 .env（例如 VECTOR_DB_PORT）
@@ -39,6 +49,9 @@ def _production_settings(**overrides: object) -> Settings:
         "minio_access_key": "configured-minio-key",
         "minio_secret_key": "configured-minio-secret",
         "public_base_url": "https://hrbp.example.com",
+        "oauth_issuer": "https://as.hrbp.example.com",
+        "mcp_authorization_servers": "https://as.hrbp.example.com",
+        "oauth_signing_key_pem": OAUTH_SIGNING_PEM,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
@@ -113,6 +126,52 @@ def test_production_rejects_plain_http_public_base_url() -> None:
     """公网 origin 必须 https —— 明文基址会让 issuer 与令牌 audience 可被中间人改写。"""
     with pytest.raises(PydanticValidationError, match="PUBLIC_BASE_URL"):
         _production_settings(public_base_url="http://hrbp.example.com")
+
+
+def test_production_rejects_loopback_or_plain_http_oauth_issuer() -> None:
+    """AS 的 issuer 是它对外的身份，与 ``PUBLIC_BASE_URL`` 同类。
+
+    生产留 localhost 会让 RFC 8414 元数据声明一个外部客户端永远够不着的 issuer，
+    而且服务照常启动、照常返回 200 —— 失败只发生在客户端。
+    """
+    with pytest.raises(PydanticValidationError, match="OAUTH_ISSUER"):
+        _production_settings(oauth_issuer="http://localhost:8001")
+    with pytest.raises(PydanticValidationError, match="OAUTH_ISSUER"):
+        _production_settings(oauth_issuer="http://as.hrbp.example.com")
+
+
+def test_production_rejects_an_unsafe_authorization_server() -> None:
+    """信任列表里出现明文地址 = 允许任何能在链路上改写响应的人伪造一个受信任的 issuer。"""
+    with pytest.raises(PydanticValidationError, match="MCP_AUTHORIZATION_SERVERS"):
+        _production_settings(mcp_authorization_servers="http://as.hrbp.example.com")
+
+    with pytest.raises(PydanticValidationError, match="MCP_AUTHORIZATION_SERVERS"):
+        _production_settings(mcp_authorization_servers="https://as.hrbp.example.com,http://localhost:8001")
+
+
+def test_development_trusts_a_loopback_authorization_server() -> None:
+    """本机联调：AS 跑在 ``http://localhost:8001``，RS 必须能把它写进信任列表。
+
+    没有这条豁免，e2e 只能靠改生产约束才能跑起来 —— 那会让"生产与开发配置不同"
+    这件事从一处显式例外变成一条隐形的分支。
+    """
+    configured = Settings(
+        _env_file=None, oauth_issuer="http://localhost:8001", mcp_authorization_servers="http://localhost:8001"
+    )  # type: ignore[arg-type]
+
+    assert configured.authorization_servers == ("http://localhost:8001",)
+
+
+def test_authorization_server_issuer_may_carry_a_path() -> None:
+    """issuer 带路径是合法的（RFC 8414 §3.1 规定了此时 well-known 的位置）。
+
+    把带路径的 issuer 拒掉，会让"AS 挂在 /auth 子路径下"这一常见部署无法配置 ——
+    而那正是 ``_parse_authorization_servers`` 与 ``_normalize_public_base_url``
+    刻意不同的地方。
+    """
+    configured = Settings(_env_file=None, mcp_authorization_servers="https://id.example.com/auth")  # type: ignore[arg-type]
+
+    assert configured.authorization_servers == ("https://id.example.com/auth",)
 
 
 def test_production_rejects_missing_llm_or_embedding_configuration() -> None:

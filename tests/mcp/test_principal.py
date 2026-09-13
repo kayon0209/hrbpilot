@@ -126,9 +126,9 @@ def test_principal_is_frozen() -> None:
 # --- 4. 身份只来自已验证凭据 -----------------------------------------------
 
 
-def test_tenant_header_cannot_override_the_verified_tenant() -> None:
+async def test_tenant_header_cannot_override_the_verified_tenant() -> None:
     """``X-Tenant-ID`` 不能改变主体的租户 —— 租户只来自令牌。"""
-    principal = principal_from_headers(
+    principal = await principal_from_headers(
         {
             "Authorization": f"Bearer {_token(tenant_id='tenant-a')}",
             "X-Tenant-ID": "tenant-b",
@@ -138,32 +138,32 @@ def test_tenant_header_cannot_override_the_verified_tenant() -> None:
     assert principal.tenant_id == "tenant-a"
 
 
-def test_header_name_is_matched_case_insensitively() -> None:
+async def test_header_name_is_matched_case_insensitively() -> None:
     """不同客户端的大小写拼法都要认，否则会出现"换了个客户端就登不上"。"""
     for header_name in ("Authorization", "authorization", "AUTHORIZATION"):
-        principal = principal_from_headers({header_name: f"Bearer {_token()}"})
+        principal = await principal_from_headers({header_name: f"Bearer {_token()}"})
         assert principal is not None, header_name
         assert principal.user_id == "u-1"
 
 
-def test_absent_or_malformed_credentials_are_anonymous_not_errors() -> None:
-    assert principal_from_headers(None) is None
-    assert principal_from_headers({}) is None
+async def test_absent_or_malformed_credentials_are_anonymous_not_errors() -> None:
+    assert await principal_from_headers(None) is None
+    assert await principal_from_headers({}) is None
     # 不是 Bearer 形态
-    assert principal_from_headers({"Authorization": _token()}) is None
+    assert await principal_from_headers({"Authorization": _token()}) is None
     # 空令牌
-    assert principal_from_headers({"Authorization": "Bearer   "}) is None
+    assert await principal_from_headers({"Authorization": "Bearer   "}) is None
     # 签名不通过的令牌
-    assert principal_from_headers({"Authorization": "Bearer not-a-jwt"}) is None
+    assert await principal_from_headers({"Authorization": "Bearer not-a-jwt"}) is None
 
 
-def test_refresh_token_is_not_accepted_as_an_access_credential() -> None:
+async def test_refresh_token_is_not_accepted_as_an_access_credential() -> None:
     """refresh token 不能当作访问凭据 —— 类型判定只有一处，这里守住它。"""
     from app.access.routes.auth import _create_refresh_token
 
     refresh = _create_refresh_token("u-1", "tenant-a")
     assert read_access_claims(refresh) is TokenRejection.WRONG_TYPE
-    assert principal_from_headers({"Authorization": f"Bearer {refresh}"}) is None
+    assert await principal_from_headers({"Authorization": f"Bearer {refresh}"}) is None
 
 
 # --- 5. 角色 → scope 投影 --------------------------------------------------

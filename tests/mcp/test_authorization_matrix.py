@@ -66,6 +66,20 @@ def _oauth(
     )
 
 
+def _stub_protocol_principal(monkeypatch: Any, principal: McpPrincipal | None) -> None:
+    """把协议出口的身份解析换成固定值。
+
+    ``_principal_from_ctx`` 是 ``async`` 的（AS 签发的令牌要取一次 JWKS 并查一次撤销表），
+    所以桩也必须是协程：用同步 lambda 替换会让调用点变成 ``await None``，而这个错误
+    只在工具真的被调用时才出现 —— 一条只断言授权判定的测试看不见它。
+    """
+
+    async def _resolve(_ctx: object) -> McpPrincipal | None:
+        return principal
+
+    monkeypatch.setattr(protocol, "_principal_from_ctx", _resolve)
+
+
 def _fake_request(principal: McpPrincipal) -> Any:
     """够用的假 Request：``require_auth`` 只认 isinstance(Request)，会自行跳过。"""
     return SimpleNamespace(
@@ -101,7 +115,7 @@ async def test_platform_admin_is_denied_on_both_surfaces(monkeypatch) -> None:
     改造前 REST 桥拒、协议出口放行并返回真实制度正文。
     """
     admin = _internal("admin")
-    monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx: admin)
+    _stub_protocol_principal(monkeypatch, admin)
 
     from_protocol = await _call_protocol(admin, "search_policy")
     from_rest = await rest_bridge.call_tool("search_policy", rest_bridge.ToolCallBody(), _fake_request(admin))
@@ -119,7 +133,7 @@ async def test_every_denied_role_tool_pair_matches_across_surfaces(monkeypatch) 
 
     for role in ROLES:
         principal = _internal(role)
-        monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx, _p=principal: _p)
+        _stub_protocol_principal(monkeypatch, principal)
         for tool in TOOL_CATALOG.tools:
             if authorize_tool_call(principal, tool.name, catalog=TOOL_CATALOG).allowed:
                 continue
@@ -146,7 +160,7 @@ async def test_authorized_read_reaches_the_same_dispatch_from_both_surfaces(monk
     monkeypatch.setattr(protocol, "run_read_tool", _record)
     monkeypatch.setattr(rest_bridge, "run_read_tool", _record)
     principal = _internal("hrbp")
-    monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx: principal)
+    _stub_protocol_principal(monkeypatch, principal)
 
     await protocol._run_read("search_policy", {"query": "加班费"}, None)
     await rest_bridge.call_tool(
@@ -232,7 +246,7 @@ async def test_denied_write_never_opens_a_tenant_session(monkeypatch) -> None:
         raise AssertionError("被拒的写工具不应该开启租户会话")
 
     monkeypatch.setattr("app.data.database.tenant_session", _boom)
-    monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx: _internal("employee"))
+    _stub_protocol_principal(monkeypatch, _internal("employee"))
 
     result = await protocol._create_approval_via_mcp("create_hr_case", {"title": "工单"}, "case-1", None)
 
@@ -266,7 +280,7 @@ async def test_allowed_write_only_creates_an_approval_request(monkeypatch) -> No
 
     monkeypatch.setattr("app.data.database.tenant_session", _session_factory)
     monkeypatch.setattr("app.scenarios.hr_case_agent.service.HRCaseService", _FakeService)
-    monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx: _internal("hrbp"))
+    _stub_protocol_principal(monkeypatch, _internal("hrbp"))
 
     result = await protocol._create_approval_via_mcp(
         "create_hr_case",
@@ -366,7 +380,7 @@ def test_rest_bridge_refuses_credentials_it_cannot_represent_fully() -> None:
 
 
 async def test_anonymous_read_returns_no_business_data(monkeypatch) -> None:
-    monkeypatch.setattr(protocol, "_principal_from_ctx", lambda _ctx: None)
+    _stub_protocol_principal(monkeypatch, None)
     result = await protocol._run_read("search_policy", {"query": "加班费", "top_k": 3}, None)
 
     assert result["outcome"] == ToolOutcome.AUTH_REQUIRED.value
