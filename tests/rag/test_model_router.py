@@ -303,9 +303,22 @@ def test_resolve_model_for_prefers_registry_over_porting_primary_name(monkeypatc
 async def test_policy_qa_threads_model_request_into_generation(monkeypatch):
     """P1-05 wiring: the policy QA main path must hand a frozen ModelRequest
     to the LLM layer — not the global active-provider path."""
+    from app.rag.llm import orchestrator as orch
     from app.rag.llm.model_router import ModelRequest as _ModelRequestType
     from app.scenarios.policy_qa import orchestrator as policy_qa_module
     from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
+
+    # 无 key 环境（CI）里注册表是空的 → provider='' 直接击穿本断言。
+    # 注入受控注册表，让测试只验证 wiring，不依赖部署环境（同文件既有惯例）。
+    monkeypatch.setattr(orch, "_ACTIVE_PROVIDER", "deepseek")
+    monkeypatch.setattr(
+        orch,
+        "_PROVIDER_REGISTRY",
+        {
+            "deepseek": {"api_key": "k", "model": "deepseek-chat", "base_url": "https://x"},
+            "zhipu": {"api_key": "k", "model": "glm-4", "base_url": "https://x"},
+        },
+    )
 
     seen_requests: list[object] = []
 
