@@ -187,10 +187,7 @@ def _rls_relaxed(tables: Iterable[str]) -> Iterator[None]:
     try:
         for table in sorted(set(tables)):
             forced = bind.execute(
-                sa.text(
-                    "SELECT relforcerowsecurity FROM pg_class "
-                    "WHERE relname = :table AND relkind = 'r'"
-                ),
+                sa.text("SELECT relforcerowsecurity FROM pg_class WHERE relname = :table AND relkind = 'r'"),
                 {"table": table},
             ).scalar()
             if forced:

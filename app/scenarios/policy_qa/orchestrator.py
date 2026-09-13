@@ -432,11 +432,11 @@ class PolicyQAOrchestrator:
         message_id = f"msg_{user_id}_{int(start_time * 1000)}"
 
         if self.config.eval_metrics:
-                evaluator = AutoEvaluator()
-                _schedule_background_task(
-                    evaluator.evaluate(
-                        output=final_output,
-                        query=guarded_input,
+            evaluator = AutoEvaluator()
+            _schedule_background_task(
+                evaluator.evaluate(
+                    output=final_output,
+                    query=guarded_input,
                     sources=context_chunks,
                     metrics=self.config.eval_metrics,
                     tenant_id=tenant_id,

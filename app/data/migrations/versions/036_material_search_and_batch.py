@@ -78,16 +78,13 @@ def upgrade() -> None:
     op.add_column("voice_entries", sa.Column("batch_id", sa.String(length=36), nullable=True))
     op.create_index("ix_voice_entries_batch_id", "voice_entries", ["batch_id"])
 
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_employees_name_trgm ON employees USING gin (name gin_trgm_ops)"
-    )
+    op.execute("CREATE INDEX IF NOT EXISTS ix_employees_name_trgm ON employees USING gin (name gin_trgm_ops)")
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_interview_records_employee_name_trgm "
         "ON interview_records USING gin (employee_name gin_trgm_ops)"
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_interview_records_title_trgm "
-        "ON interview_records USING gin (title gin_trgm_ops)"
+        "CREATE INDEX IF NOT EXISTS ix_interview_records_title_trgm ON interview_records USING gin (title gin_trgm_ops)"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_voice_entries_employee_name_trgm "

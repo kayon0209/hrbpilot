@@ -93,7 +93,16 @@ async def test_dense_returns_hydrated_chunks(monkeypatch):
 
 
 async def test_sparse_returns_ranked_chunks(monkeypatch):
-    row = _Row(id="c2", document_id="d2", kb_id="k2", content="条款", section="第三章", filename="手册.pdf", rank=7.5, page_number=7)
+    row = _Row(
+        id="c2",
+        document_id="d2",
+        kb_id="k2",
+        content="条款",
+        section="第三章",
+        filename="手册.pdf",
+        rank=7.5,
+        page_number=7,
+    )
     fs = _FakeSession(rows=[row])
 
     async def fake_make(tenant_id):

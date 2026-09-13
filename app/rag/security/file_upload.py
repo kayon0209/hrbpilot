@@ -54,9 +54,9 @@ ZIP_MAGIC = b"PK\x03\x04"
 # A legitimate policy PDF at 20 MB has at most tens of thousands of objects and
 # a few hundred object streams. These caps reject pathological inputs before
 # any parse runs.
-MAX_PDF_OBJECTS = 200_000          # hard cap on /Size (cross-reference count)
-MAX_PDF_OBJSTM = 5_000             # nested/compressed object streams
-MAX_PDF_FLATE = 20_000             # FlateDecode stream objects
+MAX_PDF_OBJECTS = 200_000  # hard cap on /Size (cross-reference count)
+MAX_PDF_OBJSTM = 5_000  # nested/compressed object streams
+MAX_PDF_FLATE = 20_000  # FlateDecode stream objects
 # Compression-ratio guard: if the declared object count would average fewer
 # than this many bytes per object, the file is lying about its size (classic
 # bomb). A small real policy PDF has far more than this.
@@ -70,8 +70,8 @@ _FORBIDDEN_FILENAME = re.compile(r"[\x00-\x1f<>:\"|?*\\]")
 _CONTENT_SIGNATURES: list[tuple[bytes, str]] = [
     (b"%PDF-", "application/pdf"),
     (b"PK\x03\x04", "application/zip"),
-    (b"PK\x05\x06", "application/zip"),   # empty archive
-    (b"PK\x07\x08", "application/zip"),   # spanned archive
+    (b"PK\x05\x06", "application/zip"),  # empty archive
+    (b"PK\x07\x08", "application/zip"),  # spanned archive
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
     (b"GIF87a", "image/gif"),
@@ -110,9 +110,7 @@ def validate_extension(filename: str) -> str:
     """Return the lowercased extension if it is in the whitelist."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_TYPES:
-        raise ValidationError(
-            f"不支持的文件类型 .{ext or '(无扩展名)'}；仅支持 {', '.join(sorted(ALLOWED_TYPES))}"
-        )
+        raise ValidationError(f"不支持的文件类型 .{ext or '(无扩展名)'}；仅支持 {', '.join(sorted(ALLOWED_TYPES))}")
     return ext
 
 
@@ -176,9 +174,7 @@ def validate_content_type(ext: str, detected_mime: str) -> None:
     """
     allowed = _ALLOWED_DETECTED.get(ext, set())
     if detected_mime and detected_mime not in allowed:
-        raise ValidationError(
-            f"文件内容被识别为 {detected_mime}，与扩展名 .{ext} 不符，已拒绝入库"
-        )
+        raise ValidationError(f"文件内容被识别为 {detected_mime}，与扩展名 .{ext} 不符，已拒绝入库")
 
 
 def validate_magic(ext: str, content: bytes) -> None:

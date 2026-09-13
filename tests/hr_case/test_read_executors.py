@@ -9,6 +9,7 @@ search_policy）。本文件锁定修复后的四个行为：
 3. 有租户 + 零命中 → 明确回报"未命中"，**不编造**制度依据；
 4. 基础设施不可用 → RETRIEVAL_UNAVAILABLE（由 loop 重试一次后交人工）。
 """
+
 from __future__ import annotations
 
 import pytest

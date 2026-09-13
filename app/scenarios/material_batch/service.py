@@ -14,7 +14,7 @@ require concurrency to function correctly on the default solo worker.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -26,9 +26,7 @@ from app.shared.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def create_batch(
-    tenant_id: str, user_id: str, batch_type: str, items: list[dict]
-) -> MaterialBatch:
+async def create_batch(tenant_id: str, user_id: str, batch_type: str, items: list[dict]) -> MaterialBatch:
     """Create a batch and enqueue per-item Celery tasks."""
     from app.shared.celery_app import QUEUE_SCENARIO, dispatch_task, ensure_capacity
 
@@ -79,9 +77,7 @@ async def create_batch(
                 if employee_name:
                     row = (
                         await db.execute(
-                            select(Employee).where(
-                                Employee.tenant_id == tenant_id, Employee.name == employee_name
-                            )
+                            select(Employee).where(Employee.tenant_id == tenant_id, Employee.name == employee_name)
                         )
                     ).scalar_one_or_none()
                     if row is None and employee_name:
@@ -129,7 +125,7 @@ async def create_batch(
                         )
                     )
                 await db.commit()
-        except Exception as exc:  # noqa: BLE001 — 记录关联失败必须可见（见下）
+        except Exception as exc:
             # 这里失败会让 InterviewRecord/VoiceEntry 与 batch_id 脱钩：批次详情页
             # 看不到已入队的子项，「已完成/总数」分母也会失真。原先静默 pass。
             logger.error(

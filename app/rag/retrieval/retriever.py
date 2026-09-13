@@ -35,12 +35,12 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     """Cosine similarity that degrades to 0.0 for empty/zero vectors."""
     if not left or not right or len(left) != len(right):
         return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = sum(a * a for a in left) ** 0.5
     right_norm = sum(b * b for b in right) ** 0.5
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
-    return dot / (left_norm * right_norm)
+    return float(dot / (left_norm * right_norm))
 
 
 class Retriever:
@@ -249,7 +249,7 @@ class Retriever:
 
         query_vector = vectors[0]
         scored: list[tuple[float, RetrievedChunk]] = []
-        for chunk, vector in zip(chunks, vectors[1:]):
+        for chunk, vector in zip(chunks, vectors[1:], strict=True):
             similarity = _cosine_similarity(query_vector, vector)
             chunk.rerank_score = similarity
             scored.append((similarity, chunk))

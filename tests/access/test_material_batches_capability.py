@@ -12,6 +12,7 @@
 另外 `/api/material-batches` 并不在 RBACMiddleware 的 `ROUTE_CAPABILITY_MAP` 里，
 所以 handler 内的这道检查是唯一的一道门。本文件把「拒绝」和「放行」两侧都钉住。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace

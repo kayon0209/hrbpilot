@@ -224,7 +224,11 @@ def interview_digest_batch_task(
         result = run_async_in_worker(InterviewDigestOrchestrator().digest(document_content, tenant_id, user_id))
         run_async_in_worker(
             _update_task(
-                task_id, tenant_id, status="completed", result_json=result.model_dump_json(), completed_at=datetime.now(UTC)
+                task_id,
+                tenant_id,
+                status="completed",
+                result_json=result.model_dump_json(),
+                completed_at=datetime.now(UTC),
             )
         )
         run_async_in_worker(_persist_interview_digest(tenant_id, result))
@@ -291,7 +295,11 @@ def voice_insight_batch_task(
         result = run_async_in_worker(VoiceInsightOrchestrator().analyze(documents, tenant_id, user_id))
         run_async_in_worker(
             _update_task(
-                task_id, tenant_id, status="completed", result_json=result.model_dump_json(), completed_at=datetime.now(UTC)
+                task_id,
+                tenant_id,
+                status="completed",
+                result_json=result.model_dump_json(),
+                completed_at=datetime.now(UTC),
             )
         )
         run_async_in_worker(_persist_voice_insight(tenant_id, task_id, result))

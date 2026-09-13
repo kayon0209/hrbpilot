@@ -133,14 +133,14 @@ async def _run_check(name: str, tier: str, probe) -> dict[str, str]:
     try:
         await asyncio.wait_for(probe(), timeout=CHECK_TIMEOUT_SECONDS)
         return {"status": "ok", "tier": tier}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "readiness_check_timeout",
             dependency=name,
             tier=tier,
             timeout_seconds=CHECK_TIMEOUT_SECONDS,
         )
-    except Exception as e:  # noqa: BLE001 - a probe must never raise
+    except Exception as e:
         # Critical failures are operationally actionable; optional ones are
         # capacity/capability signals. Log severity follows the tier.
         log = logger.error if tier == CRITICAL else logger.warning
@@ -151,7 +151,6 @@ async def _run_check(name: str, tier: str, probe) -> dict[str, str]:
 @router.get("/ready")
 async def readiness_check():
     global _last_degraded_llm
-
 
     """Readiness probe — can this instance serve traffic?
 

@@ -9,7 +9,7 @@ All three tables follow the house rules: TenantMixin + composite tenant FKs
 + FORCE RLS (enabled from day one, lesson from migration 020/032).
 """
 
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import ForeignKeyConstraint, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column

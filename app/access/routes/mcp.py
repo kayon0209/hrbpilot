@@ -51,7 +51,11 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "scope": "L",
         "transports": [
             {"kind": "stdio", "command": "python -m app.mcp.server", "note": "Inspector / Claude Desktop — 本地直连"},
-            {"kind": "streamable-http", "url": "/mcp", "note": "远程：需 Authorization: Bearer <JWT>，匿名读放行、匿名写拒"},
+            {
+                "kind": "streamable-http",
+                "url": "/mcp",
+                "note": "远程：需 Authorization: Bearer <JWT>，匿名读放行、匿名写拒",
+            },
         ],
         "tenant_id": tenant_id,
         "read_tools": [_tool_view(n) for n in read_tools],
@@ -86,7 +90,11 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
     if is_write:
         case_id = body.arguments.get("case_id")
         if not isinstance(case_id, str) or not case_id.strip():
-            return {"ok": False, "error": "CASE_ID_REQUIRED", "message": "写工具需提供 case_id（HR 案件 ID），仅创建审批，不直执。"}
+            return {
+                "ok": False,
+                "error": "CASE_ID_REQUIRED",
+                "message": "写工具需提供 case_id（HR 案件 ID），仅创建审批，不直执。",
+            }
         params = {k: v for k, v in body.arguments.items() if k != "case_id"}
         try:
             validated = validate_tool_call(tool_name, params)
@@ -110,7 +118,10 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
                     "status": approval.status,
                     "tenant_id": tenant_id,
                     "message": "已创建审批请求（AWAITING_APPROVAL）。需 HR 经理/管理员在“团队待处理”中批准后，经 ToolGateway → Outbox → Worker 执行。",
-                    "next": {"approve": f"POST /api/v1/hr-cases/{case_id.strip()}/approve", "execute": f"POST /api/v1/hr-cases/{case_id.strip()}/execute"},
+                    "next": {
+                        "approve": f"POST /api/v1/hr-cases/{case_id.strip()}/approve",
+                        "execute": f"POST /api/v1/hr-cases/{case_id.strip()}/execute",
+                    },
                 }
         except Exception as e:
             return {"ok": False, "error": type(e).__name__, "message": str(e)}
@@ -131,9 +142,21 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
                 top_k=int(validated.get("top_k", 3)),
                 tenant_id=tenant_id,
             )
-            return {"ok": True, "tool": tool_name, "validated_params": validated, "chunks": chunks[: int(validated.get("top_k", 3))], "tenant_id": tenant_id}
+            return {
+                "ok": True,
+                "tool": tool_name,
+                "validated_params": validated,
+                "chunks": chunks[: int(validated.get("top_k", 3))],
+                "tenant_id": tenant_id,
+            }
         except Exception as e:
-            return {"ok": True, "tool": tool_name, "validated_params": validated, "warning": f"live retrieval unavailable: {e}", "tenant_id": tenant_id}
+            return {
+                "ok": True,
+                "tool": tool_name,
+                "validated_params": validated,
+                "warning": f"live retrieval unavailable: {e}",
+                "tenant_id": tenant_id,
+            }
 
     note = "已按白名单校验参数；制度检索需同时提供 kb_id。" if tool_name == "search_policy" else "已按白名单校验参数。"
     return {"ok": True, "tool": tool_name, "validated_params": validated, "note": note, "tenant_id": tenant_id}

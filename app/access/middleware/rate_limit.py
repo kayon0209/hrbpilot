@@ -33,7 +33,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        if path == "/mcp" or path.startswith("/mcp/") or any(path == p or path.startswith(p + "/") for p in PUBLIC_PATH_PREFIXES):
+        if (
+            path == "/mcp"
+            or path.startswith("/mcp/")
+            or any(path == p or path.startswith(p + "/") for p in PUBLIC_PATH_PREFIXES)
+        ):
             return await call_next(request)
 
         tenant_id = getattr(request.state, "tenant_id", None)

@@ -206,9 +206,7 @@ class DocumentParser:
         # what they expand INTO): a small file ballooning into millions of
         # parsed characters is a bomb signature, not a legitimate policy doc.
         if len(text) > MAX_PARSED_TEXT_CHARS:
-            raise ValueError(
-                f"解析后文本超出上限 {MAX_PARSED_TEXT_CHARS} 字符（疑似压缩炸弹），已拒绝入库"
-            )
+            raise ValueError(f"解析后文本超出上限 {MAX_PARSED_TEXT_CHARS} 字符（疑似压缩炸弹），已拒绝入库")
         return text
 
     def _parse_docx(self, content: bytes) -> str:
@@ -448,16 +446,13 @@ class IngestionService:
         # identical text must not be re-embedded (and re-billed) on rebuild.
         # The vectors are read BEFORE any delete/upsert touches Milvus.
         old_rows = (
-            (
-                await session.execute(
-                    select(DocumentChunk.id, DocumentChunk.content_sha256).where(
-                        DocumentChunk.document_id == doc_id,
-                        DocumentChunk.embedding_model == settings.embedding_model,
-                    )
+            await session.execute(
+                select(DocumentChunk.id, DocumentChunk.content_sha256).where(
+                    DocumentChunk.document_id == doc_id,
+                    DocumentChunk.embedding_model == settings.embedding_model,
                 )
             )
-            .all()
-        )
+        ).all()
         old_sha_ids: dict[str, list[str]] = {}
         for row in old_rows:
             # Row supports positional access (id, content_sha256).
@@ -479,11 +474,7 @@ class IngestionService:
 
         # 4b. Embed only the chunks whose content is new (raises on failure —
         # no zero-vector fallback).
-        to_embed = [
-            c
-            for c in raw_chunks
-            if sha256_hex(c["content"].encode("utf-8")) not in sha_to_vector
-        ]
+        to_embed = [c for c in raw_chunks if sha256_hex(c["content"].encode("utf-8")) not in sha_to_vector]
         if to_embed:
             contents = [c["content"] for c in to_embed]
             fresh_embeddings = await self._get_embedder().embed(contents)
@@ -505,9 +496,7 @@ class IngestionService:
         # Page attribution: map each chunk's start offset back to its source
         # page. PDFs populate the spans; txt/docx leave them empty, so chunks
         # resolve to None rather than a guessed page number.
-        page_numbers = page_numbers_for_offsets(
-            self.parser.last_page_spans, [c["start_char"] for c in raw_chunks]
-        )
+        page_numbers = page_numbers_for_offsets(self.parser.last_page_spans, [c["start_char"] for c in raw_chunks])
 
         for position, c in enumerate(raw_chunks):
             chunk_sha = sha256_hex(c["content"].encode("utf-8"))
@@ -702,7 +691,7 @@ async def run_ingestion_task(task_id: str, tenant_id: str) -> None:
                 task.error_message = str(e)[:2000]
                 task.completed_at = datetime.now(UTC)
                 await session.commit()
-        except Exception as exc:  # noqa: BLE001 — 失败状态写不回时仍需留痕（见下）
+        except Exception as exc:
             # 上面已经 logger.error 过原始失败；这里若再失败，任务会永远停在 running，
             # 所以不能静默 —— 这是"任务卡住"类问题的唯一线索。
             logger.error(

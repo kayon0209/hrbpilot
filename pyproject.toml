@@ -61,7 +61,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
-ignore = ["RUF001", "RUF002", "E501", "UP042", "UP047", "SIM102", "SIM105", "SIM108", "SIM110"]  # Chinese text; str-Enum and simplify suggestions are stylistic
+ignore = ["RUF001", "RUF002", "RUF003", "E501", "UP042", "UP047", "SIM102", "SIM105", "SIM108", "SIM110"]  # Chinese text; str-Enum and simplify suggestions are stylistic
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

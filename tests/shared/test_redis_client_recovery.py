@@ -16,6 +16,7 @@
 修复：把"永久短路"改成"冷却期内短路，冷却结束允许重试"。
 本文件把两侧都钉住：既要能自愈，也不能变成猛砸挂掉的服务。
 """
+
 from __future__ import annotations
 
 import sys
@@ -25,8 +26,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app.config.settings import settings  # noqa: E402
-from app.shared import redis_client as rc  # noqa: E402
+from app.config.settings import settings
+from app.shared import redis_client as rc
 
 DEAD_URL = "redis://127.0.0.1:6399/0"  # 必然不可达
 
