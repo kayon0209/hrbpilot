@@ -100,7 +100,11 @@ class ChainBrokenError(RuntimeError):
 
 #: 详情里最常见的形态是"把 HTTP 响应体原样贴出来"，而令牌响应体里就带着令牌。
 #: 匹配 ``"access_token":"..."`` 这类 JSON 字段值并抹掉，保留字段名与长度量级。
-_SECRET_KEYS = "access_token|refresh_token|id_token|token|code|state|code_verifier"
+#: 只列**确实承载凭据**的字段名。曾经把 ``code`` 与 ``state`` 也列进来，结果 403
+#: 响应体里的 ``"code":"FORBIDDEN"`` 被抹成 ``<已抹除:9字符>`` —— 那是错误码而不是
+#: 凭据。过度脱敏的代价不比泄漏小：输出一旦开始丢失关键信息，下一次真出问题时
+#: 没人会认真读它。两者都不出现在我们打印的响应体里（``code_verifier`` 只在请求里）。
+_SECRET_KEYS = "access_token|refresh_token|id_token|token|code_verifier"
 _SECRET_JSON_VALUES = re.compile(rf'("(?:{_SECRET_KEYS})"\s*:\s*")([^"]*)(")')
 #: 详情常被 ``text[:200]`` 截断，闭合引号被切掉，上面那条就匹配不到了 ——
 #: 这一条兜住"值一直延伸到串尾"的形态。
@@ -988,32 +992,46 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                     password=password,
                     state=f"state-narrow-{run_id}",
                 )
-                try:
-                    denied = await _call_mcp_with_token(
-                        f"{rs_url}/mcp",
-                        narrow_tokens["access_token"],
-                        tool_name="search_policy",
-                        arguments={"query": "请假"},
-                    )
-                    print(
-                        f"      观察：search_policy 在缺 scope 时 → isError={denied['is_error']}，"
-                        f"正文={denied['text'][:200]!r}"
-                    )
-                    report.expect(
-                        "缺 scope 时工具调用被拒绝（而非放行）",
-                        denied["payload"] is not None and denied["payload"].get("ok") is False,
-                        f"payload={denied['payload']!r}",
-                    )
-                    report.gap(
-                        "协议验收 #6：scope 不足应返回 HTTP 403 + 标准错误体",
-                        "实测走**工具层信封**（HTTP 200 + outcome=FORBIDDEN）。"
-                        "app/mcp/auth/authorization.py 的 denial_envelope 文档字符串已写明"
-                        "这一步属于传输层且尚未实现 —— 所以这是**已知未完成项**，不是回归。"
-                        "影响：MCP 客户端拿到的是工具错误而不是 403 挑战，因此无法据 "
-                        "WWW-Authenticate 的 scope 参数自动补授权。",
-                    )
-                except Exception as exc:
-                    report.fail("scope 不足的行为观测", f"{type(exc).__name__}: {exc}")
+                # 用裸 HTTP 而不是 MCP SDK 客户端：403 会让 SDK 抛异常，那样只能观测到
+                # "失败了"，观测不到**它是怎么失败的**（状态码与挑战头才是本条的验收对象）。
+                challenge = await client.post(
+                    f"{rs_url}/mcp",
+                    headers={
+                        "Authorization": f"Bearer {narrow_tokens['access_token']}",
+                        "Accept": "application/json, text/event-stream",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": "search_policy", "arguments": {"query": "请假"}},
+                    },
+                    # /mcp 会 307 到 /mcp/（Starlette 的 mount 行为）。真实客户端跟随
+                    # 重定向，这里也必须跟随 —— 否则量到的是重定向而不是结论。
+                    follow_redirects=True,
+                )
+                report.expect(
+                    "协议验收 #6：scope 不足返回 HTTP 403（不是 200 业务信封）",
+                    challenge.status_code == 403,
+                    f"HTTP {challenge.status_code} {challenge.text[:200]}",
+                )
+                header = challenge.headers.get("www-authenticate", "")
+                report.expect(
+                    "403 带 error=insufficient_scope",
+                    'error="insufficient_scope"' in header,
+                    f"WWW-Authenticate={header!r}",
+                )
+                report.expect(
+                    "403 的 scope 参数指明**缺哪一个** scope",
+                    'scope="hrb:policy:read"' in header,
+                    f"WWW-Authenticate={header!r}",
+                )
+                report.expect(
+                    "403 带 resource_metadata（客户端据此补授权）",
+                    "resource_metadata=" in header,
+                    f"WWW-Authenticate={header!r}",
+                )
 
         return report
     finally:

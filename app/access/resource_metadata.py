@@ -47,6 +47,10 @@ from app.config.settings import settings
 #: invalid_token 会让客户端误以为"我的令牌坏了"而放弃重试。
 BEARER_ERROR_INVALID_TOKEN = "invalid_token"
 
+#: RFC 6750 §3.1：凭据有效但授权范围不足。必须配 ``scope`` 参数才有意义 ——
+#: 只说"范围不够"而不说"还缺什么"，客户端只能盲目重授权一次，很可能还是不够。
+BEARER_ERROR_INSUFFICIENT_SCOPE = "insufficient_scope"
+
 
 def _quote(value: str) -> str:
     """按 RFC 7235 ``quoted-string`` 转义。

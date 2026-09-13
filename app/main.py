@@ -147,8 +147,16 @@ def create_app() -> FastAPI:
     app.include_router(mcp_router)
     from app.mcp.server import mcp_server as _mcp_server
 
+    # 包一层守卫：scope 不足要表达成 HTTP 403 + WWW-Authenticate，而 MCP 工具层
+    # 只能产出 JSON-RPC 结果（HTTP 早已是 200）。守卫不产生判定，只把工具层
+    # 同一纯函数的结论提前到 HTTP 层 —— 见该模块的文档字符串。
+    from app.mcp.transport_guard import InsufficientScopeGuard
+
     app.mount(
-        "/mcp", _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
+        "/mcp",
+        InsufficientScopeGuard(
+            _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
+        ),
     )
     app.include_router(auth_router)
     app.include_router(hr_case_router)
