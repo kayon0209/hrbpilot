@@ -29,7 +29,9 @@
 
 - token 只在 `Authorization` 头传递，工具参数中不出现；`app/access/tokens.py` 是唯一解码入口。
 - 内部会话令牌有效期 15 分钟（`settings.jwt_access_expires_minutes`）、refresh 7 天。
-- 匿名调用不返回任何真实业务数据（`app/mcp/read_dispatch.py:69-84`）。
+- 无凭据的 HTTP 调用在**传输层**就被挡下（401 + RFC 9728 挑战），**不进入工具层**
+  （`app/access/middleware/auth.py` 的 `_dispatch_mcp`）；stdio 没有状态码可用，
+  读工具返回 `AUTH_REQUIRED` 信封且不含真实数据（`app/mcp/read_dispatch.py`）。
 - 成功/失败信封都不会回显凭据字段（`app/mcp/contract.py` 的 `_RESERVED_KEYS` 语义）。
 
 **缺口**：
@@ -223,7 +225,8 @@ scheme 不合规），或抢先兑换一次性 authorization code。
   （`app/access/routes/mcp.py` 的 `hidden_tool_count` / `hidden_reason`）。
 - "没有证据"（`NO_EVIDENCE`）与"查不动"（`FAILED`）是两种不同的终态，
   不会互相伪装。
-- 匿名读返回 `AUTH_REQUIRED` 且不含 `chunks` / `document` 字段（有测试锁定）。
+- 无凭据时 HTTP 出口在传输层即返回 401 挑战，根本不给"读"的机会；stdio 出口返回
+  `AUTH_REQUIRED` 且不含 `chunks` / `document` 字段（有测试锁定）。
 
 **缺口**：
 
@@ -256,6 +259,40 @@ scheme 不合规），或抢先兑换一次性 authorization code。
 
 ---
 
+## T-11 发现端点的匿名暴露（本次新增面）
+
+**场景**：`/.well-known/oauth-protected-resource` 按规范**必须**匿名可读。攻击者
+据此拿到服务的资源标识符、支持的授权范围（scope 词表），以及（配置后）授权服务器
+地址 —— 相当于一份公开的接口清单。
+
+**现有控制**：
+
+- 响应只含**服务的公共配置**：`resource` / `resource_name` /
+  `bearer_methods_supported` / `scopes_supported` / `authorization_servers`。
+  不含租户数据、不含凭据、不含内部拓扑。
+- 这些都是**协议要求公开**的信息：客户端必须据此发起授权。藏起来不产生安全收益 ——
+  拿不到的客户端会去猜，而猜错的后果更难诊断，且更容易被诱导到攻击者指定的授权
+  服务器（那正是 mix-up 攻击的前提条件）。
+- `bearer_methods_supported` 只声明 `header`：本服务不接受 query 参数传令牌，
+  因为 query 会进访问日志、`Referer` 与浏览器历史。
+- 三层中间件（认证 / 限流 / RBAC）共用 `WELL_KNOWN_PREFIX` 常量放行该前缀，
+  并有断言"三层都放行"的测试。**本轮实施时曾只改了一层**：认证层放行后，请求被
+  限流层以 403 `Missing user context` 拒掉，而认证层日志显示一切正常 —— 症状指向
+  了错误的那一层。共享常量与那条测试就是这次事故的沉淀。
+
+**缺口**：
+
+- 未配置 AS 时元数据**省略** `authorization_servers`（而不是返回空数组），客户端会
+  fallback 到 `resource` 的 origin。AS 上线后必须配置该字段（WP2）。
+- 元数据端点没有独立的**限流**：它匿名可读，理论上可被高频探测。复用 tenant/user
+  配额在这里不成立（根本还没有身份），是否需要一条独立的宽松配额属 WP3/WP8。
+- 未设置 `Cache-Control`：规范建议元数据可缓存以减少发现抖动，属 WP8 收尾项。
+
+**停止条件**：任何租户数据（哪怕只是一个字段）出现在 `/.well-known/*` 的响应里
+→ 立即停止。
+
+---
+
 ## 附：本模型与上游方案威胁清单的对应
 
 | 上游方案 §WP0 列举 | 本模型编号 |
@@ -270,6 +307,7 @@ scheme 不合规），或抢先兑换一次性 authorization code。
 | 资源枚举 | T-9 |
 | 提示注入 | T-10 |
 | ——（本次新识别） | T-6 客户端身份伪造与 DCR 滥用 |
+| ——（本次新增面） | T-11 发现端点的匿名暴露 |
 
 新增 T-6 的理由：上游方案把 DCR 当作 WorkBuddy 的主路径，而现行 MCP 授权规范
 （2026-07-28）已弃用 DCR、改以 Client ID Metadata Documents 为主路径，

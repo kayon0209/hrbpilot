@@ -1,7 +1,8 @@
 # ADR-0002：HRBPilot 作为 MCP Resource Server，及其授权服务器选型
 
-- 状态：**已接受**（决策部分）。其中 WP0 的决策已定；WP1 已按本 ADR 实施；WP2 起尚未实施。
-- 日期：2026-09-13
+- 状态：**已接受**（决策部分）。WP0 决策已定；WP1 已实施；**WP2-a（RFC 9728 发现面）已实施**（§12）；
+  WP2 其余部分（AS 落地、CIMD 校验、外部令牌签发与校验）尚未实施。
+- 日期：2026-09-13（§13 记录了 WP2-a 的实施与两处对 §5 措辞的修正）
 - base SHA：`868c6aecb80d436f5faeb2858d46a0cda018329c`
 - 上游输入：`docs/plans/2026-09-13-external-assistant-mcp-execution-plan.md`
 - 相关：`docs/upgrade/ADR-0001-single-bounded-agent.md`、`docs/security/mcp-threat-model.md`
@@ -107,14 +108,45 @@ protected resource metadata     = https://<public_base_url>/.well-known/oauth-pr
   （RFC 8414 / RFC 9207 的 mix-up 防御前提）。
 - `resource` 参数在授权请求与令牌请求上都是 **MUST**（RFC 8707），签发出的令牌
   `aud` 必须等于 canonical MCP resource URI；两者不一致即拒绝。
-- **本次刻意不新增该配置项**：现在加一个没有消费者的配置，只会变成 .env 漂移。
-  WP2 第一个提交引入它，并同时引入其校验（非 https、带尾斜杠、含查询串一律启动即失败）。
-- 生产形态下 `public_base_url` 必须来自环境变量；**不允许**默认值指向 localhost 之外的
-  任何真实域名，避免测试环境静默签出可被公网使用的令牌。
+- **该配置项已由 WP2-a 引入**（`settings.public_base_url`，默认 `http://localhost:8000`），
+  并同时引入校验。实际实现的规则见 §5.1（与本节原措辞有两处出入，已在 §12 记录）。
+- 生产形态下 `public_base_url` 必须是显式配置的**公网 https origin**；默认值只指向
+  localhost，因此它永远不可能静默指向某个真实域名 —— 这是默认值唯一被允许的形态。
 
 **未决**：是否用可信代理的 `X-Forwarded-Host` 推导基址。当前决定是**不**推导 ——
 Host 头是客户端可控输入，用它在签发路径上生成 issuer 是典型的可被投毒的设计。
 基址必须来自配置。（WP8 的 Host/Origin 校验另议。）
+
+### 5.1 实际实现的校验规则（WP2-a）
+
+实现位置：`app/config/settings.py` 的 `_normalize_public_base_url` / `_parse_authorization_servers`。
+
+| 输入 | 结果 |
+| --- | --- |
+| `https://hrbp.example.com` / `https://hrbp.example.com:8443` | 接受（端口保留） |
+| `http://localhost:8000/` | 接受，归一化为 `http://localhost:8000` |
+| 首尾空白 | 接受，trim 掉 |
+| 内部空白 / 非 http(s) scheme / 相对形式 | 拒绝 |
+| 含路径（如 `/mcp`） | 拒绝 |
+| 含 query / fragment / userinfo | 拒绝 |
+| `http://` + 非环回主机 | 拒绝 |
+| staging/production + 非公网 https origin | 拒绝 |
+
+**两处对 §5 原措辞的修正**（按 §14 的偏差记录要求记下）：
+
+1. **尾斜杠改为归一化，不再启动失败。** 原措辞是"带尾斜杠……一律启动即失败"。
+   但 `http://localhost:8000/` 语义毫无歧义，让它失败只会制造一次无意义的部署中断。
+   判据应该是"这个写法是否改变语义"：**路径**会改变 RFC 9728 §3.1 的 well-known
+   解析位置，所以那一条严格拒绝；尾斜杠不会，归一化即可。
+2. **生产强制公网 https 是新增的**，原措辞只说"不允许默认值指向真实域名"。
+   理由：这个值会出现在元数据与令牌 audience 里，是**对外身份**。生产留 localhost
+   会让元数据声明一个任何客户端都用不上的身份，且是静默的 —— 服务照常启动、照常
+   返回 200，只有客户端在别处失败。这与 `vector_db_host` 一类**内部连接地址**性质
+   不同（后者外部看不到，localhost 在生产是正常的），所以只有前者受此约束。
+
+**这条约束的代价（已知并接受）**：既有生产部署若不设 `PUBLIC_BASE_URL`，升级后会
+启动失败。这是**有意**的：错误信息明确写着该配什么，比"元数据静默指向 localhost"
+好。该行为由 `tests/rag/test_security_regressions.py` 的三个用例锁定（含两个负例）。
 
 ## 6. 决策五：AS 实现选型 —— Authlib，部署形态先同仓独立应用
 
@@ -232,7 +264,82 @@ pytest -q
 3. `authlib` 加入依赖并在真实 Python 3.12（CI 版本）上验证；
 4. RFC 9728 / RFC 8414 / RFC 9207 三份元数据与 `iss` 的取值在本 ADR 第 5 节冻结。
 
-## 12. 来源
+## 12. 实施记录：WP2-a（RFC 9728 发现面）
+
+**范围**：只做 Resource Server 的**发现面**，不碰授权服务器。§11 列出的四项 WP2 前置
+条件中，本工作包完成第 1 项（`public_base_url` 配置及其启动期校验）与第 4 项
+（issuer / resource / metadata 取值冻结）。第 2、3 项（AS 部署入口、Authlib 依赖）
+属后续工作包。
+
+### 12.1 交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `app/config/settings.py` | `public_base_url` + `mcp_authorization_servers` + `mcp_accepts_platform_tokens`，含启动期校验与三个派生 URL |
+| `app/access/resource_metadata.py` | RFC 9728 文档与 `WWW-Authenticate` 挑战的**纯函数**构造 |
+| `app/access/protocol_paths.py` | `WELL_KNOWN_PREFIX`，零依赖，供三层中间件共用 |
+| `app/access/routes/well_known.py` | 两个匿名端点（根变体 + 带 path 变体） |
+| `app/access/middleware/auth.py` | `/mcp` 改为挑战式认证（原为整体跳过） |
+| `tests/mcp/test_resource_metadata.py` | 27 条断言，含 5 条负例 |
+| `tests/rag/test_security_regressions.py` | 补 `_production_settings` helper + 两个生产负例 |
+
+### 12.2 行为变更：`/mcp` 的未认证响应
+
+| | 变更前 | 变更后 |
+| --- | --- | --- |
+| 无凭据 | `200` + 业务信封 `AUTH_REQUIRED` | **`401`** + `WWW-Authenticate: Bearer resource_metadata="…"` |
+| 凭据不可用 | 同上（或无差别处理） | `401` + `error="invalid_token"` + `resource_metadata` |
+
+这是**必要的破坏性变更**：MCP 客户端的授权自动发现完全依赖那个 401。原先的 200 +
+信封对客户端既不是成功也不是挑战，它只能放弃。
+
+**两种传输的差异是有意的**（不是不一致）：
+
+- **HTTP `/mcp`**：传输层返回 401。请求根本到不了工具层。
+- **stdio**：没有状态码，读工具继续返回 `AUTH_REQUIRED` 信封。
+
+必须一致的只有**判定**，那由 `authorize_tool_call` 保证（WP1）。`anonymous_read_envelope`
+现在只服务 stdio，已在 `app/mcp/read_dispatch.py` 与 `app/mcp/server.py` 就地标注。
+
+### 12.3 实施中发现并修正的问题
+
+**三层中间件各有匿名路径清单 —— 改一层不够。** `/.well-known/` 只加进认证层后，
+请求被**限流层**以 `403 FORBIDDEN "Missing user context"` 拒掉，而认证层日志显示
+"已正常放行"。症状指向了错误的那一层。
+
+处理：抽出零依赖的 `app/access/protocol_paths.py`（不能放进 `resource_metadata.py`
+—— 那个模块导入 `scopes`，而 `scopes` 导入 `rbac`，`rbac` 引用该常量会成环），
+三层共同引用；并加一条断言"三层都放行发现端点"的测试作为守卫。
+各层**其余**匿名条目（health / webhooks / dev-users）语义不同，**未合并** ——
+合并会把"要求认证"的路径意外放宽成匿名，那是安全方向的变更，必须逐条审查。
+
+**新增的生产必需配置打破了既有的测试契约。** `test_production_accepts_strong_jwt_secret`
+断言的是 JWT secret，却因缺少 `public_base_url` 而失败 —— 症状同样指向错误的地方。
+处理：按该文件**已有**的模式（`REAL_MASTER_KEY` 常量 + 注释）抽 `_production_settings`
+helper，把"生产必需配置"收成一处，并补两个负例（环回、明文 http）。
+
+### 12.4 未做的事（明确列出，避免被读成已完成）
+
+- **AS 未落地**：`mcp_authorization_servers` 默认为空，元数据**省略**
+  `authorization_servers` 字段。客户端会发现到这一步就停住 —— 这是诚实的表达
+  （空数组语义未定义；编造一个不存在的 AS 地址会让客户端去请求 404，更难诊断）。
+- **外部令牌不可签发**：`/mcp` 目前仍只接受平台自签 JWT，由过渡开关
+  `mcp_accepts_platform_tokens`（默认 `true`）控制。AS 上线后翻成 `false`，
+  届时 ADR §4「内部会话令牌在 /mcp 上不被接受」由
+  `test_platform_tokens_can_be_switched_off_for_the_mcp_surface` 强制。
+- **CIMD 文档获取与校验**未实现（T-6）。
+- **元数据端点的 `Cache-Control` 与独立限流**未设置（T-11 缺口）。
+
+### 12.5 门禁（改动前后实测，CI 口径）
+
+| 口径 | WP1 后 | WP2-a 后 |
+| --- | --- | --- |
+| `pytest -q` | 583 / 0 / 50 | **612 / 0 / 50**（+29 全为新增） |
+| `ruff check app tests evaluation` | exit 0 | exit 0 |
+| `ruff format --check app tests` | exit 0（343） | exit 0（347） |
+| `mypy app` | exit 0（235） | exit 0（238） |
+
+## 13. 来源
 
 - MCP Authorization Specification，revision 2026-07-28：<https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/>
 - MCP Client Registration（CIMD / 预注册 / DCR 优先级与弃用说明）：<https://modelcontextprotocol.io/specification/draft/basic/authorization/client-registration>
