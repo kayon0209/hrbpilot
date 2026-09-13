@@ -122,7 +122,17 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         if batch.type == "interview":
-            rows = (await db.execute(select(InterviewRecord).where(InterviewRecord.tenant_id == tenant_id, InterviewRecord.batch_id == batch_id))).scalars().all()
+            rows = (
+                (
+                    await db.execute(
+                        select(InterviewRecord).where(
+                            InterviewRecord.tenant_id == tenant_id, InterviewRecord.batch_id == batch_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             for rec in rows:
                 task = await db.get(AsyncTask, rec.digest_task_id) if rec.digest_task_id else None
                 if task is not None and task.status == "failed":
@@ -135,8 +145,16 @@ async def retry_failed(batch_id: str, request: Request, session: AsyncSession = 
                     )
                     retried += 1
         else:
-            rows = (await db.execute(select(VoiceEntry).where(VoiceEntry.tenant_id == tenant_id, VoiceEntry.batch_id == batch_id))).scalars().all()
-            for ent in rows:
+            voice_rows = (
+                (
+                    await db.execute(
+                        select(VoiceEntry).where(VoiceEntry.tenant_id == tenant_id, VoiceEntry.batch_id == batch_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for ent in voice_rows:
                 task = await db.get(AsyncTask, ent.digest_task_id) if ent.digest_task_id else None
                 if task is not None and task.status == "failed":
                     import json as _json

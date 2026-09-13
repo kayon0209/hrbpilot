@@ -93,9 +93,7 @@ async def test_delete_kb_cascades_to_object_storage_and_vectors(monkeypatch):
     session = _Session(SimpleNamespace(id="kb1"), docs)
     deleted_keys, milvus_calls, committed_first = _install_fakes(monkeypatch, session)
 
-    result = await kb_routes.delete_kb(
-        kb_routes.DeleteKBBody(kb_id="kb1"), _request(), session
-    )
+    result = await kb_routes.delete_kb(kb_routes.DeleteKBBody(kb_id="kb1"), _request(), session)
 
     assert result["status"] == "deleted"
     assert result["documents"] == 2
@@ -116,9 +114,7 @@ async def test_delete_kb_still_succeeds_when_vector_cleanup_fails(monkeypatch):
     session = _Session(SimpleNamespace(id="kb1"), docs)
     deleted_keys, _, _ = _install_fakes(monkeypatch, session, milvus_raises=True)
 
-    result = await kb_routes.delete_kb(
-        kb_routes.DeleteKBBody(kb_id="kb1"), _request(), session
-    )
+    result = await kb_routes.delete_kb(kb_routes.DeleteKBBody(kb_id="kb1"), _request(), session)
 
     assert result["status"] == "deleted"
     assert result["removed_vectors"] == 0
@@ -132,6 +128,4 @@ async def test_delete_missing_kb_is_not_found(monkeypatch):
     _install_fakes(monkeypatch, session)
 
     with pytest.raises(kb_routes.NotFoundError):
-        await kb_routes.delete_kb(
-            kb_routes.DeleteKBBody(kb_id="missing"), _request(), session
-        )
+        await kb_routes.delete_kb(kb_routes.DeleteKBBody(kb_id="missing"), _request(), session)

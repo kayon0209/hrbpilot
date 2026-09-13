@@ -99,10 +99,7 @@ def test_content_mime_rejects_renamed_archive_as_pdf():
 
 def test_content_mime_accepts_zip_family_as_docx():
     # a legit .docx IS a zip; zip-family detection must accept it
-    assert (
-        validate_upload(filename="员工手册.docx", declared_mime=None, content=ZIP_MAGIC)
-        == "员工手册.docx"
-    )
+    assert validate_upload(filename="员工手册.docx", declared_mime=None, content=ZIP_MAGIC) == "员工手册.docx"
 
 
 def test_content_mime_validate_content_type_unit():
@@ -121,7 +118,9 @@ def test_content_mime_validate_content_type_unit():
 
 def test_magic_rejects_renamed_pdf():
     with pytest.raises(ValidationError, match="不符"):
-        validate_upload(filename="policy.txt", declared_mime="text/plain", content=PDF_MAGIC)  # detected application/pdf vs .txt
+        validate_upload(
+            filename="policy.txt", declared_mime="text/plain", content=PDF_MAGIC
+        )  # detected application/pdf vs .txt
 
 
 def test_magic_rejects_renamed_zip_as_pdf():
@@ -146,7 +145,7 @@ def test_pdf_page_cap_rejects_oversized_document():
 def test_pdf_bomb_rejected_on_object_count_and_ratio():
     # tiny file declaring a million cross-reference objects -> impossible ratio
     bomb = PDF_MAGIC + b"/Size 1000000\n" + b"x" * 200
-    with pytest.raises(ValidationError, match="压缩炸弹|对象数"):
+    with pytest.raises(ValidationError, match=r"压缩炸弹|对象数"):
         validate_upload(filename="bomb.pdf", declared_mime="application/pdf", content=bomb)
 
 

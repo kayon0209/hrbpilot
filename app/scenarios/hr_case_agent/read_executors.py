@@ -154,8 +154,7 @@ async def execute_get_policy_source(params: dict) -> dict:
             "status": document.status,
             "section": section or "",
             "chunks": [
-                {"chunk_index": c.chunk_index, "section": c.section, "content": c.content[:600]}
-                for c in chunks
+                {"chunk_index": c.chunk_index, "section": c.section, "content": c.content[:600]} for c in chunks
             ],
         },
     }

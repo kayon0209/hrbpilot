@@ -77,9 +77,7 @@ async def start_analysis(
     return {"task_id": task_id, "status": "pending"}
 
 
-async def _get_or_create_employee(
-    tenant_id: str, user_id: str, name: str
-) -> Employee | None:
+async def _get_or_create_employee(tenant_id: str, user_id: str, name: str) -> Employee | None:
     cleaned = name.strip()
     if not cleaned:
         return None
@@ -87,9 +85,7 @@ async def _get_or_create_employee(
     async with factory() as db:
         db.info["tenant_id"] = tenant_id
         row = (
-            await db.execute(
-                select(Employee).where(Employee.tenant_id == tenant_id, Employee.name == cleaned)
-            )
+            await db.execute(select(Employee).where(Employee.tenant_id == tenant_id, Employee.name == cleaned))
         ).scalar_one_or_none()
         if row is None:
             row = Employee(tenant_id=tenant_id, name=cleaned, created_by=user_id)
@@ -335,7 +331,7 @@ async def list_entries(
             )
         )
 
-    rows = ((await session.execute(stmt.limit(limit + 1))).all())
+    rows = (await session.execute(stmt.limit(limit + 1))).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 

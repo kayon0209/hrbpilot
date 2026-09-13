@@ -150,7 +150,9 @@ async def test_stream_uses_desensitized_text_for_retrieval_and_generation(monkey
     """P0-01b: the stream path previously discarded the processed text; it
     must now feed retrieval and generation the masked query, and the done
     event must carry the real input flags (not a hardcoded empty dict)."""
-    orch = _orchestrator(chunks=[{"source": "员工手册.pdf", "section": "4.2", "content": "年假可顺延", "confidence": 0.9}])
+    orch = _orchestrator(
+        chunks=[{"source": "员工手册.pdf", "section": "4.2", "content": "年假可顺延", "confidence": 0.9}]
+    )
     monkeypatch.setattr(policy_qa_module, "rewrite_query", _RewriteSpy())
 
     events = [json.loads(raw) async for raw in orch.execute_stream(_PHONE_QUESTION, "t1", "u1", kb_id="kb1")]

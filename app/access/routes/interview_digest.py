@@ -478,7 +478,7 @@ async def list_records(
             )
         )
 
-    rows = ((await session.execute(stmt.limit(limit + 1))).all())
+    rows = (await session.execute(stmt.limit(limit + 1))).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 
@@ -503,25 +503,22 @@ async def get_record_detail(
     visible_user_ids = await resolve_visible_user_ids(tenant_id, request.state.user_id, request.state.user_role)
 
     row = (
-        (
-            await session.execute(
-                select(InterviewRecord, AsyncTask)
-                .outerjoin(
-                    AsyncTask,
-                    and_(
-                        AsyncTask.tenant_id == InterviewRecord.tenant_id,
-                        AsyncTask.id == InterviewRecord.digest_task_id,
-                    ),
-                )
-                .where(
-                    InterviewRecord.tenant_id == tenant_id,
-                    InterviewRecord.id == record_id,
-                    InterviewRecord.created_by.in_(visible_user_ids),
-                )
+        await session.execute(
+            select(InterviewRecord, AsyncTask)
+            .outerjoin(
+                AsyncTask,
+                and_(
+                    AsyncTask.tenant_id == InterviewRecord.tenant_id,
+                    AsyncTask.id == InterviewRecord.digest_task_id,
+                ),
+            )
+            .where(
+                InterviewRecord.tenant_id == tenant_id,
+                InterviewRecord.id == record_id,
+                InterviewRecord.created_by.in_(visible_user_ids),
             )
         )
-        .first()
-    )
+    ).first()
     if row is None:
         raise NotFoundError("InterviewRecord", record_id)
     record, task = row

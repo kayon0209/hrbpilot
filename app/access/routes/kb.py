@@ -27,7 +27,7 @@ from app.data.models.infra import AsyncTask
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.rag.ingestion.pipeline import sha256_hex
 from app.rag.ingestion.tasks import dispatch_ingestion_task
-from app.rag.security.file_upload import validate_upload, build_object_key
+from app.rag.security.file_upload import build_object_key, validate_upload
 from app.rag.storage.milvus import MilvusStore
 from app.rag.storage.object_store import ObjectStore
 from app.shared.errors import ConflictError, NotFoundError

@@ -178,7 +178,9 @@ def test_build_policy_qa_messages_splits_system_evidence_and_query():
     evidence_msgs = [msg for msg in messages if "<<<EVIDENCE_BEGIN>>>" in msg.get("content", "")]
     assert evidence_msgs, "expected an evidence block carrying the untrusted marker"
     assert all(msg["role"] == "user" for msg in evidence_msgs)
-    assert all("<<<EVIDENCE_BEGIN>>>" in msg["content"] and "<<<EVIDENCE_END>>>" in msg["content"] for msg in evidence_msgs)
+    assert all(
+        "<<<EVIDENCE_BEGIN>>>" in msg["content"] and "<<<EVIDENCE_END>>>" in msg["content"] for msg in evidence_msgs
+    )
     # The untrusted evidence payload itself never rides in a system message.
     evidence_payload = "年假可顺延"
     system_contents = [msg["content"] for msg in messages if msg["role"] == "system"]

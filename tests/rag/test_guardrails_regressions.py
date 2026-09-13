@@ -58,8 +58,7 @@ async def test_output_guard_does_not_censor_hr_complaint_language() -> None:
     replaced by SAFE_RESPONSE (P1-08)."""
     guard = OutputGuardrail()
     report = (
-        "该面谈记录显示员工曾投诉遭受职场骚扰。公司已按反歧视与反骚扰调查流程启动核查，"
-        "并由 HR 负责人跟进处理结果。"
+        "该面谈记录显示员工曾投诉遭受职场骚扰。公司已按反歧视与反骚扰调查流程启动核查，并由 HR 负责人跟进处理结果。"
     )
 
     processed, flags = await guard.check(report, ["toxicity_detection"])

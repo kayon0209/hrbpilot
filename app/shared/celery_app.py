@@ -99,9 +99,7 @@ def ensure_capacity(queue: str, count: int) -> None:
 
     capacity = remaining_capacity(queue)
     if capacity is not None and count > capacity:
-        raise ValidationError(
-            f"批量 {count} 条超过队列 {queue} 的剩余容量 {capacity}，请分批处理或增加 worker"
-        )
+        raise ValidationError(f"批量 {count} 条超过队列 {queue} 的剩余容量 {capacity}，请分批处理或增加 worker")
 
 
 def dispatch_task(name: str, args: list[Any], queue: str) -> None:

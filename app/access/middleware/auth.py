@@ -36,7 +36,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/api/connector-webhooks") or path.startswith("/mcp"):
+        if (
+            path in PUBLIC_PATHS
+            or path.startswith("/docs")
+            or path.startswith("/api/connector-webhooks")
+            or path.startswith("/mcp")
+        ):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization")

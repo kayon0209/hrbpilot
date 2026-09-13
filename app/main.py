@@ -22,7 +22,6 @@ from app.access.middleware.security_headers import SecurityHeadersMiddleware
 from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.routes.admin_users import router as admin_users_router
 from app.access.routes.audit import router as audit_router
-from app.access.routes.ops_reconciliation import router as ops_reconciliation_router
 from app.access.routes.auth import router as auth_router
 from app.access.routes.connector_webhooks import router as connector_webhooks_router
 from app.access.routes.culture_content import router as culture_router
@@ -35,6 +34,7 @@ from app.access.routes.interview_digest import router as interview_router
 from app.access.routes.kb import router as kb_router
 from app.access.routes.knowledge_feedback import router as knowledge_feedback_router
 from app.access.routes.notifications import router as notifications_router
+from app.access.routes.ops_reconciliation import router as ops_reconciliation_router
 from app.access.routes.policy_qa import router as policy_qa_router
 from app.access.routes.settings import router as settings_router
 from app.access.routes.voice_insight import router as voice_router
@@ -143,7 +143,9 @@ def create_app() -> FastAPI:
     app.include_router(mcp_router)
     from app.mcp.server import mcp_server as _mcp_server
 
-    app.mount("/mcp", _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True))
+    app.mount(
+        "/mcp", _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
+    )
     app.include_router(auth_router)
     app.include_router(hr_case_router)
     app.include_router(policy_qa_router)

@@ -129,7 +129,11 @@ async def get_policy_source(
     if section is not None:
         params["section"] = section
     validated = validate_tool_call("get_policy_source", params)
-    return {"tool": "get_policy_source", "validated_params": validated, "note": "L: validated; document hydration is P1."}
+    return {
+        "tool": "get_policy_source",
+        "validated_params": validated,
+        "note": "L: validated; document hydration is P1.",
+    }
 
 
 @mcp_server.tool(name="hrbpilot_ping", description="Health/debug tool for the HRBPilot MCP server.")
@@ -180,7 +184,10 @@ async def _create_approval_via_mcp(
         return {"ok": False, "error": type(e).__name__, "message": str(e)}
 
 
-@mcp_server.tool(name="create_hr_case", description="Write (M): create an ApprovalRequest for create_hr_case on an existing case container. Requires Authorization + case_id. Never auto-executes.")
+@mcp_server.tool(
+    name="create_hr_case",
+    description="Write (M): create an ApprovalRequest for create_hr_case on an existing case container. Requires Authorization + case_id. Never auto-executes.",
+)
 async def mcp_create_hr_case(
     case_id: str,
     title: str,
@@ -190,30 +197,52 @@ async def mcp_create_hr_case(
     risk_level: str = "LOW",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"title": title, "subject_ref": subject_ref, "category": category, "risk_level": risk_level}
+    params: dict[str, Any] = {
+        "title": title,
+        "subject_ref": subject_ref,
+        "category": category,
+        "risk_level": risk_level,
+    }
     if description is not None:
         params["description"] = description
     return await _create_approval_via_mcp("create_hr_case", params, case_id, ctx)
 
 
-@mcp_server.tool(name="assign_case_owner", description="Write (M): create an ApprovalRequest for assign_case_owner. Requires Authorization + case_id.")
+@mcp_server.tool(
+    name="assign_case_owner",
+    description="Write (M): create an ApprovalRequest for assign_case_owner. Requires Authorization + case_id.",
+)
 async def mcp_assign_case_owner(case_id: str, owner_id: str, ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("assign_case_owner", {"owner_id": owner_id}, case_id, ctx)
 
 
-@mcp_server.tool(name="send_case_notification", description="Write (M): create an ApprovalRequest for send_case_notification (in_app only). Requires Authorization + case_id.")
-async def mcp_send_case_notification(case_id: str, recipient_ref: str, template: str, ctx: Context | None = None) -> dict[str, Any]:
+@mcp_server.tool(
+    name="send_case_notification",
+    description="Write (M): create an ApprovalRequest for send_case_notification (in_app only). Requires Authorization + case_id.",
+)
+async def mcp_send_case_notification(
+    case_id: str, recipient_ref: str, template: str, ctx: Context | None = None
+) -> dict[str, Any]:
     return await _create_approval_via_mcp(
-        "send_case_notification", {"channel": "in_app", "recipient_ref": recipient_ref, "template": template}, case_id, ctx
+        "send_case_notification",
+        {"channel": "in_app", "recipient_ref": recipient_ref, "template": template},
+        case_id,
+        ctx,
     )
 
 
-@mcp_server.tool(name="update_case_status", description="Write (M): create an ApprovalRequest for update_case_status (only RESOLVED). Requires Authorization + case_id.")
+@mcp_server.tool(
+    name="update_case_status",
+    description="Write (M): create an ApprovalRequest for update_case_status (only RESOLVED). Requires Authorization + case_id.",
+)
 async def mcp_update_case_status(case_id: str, status: str = "RESOLVED", ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("update_case_status", {"status": status}, case_id, ctx)
 
 
-@mcp_server.tool(name="create_work_task", description="Write (M): create an ApprovalRequest for create_work_task. Requires Authorization + case_id.")
+@mcp_server.tool(
+    name="create_work_task",
+    description="Write (M): create an ApprovalRequest for create_work_task. Requires Authorization + case_id.",
+)
 async def mcp_create_work_task(
     case_id: str,
     title: str,
