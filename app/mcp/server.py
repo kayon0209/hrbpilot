@@ -7,14 +7,18 @@ Write tools: create ``ApprovalRequest`` (never auto-execute) — preserves the
 human approval gate (``APPROVED → CONSUMED``) and Outbox/Worker path.
 
 Auth: stdio has no headers (anonymous); HTTP carries ``Authorization: Bearer <JWT>``
-which is decoded with ``app.config.settings`` to recover ``tenant_id/user_id/role``.
+which is decoded by ``app.access.tokens`` (the one place that decodes them).
 
-Every tool call returns the shared envelope from ``app.mcp.contract`` so a caller
-can tell "有依据 / 没查到 / 无权 / 待审批 / 失败" apart instead of guessing from
-``ok`` and ``warning``。
+授权（2026-09 改造）
+--------------------
+本出口与 REST 桥（``app/access/routes/mcp.py``）**共用**同一个判定：
+``app.mcp.auth.authorize_tool_call``。改造前本出口的读工具不做角色校验，而 REST 桥
+做 —— 同一个 ``admin`` 角色在两条出口上结论相反（REST 桥拒、协议出口放行并返回
+真实制度正文）。现在两条出口按 角色能力 ∩ scope ∩ 客户端授权上限 判定，
+拒绝响应也由同一个 ``denial_envelope`` 构造。
 
 发现（discovery）不是安全边界 —— 未认证的 stdio 客户端本来就能列到工具名，
-真正的边界是**执行时按角色校验能力**（本文件与 REST 桥都做）。
+真正的边界是**执行时按角色与 scope 判定**（本文件与 REST 桥都做）。
 
 Transports: stdio (``python -m app.mcp.server``) + Streamable HTTP
 (mounted at ``/mcp`` inside ``app.main``).  FastMCP/MCPServer naming is the
@@ -26,12 +30,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from jose import JWTError, jwt
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.server import MCPServer
 
-from app.access.policies.tool_access import tool_allowed
-from app.config.settings import settings
+from app.mcp.auth import (
+    McpPrincipal,
+    authorize_tool_call,
+    denial_envelope,
+    log_denial,
+    principal_from_headers,
+)
 from app.mcp.contract import APPROVAL_SUBMITTED_TEMPLATE, ToolOutcome, envelope, failure_envelope
 from app.mcp.read_dispatch import anonymous_read_envelope, run_read_tool
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, ToolError, validate_tool_call
@@ -42,51 +50,49 @@ logger = get_logger(__name__)
 
 mcp_server = MCPServer("hrbpilot-mcp")
 
+#: 日志里标识"这次拒绝来自哪条出口"。WP1 修掉的那处越权正是"两条出口结论不同"，
+#: 标出来才能在回归时一眼分辨。
+_SURFACE = "mcp_protocol"
+
 _READ_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "read")
 _WRITE_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "write")
 
 
-def _tool_definition(name: str):
-    return next((t for t in TOOL_CATALOG.tools if t.name == name), None)
+def _principal_from_ctx(ctx: Context | None) -> McpPrincipal | None:
+    """从 MCP 调用上下文取出已验证身份；无法确定身份时返回 ``None``（匿名）。
 
-
-def _auth_from_ctx(ctx: Context | None) -> dict[str, str] | None:
+    ``ctx.headers`` 在 stdio 传输下会抛 ``ValueError``（没有 HTTP 头），
+    这不是错误而是"这个传输方式没有凭据"。
+    """
     if ctx is None:
         return None
     try:
         headers = ctx.headers
     except ValueError:
         return None
-    if not headers:
-        return None
-    auth = headers.get("authorization") or headers.get("Authorization")
-    if not auth or not auth.startswith("Bearer "):
-        return None
-    token = auth[7:].strip()
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-            audience=settings.jwt_audience,
-            issuer=settings.jwt_issuer,
-        )
-    except JWTError:
-        return None
-    if payload.get("type") != "access":
-        return None
-    user_id = payload.get("sub")
-    role = payload.get("role")
-    tenant_id = payload.get("tenant_id")
-    if not all(isinstance(v, str) and v for v in (user_id, role, tenant_id)):
-        return None
-    return {"user_id": str(user_id), "role": str(role), "tenant_id": str(tenant_id)}
+    return principal_from_headers(headers)
 
 
-def _actor_label(auth: dict[str, str] | None) -> str:
-    if auth is None:
+def _actor_label(principal: McpPrincipal | None) -> str:
+    if principal is None:
         return "mcp:anonymous"
-    return f"user:{auth['user_id']}|role:{auth['role']}"
+    return f"user:{principal.user_id}|role:{principal.role}"
+
+
+async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None) -> dict[str, Any]:
+    """读工具的统一入口：先授权，再交给 ``run_read_tool``。"""
+    principal = _principal_from_ctx(ctx)
+    decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
+
+    if principal is not None and decision.allowed:
+        return await run_read_tool(tool_name, params, principal.tenant_id)
+
+    log_denial(decision, principal, surface=_SURFACE)
+    if principal is None:
+        # 匿名不是"错误"，是"没有作用范围"：返回 AUTH_REQUIRED 信封，只回显
+        # 已校验参数，不含任何真实数据（anonymous_read_envelope 保证这一点）。
+        return anonymous_read_envelope(tool_name, params)
+    return denial_envelope(decision, tenant_id=principal.tenant_id)
 
 
 @mcp_server.tool(
@@ -102,10 +108,7 @@ async def search_policy(
     params: dict[str, Any] = {"query": query, "top_k": top_k}
     if kb_id is not None:
         params["kb_id"] = kb_id
-    auth = _auth_from_ctx(ctx)
-    if auth is None:
-        return anonymous_read_envelope("search_policy", params)
-    return await run_read_tool("search_policy", params, auth["tenant_id"])
+    return await _run_read("search_policy", params, ctx)
 
 
 @mcp_server.tool(
@@ -120,15 +123,15 @@ async def get_policy_source(
     params: dict[str, Any] = {"document_name": document_name}
     if section is not None:
         params["section"] = section
-    auth = _auth_from_ctx(ctx)
-    if auth is None:
-        return anonymous_read_envelope("get_policy_source", params)
-    return await run_read_tool("get_policy_source", params, auth["tenant_id"])
+    return await _run_read("get_policy_source", params, ctx)
 
 
-@mcp_server.tool(name="hrbpilot_ping", description="Health/debug tool for the HRBPilot MCP server.")
+@mcp_server.tool(
+    name="hrbpilot_ping",
+    description="Health/debug tool for the HRBPilot MCP server. Carries no tenant business data, so it is the one tool callable without credentials.",
+)
 async def hrbpilot_ping(ctx: Context | None = None) -> dict[str, Any]:
-    auth = _auth_from_ctx(ctx)
+    principal = _principal_from_ctx(ctx)
     return {
         "ok": True,
         "server": "hrbpilot-mcp",
@@ -136,7 +139,7 @@ async def hrbpilot_ping(ctx: Context | None = None) -> dict[str, Any]:
         "read_tools": sorted(_READ_TOOL_NAMES),
         "write_tools": sorted(_WRITE_TOOL_NAMES),
         "write_mode": "create-approval-request",
-        "auth": auth is not None,
+        "auth": principal is not None,
     }
 
 
@@ -146,17 +149,16 @@ async def _create_approval_via_mcp(
     case_id: str,
     ctx: Context | None,
 ) -> dict[str, Any]:
-    auth = _auth_from_ctx(ctx)
-    if auth is None:
-        return envelope(tool_name, ToolOutcome.AUTH_REQUIRED)
+    principal = _principal_from_ctx(ctx)
+    decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
+    if not decision.allowed:
+        log_denial(decision, principal, surface=_SURFACE)
+        if principal is None:
+            return envelope(tool_name, ToolOutcome.AUTH_REQUIRED)
+        # 提前拒是为了让用户在提交之前就知道结果，而不是等一个注定失败的审批。
+        return denial_envelope(decision, tenant_id=principal.tenant_id)
 
-    tool = _tool_definition(tool_name)
-    if tool is not None and not tool_allowed(tool, auth["role"]):
-        # 执行侧（policy → dispatcher）本来就会拒。这里提前拒，是为了让用户在
-        # 提交之前就知道结果，而不是等一个注定失败的审批。
-        logger.warning("mcp_tool_forbidden", tool=tool_name, role=auth["role"], tenant_id=auth["tenant_id"])
-        return envelope(tool_name, ToolOutcome.FORBIDDEN, tenant_id=auth["tenant_id"])
-
+    assert principal is not None  # 授权通过 ⇒ 一定有身份（匿名在上面的分支已返回）
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
@@ -166,8 +168,8 @@ async def _create_approval_via_mcp(
         from app.data.database import tenant_session
         from app.scenarios.hr_case_agent.service import HRCaseService
 
-        async with tenant_session(auth["tenant_id"]) as session:
-            service = HRCaseService(session, auth["tenant_id"], actor=_actor_label(auth))
+        async with tenant_session(principal.tenant_id) as session:
+            service = HRCaseService(session, principal.tenant_id, actor=_actor_label(principal))
             approval = await service.request_approval(case_id, tool_name=tool_name, params=validated)
             await session.commit()
             return envelope(
@@ -176,17 +178,17 @@ async def _create_approval_via_mcp(
                 case_id=case_id,
                 approval_id=approval.id,
                 status=approval.status,
-                tenant_id=auth["tenant_id"],
+                tenant_id=principal.tenant_id,
                 user_message=APPROVAL_SUBMITTED_TEMPLATE.format(approval_id=approval.id),
             )
     except AppError as e:
         # 受控失败码（HIGH_RISK_WRITE_BLOCKED / INVALID_CASE_TRANSITION / …）：
         # 映射成用户文案，原始 message 只进日志。
-        logger.warning("mcp_approval_rejected", tool=tool_name, code=e.code, tenant_id=auth["tenant_id"])
-        return failure_envelope(tool_name, e.code, tenant_id=auth["tenant_id"])
+        logger.warning("mcp_approval_rejected", tool=tool_name, code=e.code, tenant_id=principal.tenant_id)
+        return failure_envelope(tool_name, e.code, tenant_id=principal.tenant_id)
     except Exception:
-        logger.exception("mcp_approval_crashed", tool=tool_name, tenant_id=auth["tenant_id"])
-        return failure_envelope(tool_name, "INTERNAL_ERROR", tenant_id=auth["tenant_id"])
+        logger.exception("mcp_approval_crashed", tool=tool_name, tenant_id=principal.tenant_id)
+        return failure_envelope(tool_name, "INTERNAL_ERROR", tenant_id=principal.tenant_id)
 
 
 @mcp_server.tool(
@@ -272,13 +274,18 @@ async def mcp_create_work_task(
 
 @mcp_server.resource("hrbpilot://capabilities")
 async def hrbpilot_capabilities() -> str:
-    """Discovery document.
+    """Discovery document — 这份文档是**能力清单**，不是某个调用者的授权结果。
 
-    刻意**不**在这份文档里做角色过滤：MCP 的 resource 与 tool 列表对未认证的
-    stdio 客户端本来就可见，隐藏名字不会带来安全收益，反而会让客户端以为
-    "没有这个能力"。真正的边界在执行：每个工具在调用时都会按调用者的角色
-    校验 ``required_capability``（MCP 出口与 REST 桥都做），不通过就返回
-    FORBIDDEN，且执行链（policy → grant → dispatcher）会再复核一次。
+    刻意**不**按角色过滤。原因有两条，与"隐藏名字当权限控制"无关：
+
+    1. 本资源可匿名读取，对未认证的 stdio 客户端本来就把工具名摆在那里；
+    2. 过滤后客户端会以为"没有这个能力"，而不是"我这个身份没有这个能力" ——
+       把授权差异说成能力缺失，用户拿到的解释是错的。
+
+    调用者要看**自己**的有效权限摘要，应使用按身份返回的
+    ``get_my_access_profile``（后续工作包）。真正的边界在执行：
+    ``app.mcp.auth.authorize_tool_call`` 对每次调用按 角色能力 ∩ scope ∩
+    客户端授权上限 判定，不通过返回 FORBIDDEN，且不会进入审批或执行链。
     """
     payload = {
         "server": "hrbpilot-mcp",
@@ -287,8 +294,13 @@ async def hrbpilot_capabilities() -> str:
         "write_tools": sorted(_WRITE_TOOL_NAMES),
         "write_mode": "create-approval-request",
         "transports": ["stdio", "streamable-http:/mcp"],
-        "auth": "Authorization: Bearer <JWT> (tenant_id/role from token); anonymous reads allowed, anonymous writes rejected",
-        "authorization": "每个工具在调用时按调用者角色校验 required_capability；不通过返回 FORBIDDEN，不会进入审批或执行链。",
+        "auth": ("Authorization: Bearer <JWT>；匿名调用不返回任何真实业务数据（读工具返回 AUTH_REQUIRED，写工具被拒）"),
+        "authorization": (
+            "每个工具在调用时按 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限 判定，"
+            "两条出口（/mcp 与 /api/mcp）共用同一判定；不通过返回 FORBIDDEN，"
+            "不会进入审批或执行链。对象级权限在业务执行层再次校验。"
+        ),
+        "required_scopes": {tool.name: tool.required_scope.value for tool in TOOL_CATALOG.tools},
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 

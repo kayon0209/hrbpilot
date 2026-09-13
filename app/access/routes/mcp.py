@@ -6,14 +6,18 @@ The Streamable-HTTP MCP endpoint lives at ``/mcp`` (SDK-managed, mounted in
 protocol.  Every call is tenant-scoped and reuses the existing JWT + Tool
 whitelist + approval gate — nothing bypasses the HR case safety net.
 
-Two rules this module keeps in sync with the protocol surface
--------------------------------------------------------------
+Rules this module keeps in sync with the protocol surface
+---------------------------------------------------------
 1. **同一条实现**：读工具走 ``app.mcp.read_dispatch.run_read_tool``，与 MCP 出口
    是同一条路径（也因此与 agent loop 共用执行器）。这里不再自己写一遍
    "校验参数 + 返回 note"。
-2. **按角色收窄**：``required_capability`` 过去只在执行侧校验，发现侧把整份目录
-   原样返回给任何登录用户。现在发现与调用都按调用者角色过滤/拒绝，两处共用
-   ``app.access.policies.tool_access``，不会各自漂移。
+2. **同一个判定**：授权走 ``app.mcp.auth.authorize_tool_call``，与 ``/mcp`` 共用。
+   改造前这里按角色判定、而 ``/mcp`` 的读工具完全不判定，于是同一个 ``admin``
+   角色在两条出口上结论相反（这里拒、那里放行并返回真实制度正文）。现在两条出口的
+   允许/拒绝由同一个函数决定，拒绝响应也由同一个 ``denial_envelope`` 构造。
+3. **身份只来自已验证凭据**：主体由 ``verified_principal`` 构造，字段取自
+   ``request.scope["auth"]``（AuthMiddleware 写入的已验证 claim），**不**接受
+   工具参数或 ``X-Tenant-ID`` 头覆盖。
 """
 
 from __future__ import annotations
@@ -25,7 +29,18 @@ from pydantic import BaseModel, Field
 
 from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
-from app.access.policies.tool_access import MISSING_CAPABILITY_REASON, partition_tools, tool_allowed
+from app.access.policies.contracts import ToolDefinition
+from app.access.policies.tool_access import MISSING_CAPABILITY_REASON
+from app.access.tokens import SCOPE_AUTH_METHOD_INTERNAL
+from app.mcp.auth import (
+    McpPrincipal,
+    ToolAuthorization,
+    authorize_tool_call,
+    denial_envelope,
+    log_denial,
+    verified_principal,
+    visible_tools,
+)
 from app.mcp.contract import APPROVAL_SUBMITTED_TEMPLATE, ToolOutcome, envelope, failure_envelope
 from app.mcp.read_dispatch import run_read_tool
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, ToolError, validate_tool_call
@@ -36,29 +51,53 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
+#: 与 MCP 协议出口区分开，便于在日志里分辨拒绝来自哪条出口。
+_SURFACE = "rest_bridge"
+
 
 class ToolCallBody(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-def _caller_role(request: Request) -> str | None:
-    """与 RBACMiddleware 同样的解析顺序：先 scope["auth"]，再 state。
+def _principal(request: Request) -> McpPrincipal | None:
+    """从 AuthMiddleware 已验证的身份构造主体。
 
-    BaseHTTPMiddleware 的 state 是逐层副本，所以 scope 更可靠。
+    ``request.scope``（而不是 ``request.state``）是跨中间件层唯一共享的位置 ——
+    BaseHTTPMiddleware 每层拿到的 ``state`` 是副本。这与 RBACMiddleware 的读取
+    顺序一致。
+
+    **只接受平台自签凭据。** 本桥目前无法表达客户端安装实例与授权上限（它只拿到
+    claim 里的三个字段），所以对任何非自签来源一律 fail-closed 返回 None，
+    而不是把它当自签凭据处理 —— 那会静默丢掉客户端上限，让这条桥重新变成最弱
+    的一环。将来接入外部 Agent 授权时，这里必须显式扩展（把完整主体从请求上带
+    过来），而不是靠"没有标记就默认自签"。
     """
     auth = request.scope.get("auth")
-    if isinstance(auth, dict):
-        role = auth.get("role")
-        if isinstance(role, str) and role:
-            return role
-    role = getattr(request.state, "user_role", None)
-    return role if isinstance(role, str) and role else None
+    if not isinstance(auth, dict):
+        return None
+    if auth.get("auth_method") != SCOPE_AUTH_METHOD_INTERNAL:
+        return None
+    user_id = auth.get("user_id")
+    role = auth.get("role")
+    tenant_id = auth.get("tenant_id")
+    # 逐个 isinstance 收窄（而不是 all(...)）：mypy 只在能收窄到 str 时才认，
+    # 否则 Any 会一路传到 verified_principal 的参数上。
+    if not isinstance(user_id, str) or not isinstance(role, str) or not isinstance(tenant_id, str):
+        return None
+    if not user_id or not role or not tenant_id:
+        return None
+    return verified_principal(user_id=user_id, role=role, tenant_id=tenant_id)
 
 
-def _tool_view(name: str) -> dict[str, Any]:
-    tool = next((t for t in TOOL_CATALOG.tools if t.name == name), None)
-    if tool is None:
-        return {"name": name}
+def _denied(decision: ToolAuthorization, principal: McpPrincipal | None) -> dict[str, Any]:
+    """共用的拒绝响应 —— 所有工具、所有拒绝原因都走这里。"""
+    log_denial(decision, principal, surface=_SURFACE)
+    if principal is None:
+        return envelope(decision.tool_name, ToolOutcome.AUTH_REQUIRED)
+    return denial_envelope(decision, tenant_id=principal.tenant_id)
+
+
+def _tool_view(tool: ToolDefinition) -> dict[str, Any]:
     return {
         "name": tool.name,
         "kind": tool.kind.value,
@@ -69,6 +108,7 @@ def _tool_view(name: str) -> dict[str, Any]:
         "input_schema": tool.input_schema,
         "requires_approval": tool.approval_required,
         "capability": tool.required_capability,
+        "scope": tool.required_scope.value,
     }
 
 
@@ -76,31 +116,30 @@ def _tool_view(name: str) -> dict[str, Any]:
 @require_auth
 async def capabilities(request: Request) -> dict[str, Any]:
     tenant_id = require_tenant_id(request)
-    role = _caller_role(request)
-    visible, hidden = partition_tools(TOOL_CATALOG, role)
-    read_tools = [t.name for t in visible if t.kind.value == "read"]
-    write_tools = [t.name for t in visible if t.kind.value == "write"]
+    principal = _principal(request)
+    visible, hidden = visible_tools(principal, TOOL_CATALOG)
     return {
         "server": "hrbpilot-mcp",
         "scope": "L",
-        "role": role or "",
+        "role": principal.role if principal else "",
         "transports": [
             {"kind": "stdio", "command": "python -m app.mcp.server", "note": "Inspector / Claude Desktop — 本地直连"},
             {
                 "kind": "streamable-http",
                 "url": "/mcp",
-                "note": "远程：需 Authorization: Bearer <JWT>，匿名读放行、匿名写拒",
+                "note": "远程：需 Authorization: Bearer <JWT>；匿名调用不返回任何真实业务数据",
             },
         ],
         "tenant_id": tenant_id,
-        "read_tools": [_tool_view(n) for n in read_tools],
-        "write_tools": [_tool_view(n) for n in write_tools],
+        "read_tools": [_tool_view(t) for t in visible if t.kind.value == "read"],
+        "write_tools": [_tool_view(t) for t in visible if t.kind.value == "write"],
         # 被过滤掉的工具不返回名称，只返回数量与原因：让界面能解释"为什么这里
         # 比别人少几个"，同时不把无权限的工具名当作可发现信息暴露出去。
         "hidden_tool_count": len(hidden),
         "hidden_reason": MISSING_CAPABILITY_REASON if hidden else None,
         "write_mode": "create-approval-request",
-        "auth": "读可匿名试，写需登录（携带 JWT）；写工具仅创建 ApprovalRequest，不直执",
+        "auth": "读可匿名试（但拿不到真实数据），写需登录；写工具仅创建 ApprovalRequest，不直执",
+        "authorization": "按 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限 判定，与 /mcp 共用同一判定",
     }
 
 
@@ -108,46 +147,43 @@ async def capabilities(request: Request) -> dict[str, Any]:
 @require_auth
 async def list_tools(request: Request) -> dict[str, Any]:
     _ = require_tenant_id(request)
-    visible, _hidden = partition_tools(TOOL_CATALOG, _caller_role(request))
-    return {"tools": [_tool_view(t.name) for t in visible], "count": len(visible)}
+    visible, _hidden = visible_tools(_principal(request), TOOL_CATALOG)
+    return {"tools": [_tool_view(t) for t in visible], "count": len(visible)}
 
 
 @router.post("/tools/{tool_name}/call")
 @require_auth
 async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dict[str, Any]:
-    tenant_id = require_tenant_id(request)
-    user_id: str = getattr(request.state, "user_id", "unknown")
-    role = _caller_role(request)
+    # 租户上下文缺失时 fail-closed（抛 AuthError → 401），不静默用一个兜底租户。
+    _ = require_tenant_id(request)
+    principal = _principal(request)
 
-    tool = next((t for t in TOOL_CATALOG.tools if t.name == tool_name), None)
-    if tool is None:
-        return failure_envelope(tool_name, "UNKNOWN_TOOL")
+    decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
+    if not decision.allowed:
+        return _denied(decision, principal)
 
-    if not tool_allowed(tool, role):
-        # 执行侧（policy → grant → dispatcher）本来就会拒，这里提前拒是为了
-        # 不让用户走完"提交 → 待审批"才发现这份审批永远不会通过。
-        logger.warning("mcp_bridge_forbidden", tool=tool_name, role=role, tenant_id=tenant_id)
-        return envelope(tool_name, ToolOutcome.FORBIDDEN, tenant_id=tenant_id)
+    assert principal is not None  # 授权通过 ⇒ 一定有身份（匿名在上面已返回）
 
+    tool = next(candidate for candidate in TOOL_CATALOG.tools if candidate.name == tool_name)
     if tool.kind.value != "write":
-        return await run_read_tool(tool_name, body.arguments, tenant_id)
+        return await run_read_tool(tool_name, body.arguments, principal.tenant_id)
 
     case_id = body.arguments.get("case_id")
     if not isinstance(case_id, str) or not case_id.strip():
-        return failure_envelope(tool_name, "CASE_ID_REQUIRED", tenant_id=tenant_id)
+        return failure_envelope(tool_name, "CASE_ID_REQUIRED", tenant_id=principal.tenant_id)
     params = {k: v for k, v in body.arguments.items() if k != "case_id"}
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
-        return failure_envelope(tool_name, e.code, tenant_id=tenant_id)
+        return failure_envelope(tool_name, e.code, tenant_id=principal.tenant_id)
 
     from app.data.database import tenant_session
     from app.scenarios.hr_case_agent.service import HRCaseService
 
-    actor = f"user:{user_id}|role:{role}"
+    actor = f"user:{principal.user_id}|role:{principal.role}"
     try:
-        async with tenant_session(tenant_id) as session:
-            service = HRCaseService(session, tenant_id, actor=actor)
+        async with tenant_session(principal.tenant_id) as session:
+            service = HRCaseService(session, principal.tenant_id, actor=actor)
             approval = await service.request_approval(case_id.strip(), tool_name=tool_name, params=validated)
             await session.commit()
             return envelope(
@@ -156,7 +192,7 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
                 case_id=case_id.strip(),
                 approval_id=approval.id,
                 status=approval.status,
-                tenant_id=tenant_id,
+                tenant_id=principal.tenant_id,
                 user_message=APPROVAL_SUBMITTED_TEMPLATE.format(approval_id=approval.id),
                 next={
                     "approve": f"POST /api/v1/hr-cases/{case_id.strip()}/approve",
@@ -164,8 +200,8 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
                 },
             )
     except AppError as e:
-        logger.warning("mcp_bridge_approval_rejected", tool=tool_name, code=e.code, tenant_id=tenant_id)
-        return failure_envelope(tool_name, e.code, tenant_id=tenant_id)
+        logger.warning("mcp_bridge_approval_rejected", tool=tool_name, code=e.code, tenant_id=principal.tenant_id)
+        return failure_envelope(tool_name, e.code, tenant_id=principal.tenant_id)
     except Exception:
-        logger.exception("mcp_bridge_approval_crashed", tool=tool_name, tenant_id=tenant_id)
-        return failure_envelope(tool_name, "INTERNAL_ERROR", tenant_id=tenant_id)
+        logger.exception("mcp_bridge_approval_crashed", tool=tool_name, tenant_id=principal.tenant_id)
+        return failure_envelope(tool_name, "INTERNAL_ERROR", tenant_id=principal.tenant_id)
