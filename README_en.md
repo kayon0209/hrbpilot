@@ -34,7 +34,7 @@ Making AI in HR **affordable and safe to ship**
 </p>
 
 <p>
-  <img src="./assets/hrbpilot-hero-banner.svg" alt="HRBPilot hero: evidence-grounded answers, guardrails before model calls, and human-approved actions with an audit trail." width="100%">
+  <img src="./assets/hrbpilot-process-board.png" alt="HRBPilot workflow board: business material passes through sensitive-data protection, cited retrieval, and AI synthesis before human HR approval and controlled execution with an auditable, recoverable trail; exceptions are routed to human review." width="100%">
 </p>
 
 <sub>Evidence first, never deciding for people: the system handles high-volume organization while judgement, approval, and accountability remain human.</sub>

@@ -34,7 +34,7 @@
 </p>
 
 <p>
-  <img src="./assets/hrbpilot-hero-banner.svg" alt="HRBPilot 主视觉：制度问答有证据、敏感输入先防护、涉及行动必须人工审批并可追溯。" width="100%">
+  <img src="./assets/hrbpilot-process-board.png" alt="HRBPilot 流程展板：制度与业务材料经敏感信息防护、带来源检索和 AI 归纳后，由 HR 人工复核批准，再进入可审计、可恢复的受控执行；异常路径转人工复核。" width="100%">
 </p>
 
 <sub>证据优先，不替人做决定；把高频整理交给系统，把判断、审批与责任留给人。</sub>
