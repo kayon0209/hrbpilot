@@ -179,7 +179,7 @@ def _ruff() -> dict:
         "command": "python -m ruff check app tests",
         "exit_code": code,
         "errors": int(m.group(1)) if m else 0,
-        "note": "known pre-existing findings (fullwidth-punctuation comments, unused noqa); baseline=74 at freeze time",
+        "note": "exit_code 0 == clean" if code == 0 else "findings recorded at freeze time; inspect command output",
     }
 
 
@@ -190,7 +190,7 @@ def _mypy() -> dict:
         "command": "python -m mypy app",
         "exit_code": code,
         "errors": int(m.group(1)) if m else 0,
-        "note": "known pre-existing findings in retrieval/retriever.py and material_batches.py; baseline=2 at freeze time",
+        "note": "exit_code 0 == clean" if code == 0 else "findings recorded at freeze time; inspect command output",
     }
 
 
@@ -261,8 +261,8 @@ def freeze() -> int:
     ARTIFACT.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Baseline frozen -> {ARTIFACT}")
     print(f"  commit {sha[:12]}  pytest {payload['pytest']['passed']} passed / {payload['pytest']['skipped']} skipped")
-    print(f"  ruff {payload['ruff']['errors']} errors (pre-existing baseline)")
-    print(f"  mypy {payload['mypy']['errors']} errors (pre-existing baseline)")
+    print(f"  ruff exit {payload['ruff']['exit_code']} / {payload['ruff']['errors']} errors")
+    print(f"  mypy exit {payload['mypy']['exit_code']} / {payload['mypy']['errors']} errors")
     web = payload["web"]
     print(
         f"  web: eslint exit {web['eslint']['exit_code']}, build exit {web['build']['exit_code']}, "

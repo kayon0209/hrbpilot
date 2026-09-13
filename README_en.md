@@ -184,7 +184,7 @@ flowchart TB
 
 ## 📊 Evaluation results (real LLM run)
 
-On 2026-08-28 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM (Gitee AI `qwen3.8-flash`). Composition: `policy_qa` and `interview_digest` account for **100 hand-written samples**; `voice_insight`, `weekly_report`, and `culture_content` are **150 deterministically expanded template samples** — the two groups must not be presented as a single data-quality figure.
+On 2026-08-28 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM (Gitee AI `qwen3.8-flash`) at code commit `0a585ca`. Composition: `policy_qa` and `interview_digest` account for **100 hand-written samples**; `voice_insight`, `weekly_report`, and `culture_content` are **150 deterministically expanded template samples** — the two groups must not be presented as a single data-quality figure. Later security, retrieval, and execution changes need a fresh run on a new baseline; this run must not be read as covering them retrospectively.
 
 The externally claimable artifact is `evaluation/results/golden_eval_20260828T215711Z.json`: `for_external_claims: true`, all 250 samples completed, and zero errors. Its repair history discloses two transient-error repairs and three partial reruns after a guardrail fix.
 
@@ -235,7 +235,9 @@ RAG depends on four external services: PostgreSQL, Milvus, MinIO and Redis. Brin
 cp env.docker.example env.docker    # 1. copy the env template
 #  2. fill in env.docker: JWT_SECRET (>=32 chars), EMBEDDING_API_KEY,
 #     LLM_API_KEY, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-docker compose up --build           # 3. start
+docker compose up -d --build        # 3. start the full stack in the background
+docker compose ps                   # 4. confirm service status
+curl -fsS http://127.0.0.1:8001/api/ready  # 5. confirm API readiness (or an explicit degraded state)
 ```
 
 > [!IMPORTANT]
@@ -294,6 +296,12 @@ Upload → safety gate (type / magic bytes / path / PDF structure)
 
 A failed rebuild **keeps the previous usable vectors**; old and new versions are cleaned up precisely by chunk id.
 
+**Deterministic chunk IDs and incremental embeddings**
+
+- A chunk ID is derived deterministically from `(tenant, kb, document, chunk_index)`, so rebuilding the same document position preserves its ID and makes PostgreSQL and Milvus writes naturally idempotent.
+- A rebuild compares `content_sha256`: unchanged chunks reuse their existing vector when the embedding model is unchanged, and only changed text is embedded and billed again.
+- Logs report `embeddings_reused` and `embeddings_computed`, making rebuild cost auditable.
+
 **Querying (read path)**
 
 The original query and a rewritten query (only when it actually changed) both run PostgreSQL keyword retrieval (`plainto_tsquery('simple', jieba_query)`) and Milvus dense retrieval (scalar filtering on `tenant_id` + `kb_id`), then fuse through RRF. A rewrite therefore adds recall candidates instead of replacing and losing the original intent; page evidence stays attached for LLM citations.
@@ -340,11 +348,40 @@ pytest                              # everything
 pytest -m "not integration"         # skip tests that need live PostgreSQL / Milvus
 ```
 
-CI runs `ruff check` · `ruff format --check` · `mypy` · `pytest` on every push and pull request.
+CI runs two jobs on every push and pull request: backend `ruff check` · `ruff format --check` · `mypy` · `pytest`, plus web `pnpm lint` · `tsc -b` · `vitest run`.
 
 ### Reproducible production baseline
 
 Each milestone can run `scripts/freeze_production_baseline.py` to freeze a **non-hand-editable** verification receipt: commit SHA, dependency-lock hashes, timestamp, and measured backend and web checks are bound together with a content hash. `--verify` detects manual edits. It is evidence for one reproducible run, not a permanent green badge; code, dependency, or environment changes require a new freeze.
+
+The current artifact is [`docs/production-baseline.json`](./docs/production-baseline.json). It is bound to one commit and the dependency/service reachability measured there; all test skips are environment-gated (`HRBP_RUN_*` / `DATABASE_URL`), with no owner-less permanent skips. After merging code or dependency changes, run `python scripts/freeze_production_baseline.py` before updating outward-facing claims.
+
+### Web workbench
+
+The `web/` workbench covers policy Q&A, knowledge bases, interview digests, employee voice, HR weekly reports, culture content, retrieval evaluation, and model-service settings. It reads real backend state and has no embedded business mock data.
+
+Start the complete environment with Docker:
+
+```bash
+docker compose up -d --build
+```
+
+Then open the workbench at `http://localhost:3001`, the FastAPI/OpenAPI page at `http://localhost:8001/docs`, or the MinIO console at `http://localhost:9001`. Create login accounts through the project's existing user-initialization flow; never put email addresses, passwords, JWTs, or provider API keys in frontend source.
+
+For frontend-only development, install Node.js 22 and Corepack, then run:
+
+```bash
+corepack pnpm --dir web install
+corepack pnpm --dir web dev
+```
+
+The Vite server runs on `http://localhost:5173` and proxies `/api` to `http://localhost:8001`. Validate the web app with:
+
+```bash
+corepack pnpm --dir web lint
+corepack pnpm --dir web test:run
+corepack pnpm --dir web build
+```
 
 ---
 

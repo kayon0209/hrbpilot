@@ -184,7 +184,7 @@ flowchart TB
 
 ## 📊 评测结果（真实 LLM 跑通）
 
-2026-08-28 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM（Gitee AI `qwen3.8-flash`）完整跑通。样本构成：`policy_qa` 与 `interview_digest` 共 **100 条人工撰写**；`voice_insight`、`weekly_report`、`culture_content` 共 **150 条由确定性模板扩增**，两类不可混作同一数据质量口径。
+2026-08-28 在 **250 样本 golden 集**（5 场景各 50 条，含 5 条注入拒答用例）上以真实 LLM（Gitee AI `qwen3.8-flash`）完整跑通，对应代码提交 `0a585ca`。样本构成：`policy_qa` 与 `interview_digest` 共 **100 条人工撰写**；`voice_insight`、`weekly_report`、`culture_content` 共 **150 条由确定性模板扩增**，两类不可混作同一数据质量口径。后续安全、检索与执行能力的变更，需要在新基线上另行复测，不能倒推为这次运行已经覆盖。
 
 可宣称产物：`evaluation/results/golden_eval_20260828T215711Z.json`（`for_external_claims: true`，250/250 全量、0 错误；`repair_history` 完整披露了 2 次瞬态错误修复与护栏修复后的 3 条部分重跑，其余 247 条继承自基础运行）。
 
@@ -235,7 +235,9 @@ RAG 依赖四个外部服务：PostgreSQL、Milvus、MinIO、Redis。一键拉�
 cp env.docker.example env.docker    # ① 复制环境变量模板
 #  ② 填写 env.docker：JWT_SECRET（≥32 位）、EMBEDDING_API_KEY、
 #     LLM_API_KEY、MINIO_ACCESS_KEY、MINIO_SECRET_KEY
-docker compose up --build           # ③ 启动
+docker compose up -d --build        # ③ 后台启动完整环境
+docker compose ps                   # ④ 确认服务状态
+curl -fsS http://127.0.0.1:8001/api/ready  # ⑤ 确认 API 已就绪（或显示可降级状态）
 ```
 
 > [!IMPORTANT]
@@ -352,7 +354,7 @@ CI 在每次 push 与 PR 上执行后端（`ruff check` · `ruff format --check`
 
 每个里程碑用 `scripts/freeze_production_baseline.py` 冻结一份**不可手改**的验证基线：绑定 commit SHA、依赖锁哈希与冻结时间，记录后端（pytest / ruff / mypy）与前端（lint / tsc / vitest）的实测结果，产物自带内容校验哈希，`--verify` 可检出任何手改。它是某次可复现验证的“收据”，不是永久有效的绿灯；代码、依赖或环境改变后必须重新冻结。
 
-当前冻结基线见 [`docs/production-baseline.json`](./docs/production-baseline.json)。测试中的 skip 全部为环境门控（`HRBP_RUN_*` / `DATABASE_URL`），不存在无人认领的永久 skip。
+当前冻结基线见 [`docs/production-baseline.json`](./docs/production-baseline.json)。它绑定一次特定提交与当时的依赖、服务可达性；测试中的 skip 全部为环境门控（`HRBP_RUN_*` / `DATABASE_URL`），不存在无人认领的永久 skip。合并代码或依赖变更后，请先运行 `python scripts/freeze_production_baseline.py` 再更新对外结论。
 
 ### Web 工作台
 
@@ -394,8 +396,6 @@ corepack pnpm --dir web build
 ```bash
 E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec playwright test
 ```
-
-### 服务依赖与启动（真实 Hybrid RAG）
 
 ---
 
