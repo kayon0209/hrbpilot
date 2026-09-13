@@ -182,6 +182,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 "role": claims.role,
                 "tenant_id": claims.tenant_id,
                 "auth_method": SCOPE_AUTH_METHOD_OAUTH,
+                # 客户端与安装实例维度：限流要按它们分别计数（方案 §WP3），而这里
+                # 是唯一一处已经解过令牌的地方 —— 把它们写进 scope，下游限流就不必
+                # 为了拿这两个值再解析一次令牌（那会多一次数据库查询）。
+                "client_id": claims.client_id,
+                "installation_id": claims.family_id,
             }
             return await call_next(request)
 

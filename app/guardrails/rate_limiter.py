@@ -32,23 +32,8 @@ class RateLimiter:
                 return
             raise RateLimitError("请求过于频繁，请稍后再试")
 
-        now_ms = int(time.time() * 1000)
-        window_ms = _WINDOW_SECONDS * 1000
-        tenant_key = f"ratelimit:tenant:{tenant_id}"
-        user_key = f"ratelimit:user:{user_id}"
-        window_start = now_ms - window_ms
-
-        async def _check_key(key: str, limit: int) -> bool:
-            member = f"{time.time_ns()}:{uuid4().hex}"
-            await redis.zremrangebyscore(key, 0, window_start)
-            await redis.zadd(key, {member: now_ms})
-            await redis.zremrangebyscore(key, 0, window_start)
-            await redis.expire(key, _WINDOW_SECONDS + 5)
-            count = await redis.zcard(key)
-            return int(count) <= limit
-
-        tenant_ok = await _check_key(tenant_key, tenant_limit)
-        user_ok = await _check_key(user_key, user_limit)
+        tenant_ok = await self._within(redis, f"ratelimit:tenant:{tenant_id}", tenant_limit)
+        user_ok = await self._within(redis, f"ratelimit:user:{user_id}", user_limit)
         if not tenant_ok or not user_ok:
             logger.warning(
                 "rate_limit_exceeded",
@@ -58,3 +43,39 @@ class RateLimiter:
                 user_exceeded=not user_ok,
             )
             raise RateLimitError("请求过于频繁，请稍后再试")
+
+    async def check_bucket(self, bucket: str, key: str, limit: int) -> None:
+        """按**任意**维度限流：``bucket`` 是维度名，``key`` 是该维度下的主体。
+
+        为什么要有它：``check`` 只认 tenant + user 两个维度，而外部 Agent 的调用
+        必须能按**客户端**与**安装实例**分别计数 —— 否则一个行为异常的客户端会
+        占掉它所有用户的配额，而按租户根本看不出是哪个客户端干的（方案 §WP3）。
+
+        Redis 不可用时与 ``check`` 同样的策略：非生产环境放行，生产环境拒绝。
+        这里**不做**本地内存兜底计数 —— 多实例下每个实例各自计数，实际额度会变成
+        "单实例上限 × 实例数"，那是一个看起来生效、实际没生效的限流。
+        """
+        if limit <= 0:
+            return
+        redis = self.redis or await get_redis()
+        if redis is None:
+            if settings.rate_limit_fail_open and not settings.is_production:
+                logger.info("rate_limit_passthrough", bucket=bucket, reason="redis_unavailable")
+                return
+            raise RateLimitError("请求过于频繁，请稍后再试")
+        if not await self._within(redis, f"ratelimit:{bucket}:{key}", limit):
+            logger.warning("rate_limit_exceeded", bucket=bucket, exceeded_key=key, limit=limit)
+            raise RateLimitError("请求过于频繁，请稍后再试")
+
+    @staticmethod
+    async def _within(redis: object, key: str, limit: int) -> bool:
+        """滑动窗口计数：记录本次请求，然后判断窗口内是否超阈值。"""
+        now_ms = int(time.time() * 1000)
+        window_start = now_ms - _WINDOW_SECONDS * 1000
+        member = f"{time.time_ns()}:{uuid4().hex}"
+        await redis.zremrangebyscore(key, 0, window_start)  # type: ignore[attr-defined]
+        await redis.zadd(key, {member: now_ms})  # type: ignore[attr-defined]
+        await redis.zremrangebyscore(key, 0, window_start)  # type: ignore[attr-defined]
+        await redis.expire(key, _WINDOW_SECONDS + 5)  # type: ignore[attr-defined]
+        count = await redis.zcard(key)  # type: ignore[attr-defined]
+        return int(count) <= limit

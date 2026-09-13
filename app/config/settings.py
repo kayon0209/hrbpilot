@@ -243,6 +243,23 @@ class Settings(BaseSettings):
     rate_limit_user_per_minute: int = 30
     rate_limit_fail_open: bool = False
 
+    # 外部 Agent 的限流维度（方案 §WP3）。``/mcp`` 不能复用 tenant/user 两个桶：
+    # 一个 Agent 可以在几秒内打出上百次调用，而它和为它授权的**人**共享同一个
+    # user 桶 —— 结果是用户被自己的客户端挤下线，而按租户看不出是哪个客户端干的。
+    # MCP_ACCEPTS_PLATFORM_TOKENS 下平台令牌没有 client/installation 维度，
+    # 只能落到 user 桶，这一点在代码里按维度缺失处理，不是静默跳过。
+    mcp_rate_limit_user_per_minute: int = 120
+    mcp_rate_limit_client_per_minute: int = 600
+    mcp_rate_limit_installation_per_minute: int = 300
+
+    # OAuth 匿名端点（authorize / token / register / introspect）按 IP 与 client_id
+    # 分别计数。它们**早于任何身份**被调用，因此只能按 IP 兜底；按 client_id 是
+    # 为了在已知客户端时能给出比 IP 更准的桶（同一 NAT 后可能有多个用户）。
+    oauth_authorize_per_minute_per_ip: int = 30
+    oauth_token_per_minute_per_ip: int = 60
+    oauth_introspect_per_minute_per_ip: int = 120
+    oauth_token_per_minute_per_client: int = 300
+
     enable_dev_users: bool = False
 
     celery_broker_url: str = "redis://localhost:6379/1"

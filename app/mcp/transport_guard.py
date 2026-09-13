@@ -55,12 +55,18 @@ from app.access.resource_metadata import (
 )
 from app.access.scopes import Scope
 from app.config.settings import settings
+from app.guardrails.rate_limiter import RateLimiter
 from app.mcp.auth import McpPrincipal, authorize_tool_call, log_denial, principal_from_headers
 from app.mcp.auth.authorization import DenyReason
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
+from app.shared.errors import RateLimitError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+#: 限流窗口长度（秒），与 ``app.guardrails.rate_limiter`` 的窗口一致。
+#: 用于 ``Retry-After`` —— 告诉客户端"多久之后重试有意义"，而不是让它自己猜。
+_WINDOW_SECONDS = 60
 
 #: ASGI 三件套。显式写出来而不是一律用 ``Any``：``receive`` 的返回类型决定了
 #: 取到的消息要不要再判空，``app`` 的类型决定了它能不能被 ``mount`` 接受 ——
@@ -149,6 +155,57 @@ async def _resolve_principal(scope: AsgiScope) -> McpPrincipal | None:
     return await principal_from_headers(_headers_from_scope(scope))
 
 
+async def _rate_limit_response(scope: AsgiScope) -> JSONResponse | None:
+    """/mcp 的限流：按 用户 / 客户端 / 安装实例 三个维度分别计数。
+
+    维度取自 ``scope["auth"]``（由 ``AuthMiddleware._dispatch_mcp`` 写入），
+    因此这里不需要再解析一次令牌 —— 那会多一次 JWKS 取用与数据库查询。
+
+    为什么要按客户端与安装实例单独计数：一个行为异常的 Agent 会占掉为它授权的
+    **那个用户**的配额，而按用户看不出是哪个客户端干的，按租户更看不出来
+    （方案 §WP3：避免登录流量挤占业务调用）。
+
+    平台自签令牌没有 client / installation 维度，这时只按用户计数。**不是**静默
+    跳过：少两个维度会让这个令牌的实际额度更宽松，这一点必须能被看出来 ——
+    所以下面的桶是显式按"维度存在才计"组织的。
+    """
+    auth = scope.get("auth")
+    if not isinstance(auth, dict):
+        return None
+
+    limiter = RateLimiter()
+    user_id = auth.get("user_id")
+    client_id = auth.get("client_id")
+    installation_id = auth.get("installation_id")
+
+    checks: list[tuple[str, str, int]] = []
+    if user_id:
+        checks.append(("mcp-user", str(user_id), settings.mcp_rate_limit_user_per_minute))
+    if client_id:
+        checks.append(("mcp-client", str(client_id), settings.mcp_rate_limit_client_per_minute))
+    if installation_id:
+        checks.append(("mcp-installation", str(installation_id), settings.mcp_rate_limit_installation_per_minute))
+
+    try:
+        for bucket, key, limit in checks:
+            await limiter.check_bucket(bucket, key, limit)
+    except RateLimitError as exc:
+        logger.warning(
+            "mcp_rate_limited",
+            user_id=user_id,
+            client_id=client_id,
+            installation_id=installation_id,
+        )
+        # 429 必须带 Retry-After：否则客户端唯一能做的合理反应就是立刻重试，
+        # 于是限流本身变成了放大流量的东西。
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": exc.code, "status": exc.status_code, "message": exc.message},
+            headers={"Retry-After": str(_WINDOW_SECONDS)},
+        )
+    return None
+
+
 class InsufficientScopeGuard:
     """把 scope 类拒绝翻译成 HTTP 403 的 ASGI 中间件。
 
@@ -164,6 +221,11 @@ class InsufficientScopeGuard:
     async def __call__(self, scope: AsgiScope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http" or scope.get("method") != "POST":
             await self.app(scope, receive, send)
+            return
+
+        throttled = await _rate_limit_response(scope)
+        if throttled is not None:
+            await throttled(scope, receive, send)
             return
 
         chunks, complete = await self._buffer(receive)

@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from app.config.settings import settings
 from app.oauth.keys import active_signing_key
+from app.oauth.rate_limit import OAuthRateLimitMiddleware
 from app.oauth.registry import sync_preconfigured_clients
 from app.oauth.routes.authorize import router as authorize_router
 from app.oauth.routes.discovery import router as discovery_router
@@ -61,6 +62,9 @@ def create_oauth_app() -> FastAPI:
     app.include_router(token_router)
     app.include_router(introspect_router)
     app.include_router(register_router)
+    # 加在最后：Starlette 的中间件是"后加的先执行"，因此这一层最先看到请求 ——
+    # 被限流的调用不该再走一次签名密钥加载或数据库查询。
+    app.add_middleware(OAuthRateLimitMiddleware)
     return app
 
 

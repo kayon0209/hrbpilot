@@ -13,14 +13,44 @@ from collections.abc import Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.config.settings import settings
+from app.guardrails.rate_limiter import RateLimiter
 from app.oauth.authorization import AuthorizationCodeError, redeem_authorization_code
 from app.oauth.metadata import REVOCATION_PATH, TOKEN_PATH
 from app.oauth.registry import resolve_client
 from app.oauth.tokens import TokenError, issue_tokens_for_authorization, revoke_token, rotate_refresh_token
+from app.shared.errors import RateLimitError
+from app.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["oauth-token"])
 
 _NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+
+_WINDOW_SECONDS = 60
+
+
+async def _throttle_client(client_id: str) -> JSONResponse | None:
+    """按 client_id 限流。返回 ``None`` 表示未超限。
+
+    为什么要单独一维：IP 维度在 NAT 或同一台机器上跑多个客户端时是**共用的** ——
+    一个失控的客户端会把同 IP 上所有人的额度耗光，而按 IP 排查时根本分不出是谁。
+    ``client_id`` 是这一刻唯一已知的、能归属到具体客户端的值。
+    """
+    limit = settings.oauth_token_per_minute_per_client
+    if limit <= 0:
+        return None
+    try:
+        await RateLimiter().check_bucket("oauth-token-client", client_id, limit)
+    except RateLimitError:
+        logger.warning("oauth_token_rate_limited", client_id=client_id, limit=limit)
+        return JSONResponse(
+            status_code=429,
+            content={"error": "temporarily_unavailable", "error_description": "Too many requests"},
+            headers={**_NO_STORE, "Retry-After": str(_WINDOW_SECONDS)},
+        )
+    return None
 
 
 def oauth_error(error: str, description: str, *, status_code: int) -> JSONResponse:
@@ -70,6 +100,12 @@ async def token(request: Request) -> JSONResponse:
     client = await resolve_client(client_id)
     if client is None:
         return oauth_error("invalid_client", "unknown client", status_code=401)
+
+    # 按 client_id 的那一维限流放在这里而不是中间件里：中间件读表单会消费请求体，
+    # 下游就拿不到了。这里表单已经解析完，顺手计数不产生第二次读取。
+    throttled = await _throttle_client(client.client_id)
+    if throttled is not None:
+        return throttled
 
     grant_type = str(form.get("grant_type") or "")
     try:
