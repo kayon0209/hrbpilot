@@ -44,11 +44,13 @@ mcp 2.x ``MCPServer`` surface (``mcp.server.fastmcp`` was renamed).
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.server import MCPServer
 
+from app.mcp.audit import record_mcp_call
 from app.mcp.auth import (
     McpPrincipal,
     authorize_tool_call,
@@ -99,15 +101,42 @@ def _actor_label(principal: McpPrincipal | None) -> str:
     return f"user:{principal.user_id}|role:{principal.role}"
 
 
+def _elapsed_ms(started: float) -> int:
+    """``time.perf_counter`` 起点 → 整数毫秒。"""
+    return int((time.perf_counter() - started) * 1000)
+
+
 async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None) -> dict[str, Any]:
     """读工具的统一入口：先授权，再交给 ``run_read_tool``。"""
+    started = time.perf_counter()
     principal = await _principal_from_ctx(ctx)
     decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
 
     if principal is not None and decision.allowed:
-        return await run_read_tool(tool_name, params, principal.tenant_id)
+        result = await run_read_tool(tool_name, params, principal.tenant_id)
+        await record_mcp_call(
+            principal,
+            tool=tool_name,
+            outcome_code=str(result.get("outcome") or ""),
+            latency_ms=_elapsed_ms(started),
+            params=params,
+        )
+        return result
 
     log_denial(decision, principal, surface=_SURFACE)
+    # 被拒的调用也要留痕：只记成功调用等于把"有人在试探边界"从审计里删掉。
+    await record_mcp_call(
+        principal,
+        tool=tool_name,
+        outcome_code=(
+            ToolOutcome.AUTH_REQUIRED.value
+            if principal is None
+            else (decision.deny_outcome or ToolOutcome.FAILED).value
+        ),
+        deny_reason=decision.deny_reason.value if decision.deny_reason else None,
+        latency_ms=_elapsed_ms(started),
+        params=params,
+    )
     if principal is None:
         # 匿名不是"错误"，是"没有作用范围"：返回 AUTH_REQUIRED 信封，只回显
         # 已校验参数，不含任何真实数据（anonymous_read_envelope 保证这一点）。
@@ -175,10 +204,24 @@ async def _create_approval_via_mcp(
     case_id: str,
     ctx: Context | None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     principal = await _principal_from_ctx(ctx)
     decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
     if not decision.allowed:
         log_denial(decision, principal, surface=_SURFACE)
+        await record_mcp_call(
+            principal,
+            tool=tool_name,
+            outcome_code=(
+                ToolOutcome.AUTH_REQUIRED.value
+                if principal is None
+                else (decision.deny_outcome or ToolOutcome.FAILED).value
+            ),
+            deny_reason=decision.deny_reason.value if decision.deny_reason else None,
+            latency_ms=_elapsed_ms(started),
+            params=params,
+            object_ref=case_id,
+        )
         if principal is None:
             return envelope(tool_name, ToolOutcome.AUTH_REQUIRED)
         # 提前拒是为了让用户在提交之前就知道结果，而不是等一个注定失败的审批。
@@ -198,6 +241,17 @@ async def _create_approval_via_mcp(
             service = HRCaseService(session, principal.tenant_id, actor=_actor_label(principal))
             approval = await service.request_approval(case_id, tool_name=tool_name, params=validated)
             await session.commit()
+            # 审计要能把"这次调用"与"它产生的审批"串起来 —— 事后追责时问的正是
+            # "这条审批是哪个客户端、哪一次调用发起的"。
+            await record_mcp_call(
+                principal,
+                tool=tool_name,
+                outcome_code=ToolOutcome.AWAITING_APPROVAL.value,
+                latency_ms=_elapsed_ms(started),
+                params=params,
+                object_ref=case_id,
+                approval_id=approval.id,
+            )
             return envelope(
                 tool_name,
                 ToolOutcome.AWAITING_APPROVAL,

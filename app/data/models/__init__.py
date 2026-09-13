@@ -23,6 +23,7 @@ from app.data.models.hr_case import (
 from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEntry
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.data.models.material import Employee, InterviewRecord, MaterialBatch, VoiceEntry
+from app.data.models.mcp_audit import McpCallAudit
 from app.data.models.notification import InAppNotification
 from app.data.models.oauth import (
     OAuthAuthorizationCode,
@@ -75,6 +76,7 @@ __all__ = [
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
     "MaterialBatch",
+    "McpCallAudit",
     "OAuthAuthorizationCode",
     "OAuthClient",
     "OAuthNonce",

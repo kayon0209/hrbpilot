@@ -56,6 +56,7 @@ from app.access.resource_metadata import (
 from app.access.scopes import Scope
 from app.config.settings import settings
 from app.guardrails.rate_limiter import RateLimiter
+from app.mcp.audit import record_mcp_call
 from app.mcp.auth import McpPrincipal, authorize_tool_call, log_denial, principal_from_headers
 from app.mcp.auth.authorization import DenyReason
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
@@ -97,21 +98,35 @@ def _headers_from_scope(scope: AsgiScope) -> dict[str, str]:
     return {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in raw}
 
 
-def _tool_names_from_body(body: bytes) -> tuple[str, ...]:
+def _as_object(value: Any) -> object:
+    """把 json.loads 的 Any 收成 object —— 否则 mypy 会一路把 Any 往外传。"""
+    return value
+
+
+def _parse_json_rpc(body: bytes) -> object | None:
+    """解析 JSON-RPC 请求体。解析不了返回 ``None``（= 没有信息可判）。"""
+    try:
+        return _as_object(json.loads(body))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _messages(payload: object) -> list[Any]:
+    """把单个请求与批处理数组统一成消息列表。"""
+    if isinstance(payload, list):
+        return list(payload)
+    return [payload] if payload is not None else []
+
+
+def _tool_names(payload: object) -> tuple[str, ...]:
     """从 JSON-RPC 请求体里取出被调用的工具名。
 
     覆盖三种形态：单个 ``tools/call``、JSON-RPC 批处理数组、以及与之无关的
     其它方法（``initialize`` / ``tools/list`` / 通知）。后者返回空元组 ——
     没有工具名就没有 scope 可判，直接放行。
     """
-    try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return ()
-
-    messages = payload if isinstance(payload, list) else [payload]
     names: list[str] = []
-    for message in messages:
+    for message in _messages(payload):
         if not isinstance(message, dict):
             continue
         if message.get("method") != "tools/call":
@@ -123,6 +138,20 @@ def _tool_names_from_body(body: bytes) -> tuple[str, ...]:
         if isinstance(name, str) and name:
             names.append(name)
     return tuple(names)
+
+
+def _arguments_of(payload: object, tool_name: str) -> dict[str, Any] | None:
+    """取某个 ``tools/call`` 的参数，供审计算摘要（只算摘要，不落原文）。"""
+    for message in _messages(payload):
+        if not isinstance(message, dict) or message.get("method") != "tools/call":
+            continue
+        params = message.get("params")
+        if not isinstance(params, dict) or params.get("name") != tool_name:
+            continue
+        arguments = params.get("arguments")
+        if isinstance(arguments, dict):
+            return arguments
+    return None
 
 
 def _insufficient_scope_response(required_scope: str) -> JSONResponse:
@@ -235,7 +264,8 @@ class InsufficientScopeGuard:
             return
 
         body = b"".join(chunk.get("body", b"") for chunk in chunks)
-        names = _tool_names_from_body(body)
+        payload = _parse_json_rpc(body)
+        names = _tool_names(payload)
         if not names:
             await self.app(scope, self._replay(chunks, receive), send)
             return
@@ -246,6 +276,15 @@ class InsufficientScopeGuard:
             if decision.allowed or decision.deny_reason not in _SCOPE_DENIALS:
                 continue
             log_denial(decision, principal, surface=_SURFACE)
+            # 这一层拒绝之后 MCP 子应用不会被调用，工具层的审计点也就不会执行 ——
+            # 所以 403 必须自己留痕，否则这类拒绝在审计里完全消失。
+            await record_mcp_call(
+                principal,
+                tool=name,
+                outcome_code="FORBIDDEN",
+                deny_reason=decision.deny_reason.value if decision.deny_reason else None,
+                params=_arguments_of(payload, name),
+            )
             if decision.required_scope is None:
                 continue
             response = _insufficient_scope_response(decision.required_scope.value)
