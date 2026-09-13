@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { listPolicyKnowledgeBases, listPolicySessions, getPolicySessionMessages, streamPolicyAnswer, submitPolicyFeedback, type PolicySource } from '../../api/policy-qa'
 import { AsyncState } from '../../components/AsyncState'
+import { MarkdownAnswer } from './MarkdownAnswer'
 import styles from './PolicyQaPage.module.css'
 
 /**
@@ -194,7 +195,7 @@ export function PolicyQaPage() {
             <span className={styles.retrievingSymbol} aria-hidden="true"><span className={styles.retrievingDots}><i /><i /></span></span>
             <div><strong>正在查阅相关制度</strong><p>正在查阅已索引的制度文件。</p></div>
           </div>
-        )}{phase === 'error' && <AsyncState kind="error" title="问答未完成" detail={error} />}{answer && <article className={styles.prose}>{answer}</article>}{answerIncomplete && answer && (
+        )}{phase === 'error' && <AsyncState kind="error" title="问答未完成" detail={error} />}{answer && <article className={styles.prose}><MarkdownAnswer text={answer} /></article>}{answerIncomplete && answer && (
           <p className={styles.incompleteNote} role="status">
             回答未完整生成：以上内容可能缺少结论或下一步，请重新提问补全后再采用。
           </p>
