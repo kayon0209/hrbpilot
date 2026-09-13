@@ -34,7 +34,7 @@ Making AI in HR **affordable and safe to ship**
 </p>
 
 <p>
-  <img src="./assets/hrbpilot-hero.png" alt="HRBPilot hero: an HR professional reviews cited evidence cards while AI organizes knowledge, with guardrails and human approval visible throughout the flow." width="100%">
+  <img src="./assets/hrbpilot-hero-banner.svg" alt="HRBPilot hero: evidence-grounded answers, guardrails before model calls, and human-approved actions with an audit trail." width="100%">
 </p>
 
 <sub>Evidence first, never deciding for people: the system handles high-volume organization while judgement, approval, and accountability remain human.</sub>

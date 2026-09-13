@@ -34,7 +34,7 @@
 </p>
 
 <p>
-  <img src="./assets/hrbpilot-hero.png" alt="HRBPilot 主视觉：HR 负责人核对带来源的证据卡片，AI 协助整理知识，护栏与人工审批贯穿流程。" width="100%">
+  <img src="./assets/hrbpilot-hero-banner.svg" alt="HRBPilot 主视觉：制度问答有证据、敏感输入先防护、涉及行动必须人工审批并可追溯。" width="100%">
 </p>
 
 <sub>证据优先，不替人做决定；把高频整理交给系统，把判断、审批与责任留给人。</sub>
