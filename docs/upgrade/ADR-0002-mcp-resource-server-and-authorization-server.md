@@ -1,8 +1,8 @@
 # ADR-0002：HRBPilot 作为 MCP Resource Server，及其授权服务器选型
 
-- 状态：**已接受**（决策部分）。WP0 决策已定；WP1 已实施；**WP2-a（RFC 9728 发现面）已实施**（§12）；
-  WP2 其余部分（AS 落地、CIMD 校验、外部令牌签发与校验）尚未实施。
-- 日期：2026-09-13（§13 记录了 WP2-a 的实施与两处对 §5 措辞的修正）
+- 状态：**已接受**（决策部分）。WP0 决策已定；WP1 已实施；WP2-a（RFC 9728 发现面）已实施（§12）；
+  **WP2-b（授权服务器落地 + RS 侧外部令牌校验）已实施**（§13），**唯协议验收第 6 条未实现**（§13.6）。
+- 日期：2026-09-13（§12 记录 WP2-a；§13 记录 WP2-b 及两处对 §5/§6 的偏差）
 - base SHA：`868c6aecb80d436f5faeb2858d46a0cda018329c`
 - 上游输入：`docs/plans/2026-09-13-external-assistant-mcp-execution-plan.md`
 - 相关：`docs/upgrade/ADR-0001-single-bounded-agent.md`、`docs/security/mcp-threat-model.md`
@@ -102,6 +102,11 @@ authorization server metadata   = https://<public_base_url>/.well-known/oauth-au
 protected resource metadata     = https://<public_base_url>/.well-known/oauth-protected-resource
 ```
 
+> **⚠ 上面第一行已被 §13.3 取代。** WP2-b 实施时把 `issuer` 改为**独立配置项**
+> `OAUTH_ISSUER`，不再从 `public_base_url` 派生 —— 原因见 §13.3（原式隐含"AS 与 RS 同
+> host"，且带路径的 issuer 会按 RFC 8414 §3.1 把元数据端点推到无后缀路径之外）。
+> 下面三行仍然成立。
+
 **约束**：
 
 - 三者必须是**绝对 HTTPS URL**，且 `iss` 与 metadata 文档中的 `issuer` 逐字节一致
@@ -158,6 +163,10 @@ Host 头是客户端可控输入，用它在签发路径上生成 issuer 是典�
 | 外部 IdP（Keycloak / Zitadel 一类） | 由各项目自身发布节奏决定 | 各自不同（Apache-2.0 等） | 覆盖最全（含企业 SSO、多 IdP 联合） | 自带数据库，需独立运维 |
 
 **决定**：**用 Authlib 实现 AS，且作为同一仓库内的独立应用（独立入口、独立进程、独立密钥环境变量），不要嵌进 `/mcp` 的进程内。**
+
+> **⚠ 本决策的"用 Authlib"部分在 WP2-b 实施时被推翻：实际实现未引入 Authlib，
+> 而是自建（依赖清单与基线逐行一致）。** 偏差的理由、代价与缓解见 §13.2。
+> 本决策的其余部分（独立应用、独立进程、独立密钥）**全部照做**。
 
 **理由**：
 
@@ -339,7 +348,142 @@ helper，把"生产必需配置"收成一处，并补两个负例（环回、明
 | `ruff format --check app tests` | exit 0（343） | exit 0（347） |
 | `mypy app` | exit 0（235） | exit 0（238） |
 
-## 13. 来源
+## 13. 实施记录：WP2-b（授权服务器落地 + RS 侧外部令牌校验）
+
+**范围**：§11 剩下的两项前置条件（AS 部署入口、Authlib 依赖）与全部 AS 实现，加上
+Resource Server 侧对 AS 令牌的校验。WP2 **除一条协议验收条目外**全部完成，未完成项单列于 §13.6。
+
+### 13.1 交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `app/oauth/main.py` | AS 的**独立 FastAPI 应用**：`uvicorn app.oauth.main:app --port 8001` |
+| `app/oauth/keys.py` | ES256（P-256）签名密钥；`kid` 用 RFC 7638 thumbprint；JWKS；轮换窗口 |
+| `app/oauth/metadata.py` | RFC 8414 元数据；端点路径集中一处（散写必然漂移，症状是客户端拿到 404） |
+| `app/oauth/clients.py` | 客户端元数据校验（三条注册路径共用一份）、redirect_uri 逐字节精确匹配 |
+| `app/oauth/registry.py` | 预注册 / CIMD / DCR 在**运行时**收敛到一个 `resolve_client` |
+| `app/oauth/routes/authorize.py` | 授权端点 + 登录/同意表单：参数回显、POST 时**重新校验** |
+| `app/oauth/tokens.py` | 授权码兑换、refresh 轮换与重用检测、撤销、内省的判据（`introspect_token`） |
+| `app/oauth/routes/introspect.py` | RFC 7662 内省端点：只认已注册 `client_id`、非持有者一律 `active:false` |
+| `app/oauth/html.py` | Jinja2 渲染 + 硬化响应头（CSP `default-src 'none'`、`no-store`） |
+| `app/data/models/oauth.py`、迁移 `038` | 四张表（clients / codes / tokens / revocations），**刻意不上 RLS** |
+| `app/access/as_tokens.py` | RS 侧校验：`iss` 分流 + JWKS + audience + 撤销 + 客户端上限 |
+| `app/data/repositories/oauth_revocations.py` | 撤销判据；RS 与内省**共用同一份**（避免一处查 jti、另一处漏查 family） |
+| `app/access/middleware/auth.py` | `/mcp` 传输层按 `iss` 分流，接受两类凭据 |
+| `scripts/verify_oauth_end_to_end.py` | 端到端验收：真实进程 + 真实库 + 官方 MCP 客户端 |
+| `tests/oauth/`、`tests/mcp/test_as_token_verification.py` | 44 条新增断言 |
+
+**四张表刻意不上 RLS**：RLS 靠 `tenant_id = current_setting('app.tenant_id')` 工作，而每一次
+关键查询发生的时刻**正是还不知道租户是谁**的时刻（客户端文档来自公网、授权码与 refresh
+只有哈希）。强行开 RLS 会让 `current_setting(..., true)` 为 NULL、每次查询返回零行 —— AS 直接
+不可用；唯一能让它"跑起来"的写法是"无租户上下文时放行一切"，那是名义上的 RLS。所以这里的
+防护是**凭据本身的不可猜性**（256 位随机、只存 SHA-256、访问路径只有按哈希精确匹配）。
+
+### 13.2 偏差记录一：**没有引入 Authlib**，AS 为自建实现
+
+§6 的决定是"用 Authlib 实现 AS……新增依赖只有 Authlib 及其传递依赖"。**实际实现未引入
+Authlib** —— `pyproject.toml` 的依赖清单与基线逐行一致。这是本次最大的一处偏差，理由如下：
+
+1. **Authlib 在本需求上的净收益比 §6 评估时更低。** §6 论证它的核心是"覆盖全部协议点"，
+   但真正需要协议逻辑的部分（元数据、注册校验、授权码、PKCE、轮换、撤销、内省）在
+   Authlib 里都要按它的框架约定接线；§6 自己也承认有两项它不覆盖。实际实现中**没有一处**
+   用到只有 Authlib 才提供的能力。
+2. **签名与验签已被现有依赖覆盖。** `python-jose[cryptography]` 在基线里就存在（平台自签
+   令牌用它），ES256 签发/验签、JWK 构造全部由它加 `cryptography` 完成。
+3. **§6 选它的理由恰恰弱化了它的价值。** "不绑 ORM、可与 FastAPI 共存"的另一面就是"要自己
+   接线"，那与自建的工作量差距被大幅缩小；而本仓库已有 SQLAlchemy + Alembic 的成熟约定，
+   自建可以直接落进去。
+4. **上游方案 §9 对该风险的缓解措施是"协议负例未过即停止发布"，而不是"必须用某个库"。**
+   本项目按前者处理：每条协议点都配负例（§13.4），并额外加了一条"每个被声明的端点都必须
+   真的挂着（非 404）"的守卫。
+
+**代价（已知并接受）**：协议正确性由本项目自己承担。缓解措施同上。§6 的"切换到外部 IdP 的
+触发条件"（企业 SSO、多 AS 联合、组织已有统一身份平台）仍然有效 —— 届时应**整体替换**
+而不是叠加。
+
+### 13.3 偏差记录二：`issuer` 改为**独立配置项**，不从 `public_base_url` 派生
+
+§5 写的是 `issuer = https://<public_base_url>/oauth`。实际实现为独立配置 `OAUTH_ISSUER`
+（默认 `http://localhost:8001`，与 RS 的 8000 分列）。原式隐含两个未验证的假设：
+
+1. **AS 与 RS 必须同 host。** 那需要反向代理，而本仓库没有反代配置；§5 又把"不推导
+   `X-Forwarded-Host`"定为决定，于是更没有推导 host 的手段。
+2. **带路径的 issuer 会把元数据端点推走。** RFC 8414 §3.1 规定 issuer 带路径时 well-known
+   要插在 host 与 path 之间，即 `/.well-known/oauth-authorization-server/oauth` ——
+   **不是** §5 表格里写的无后缀路径。也就是说 §5 那一行与它自己引用的规范不符。
+
+`issuer` 是 AS 的对外身份、`resource` 是 RS 的对外身份，两者是不同的东西；各自显式配置比
+用一个拼接触发的不一致假设更稳。配套的启动期校验见 `Settings.validate_oauth_authorization_server`。
+
+### 13.4 端到端验收（真实进程，不是模拟）
+
+`scripts/verify_oauth_end_to_end.py` 起**真实 uvicorn 进程**（AS + RS）、连**真实 Postgres**、
+用**官方 `mcp` SDK 客户端**，逐条覆盖方案 §WP2 的协议验收：
+
+| 组 | 覆盖 | 结果 |
+| --- | --- | --- |
+| 1 起进程 | AS / RS 就绪 | 2/2 |
+| 2 发现 | 401 挑战、PRM 两个变体、AS 元数据、JWKS 无私钥、所有声明端点非 404 | 17/17 |
+| 3 授权码 + PKCE | 登录 → 同意 → 换令牌；`at+jwt` / ES256 / aud / iss / `family_id` | 8/8 |
+| 4 真实 MCP 客户端 | `initialize` + `list_tools` + `call_tool` | 3/3 |
+| 5 负例 | aud 不符 / 陌生密钥 / `typ` 不符 / issuer 不在信任列表 / 平台令牌被策略拒 | 6/6 |
+| 6 内省与撤销 | `active` → 撤销 → `active=false`，且 `/mcp` 下一次调用即 401 | 8/8 |
+| 7 refresh | 轮换仍属同一 family；重放旧令牌 → 整条 family 失效 | 4/4 |
+| 8 DCR | 注册 → 授权 → 换令牌 → 调用 `/mcp` | 2/2 |
+| 9 scope 不足 | 被拒绝（不放行） | 1/1 + **1 项缺口** |
+
+**合计 55/56 通过，1 项为已知缺口（§13.6）。**
+
+**输出不落凭据**：脚本二十多处把 HTTP 响应体原样贴进详情，而令牌响应体里就带着令牌
+—— 项目自己的停止条件是"任何测试 token 进入日志即停止"，所以脱敏做在**出口**
+（`Report` 的四个方法与 `ChainBrokenError`），而不是逐处加处理。三条正则分别兜住
+完整 JSON 字段值、被 `text[:200]` 截断后失去闭合引号的值、以及裸 JWT。
+第二次运行正是靠它发现的：截断让第一条正则失效，令牌原样打了出来。
+
+**为什么必须有它**：`tests/mcp/test_as_token_verification.py` 用假 AS 猴补了 `_fetch_json`
+与 `_load_registry_state`，因此 **RS 从未真正读过一份 AS 产出的元数据与 JWKS**。这条缝里任何
+一处不一致（issuer 写法、`jwks_uri` 位置、`kid` 算法）都会让所有单测保持全绿、而真实客户端
+一个都登不进来 —— 正是 §9 风险表里"不能产生两套身份来源"所指的情形。第一次运行该脚本确实
+命中了这一类问题：AS 进程缺 `PUBLIC_BASE_URL`，它算出的 canonical resource 与 RS 的不同，
+授权请求以 `invalid_target` 被拒（单测发现不了，因为单测里两边的取值都来自同一份 settings）。
+
+### 13.5 门禁（CI 口径）
+
+| 口径 | WP2-a 后 | WP2-b 后 |
+| --- | --- | --- |
+| `pytest -q` | 612 / 0 / 50 | **660 / 0 / 50** |
+| `ruff check app tests evaluation` | exit 0 | exit 0 |
+| `ruff format --check app tests` | exit 0（347 文件） | exit 0 |
+| `mypy app` | exit 0（238 源文件） | exit 0（261 源文件） |
+
+### 13.6 未做的事（明确列出，避免被读成已完成）
+
+- **协议验收第 6 条未实现。** scope 不足时返回的是**工具层信封**（HTTP 200 +
+  `outcome=FORBIDDEN`），而不是 403 + `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="…"`。`app/mcp/auth/authorization.py` 的 `denial_envelope` 文档字符串已写明"要机器
+  可读的 scope 挑战属于传输层（WP2 的 403 + 标准错误体）"——这是**有意留着**的一步，但
+  WP2 收尾时没有做。
+  **影响**：安全性不受影响（拒绝确实发生，不放行任何数据），但 MCP 客户端拿到的是工具错误
+  而不是 403 挑战，因此无法据 `WWW-Authenticate` 的 `scope` 参数自动补授权，只能让人重新
+  走一遍完整授权。
+  **为什么没有顺手补**：可行的实现要在传输层解析 JSON-RPC 拿工具名、再查目录得到所需 scope
+  —— 那会让"授权判定"出现**第二个执行点**，正是 WP1 用整条工作包消掉的那类缺陷。正确做法是
+  先定接口（让工具层把拒绝**上抛**给传输层，而不是各自判一次），属需要单独设计的改动，不适合
+  在验收时顺手改。
+- **CIMD 未做端到端验证。** 逐条校验有单测，但 e2e 跑不了 —— 它需要一个公网 HTTPS 文档服务器。
+- **登录租户固定为 `"default"`。** `app/oauth/identity.py` 与平台登录共用 `get_db_session()`，
+  其默认租户是 `"default"`，而 `users` 受 RLS 约束。这是**既有**行为（不是本次引入），但意味着
+  AS 登录只能看到 `tenant_id == "default"` 的用户。多租户部署要接外部 Agent 时这条必须先解决。
+- **密钥轮换的执行路径**（`OAUTH_ROTATED_PUBLIC_KEYS_PEM`）有实现与单测，但没在真实进程里
+  跑过轮换窗口。
+- **匿名/半匿名端点没有独立限流**（T-11、T-12，属 WP3/WP8）：RS 元数据、AS 元数据、
+  JWKS、内省四处都可被无身份调用。DCR 有限速是因为它是**写**端点，这四处是只读的，
+  因此当时判定"不产生状态"即可接受；但"不产生状态"不等于"没有成本"（内省每次要算
+  SHA-256 并查库）。
+- **RS 侧元数据未设 `Cache-Control`**（T-11）。AS 侧已设：元数据 60s、JWKS 300s
+  —— JWKS 的 300 秒同时是"撤销一把泄漏的私钥后，它最坏还能被接受多久"的上界。
+
+## 14. 来源
 
 - MCP Authorization Specification，revision 2026-07-28：<https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/>
 - MCP Client Registration（CIMD / 预注册 / DCR 优先级与弃用说明）：<https://modelcontextprotocol.io/specification/draft/basic/authorization/client-registration>
