@@ -4,6 +4,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.access.scopes import Scope
+
 
 class ToolKind(StrEnum):
     READ = "read"
@@ -17,6 +19,13 @@ class ToolDefinition(BaseModel):
     input_schema: dict[str, object] = Field(default_factory=dict)
     output_schema: dict[str, object] = Field(default_factory=dict)
     required_capability: str = Field(min_length=1)
+    #: 该工具所需的 OAuth scope（取值见 ``app.access.scopes.Scope``）。
+    #:
+    #: 刻意**必填且是枚举类型**，而不是带默认值的可空字符串：
+    #: - 必填 → 新增工具时必须显式决定它需要哪个 scope，没有默认值可以蒙混过去；
+    #: - 枚举 → 写错一个 scope 名在**导入期**就报错，而不是等某次调用时静默判 False。
+    #: 允许留空等于允许"新工具不参与 scope 判定"，那是一条静默越权路径。
+    required_scope: Scope
     risk_level: str = Field(min_length=1)
     approval_required: bool = False
     timeout_seconds: int = Field(gt=0)

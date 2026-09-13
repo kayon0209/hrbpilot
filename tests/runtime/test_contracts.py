@@ -5,6 +5,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.access.policies.contracts import ToolCatalog, ToolDefinition, ToolKind
 from app.access.policies.hr_case import evaluate_hr_case_tool
+from app.access.scopes import Scope
 from app.application.commands import CommandExecutor
 from app.runtime.contracts import (
     ConversationTurn,
@@ -63,6 +64,7 @@ def test_write_tool_requires_effectively_once_or_reconciliation_contract() -> No
             version="v1",
             kind=ToolKind.WRITE,
             required_capability="case.write",
+            required_scope=Scope.CASE_PROPOSE,
             risk_level="high",
             timeout_seconds=10,
             max_attempts=1,
@@ -73,6 +75,7 @@ def test_write_tool_requires_effectively_once_or_reconciliation_contract() -> No
         version="v1",
         kind=ToolKind.WRITE,
         required_capability="case.write",
+        required_scope=Scope.CASE_PROPOSE,
         risk_level="high",
         timeout_seconds=10,
         max_attempts=1,
@@ -93,6 +96,7 @@ def test_tool_catalog_resolves_exact_version_and_rejects_duplicates() -> None:
         version="v1",
         kind=ToolKind.READ,
         required_capability="knowledge.read",
+        required_scope=Scope.POLICY_READ,
         risk_level="low",
         timeout_seconds=10,
         max_attempts=1,

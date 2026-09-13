@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.access.policies.contracts import ToolCatalog, ToolDefinition, ToolKind
+from app.access.scopes import Scope
 
 
 class ToolError(Exception):
@@ -87,13 +88,23 @@ _TOOL_METADATA = {
     # app/access/policies/hr_case.py 的 `required_capability in capabilities`
     # 判定对读工具永远是 False（只是读工具当前不经过那条策略路径，
     # 所以没有暴露成线上故障）。制度检索对应的既有能力是 "policy_qa"。
-    "search_policy": (ToolKind.READ, "policy_qa", "low"),
-    "get_policy_source": (ToolKind.READ, "policy_qa", "low"),
-    "create_hr_case": (ToolKind.WRITE, "hr_case", "medium"),
-    "assign_case_owner": (ToolKind.WRITE, "hr_case", "medium"),
-    "send_case_notification": (ToolKind.WRITE, "hr_case", "medium"),
-    "update_case_status": (ToolKind.WRITE, "hr_case", "medium"),
-    "create_work_task": (ToolKind.WRITE, "work_summary", "medium"),
+    #
+    # (kind, capability, scope, risk_level)
+    #
+    # 每个工具都必须声明 scope：它是外部 Agent 授权时的对外契约。判定见
+    # app/mcp/auth/authorization.py。
+    "search_policy": (ToolKind.READ, "policy_qa", Scope.POLICY_READ, "low"),
+    "get_policy_source": (ToolKind.READ, "policy_qa", Scope.POLICY_READ, "low"),
+    "create_hr_case": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
+    "assign_case_owner": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
+    "send_case_notification": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
+    "update_case_status": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
+    # create_work_task 的能力是 work_summary（它写的是工作台任务），但它的 scope
+    # 是 CASE_PROPOSE —— 因为它和其余写工具一样，是**针对某个案件**提交一条待审批
+    # 的办理请求，而不是直接落库。scope 表达的是"这类动作需要什么授权"，
+    # 而不是"这条记录属于哪个模块"，两者在这里本来就不同。刻意不为它新增一个
+    # `hrb:task:propose`：scope 词表是对外契约，多一个取值就要多一轮客户端授权。
+    "create_work_task": (ToolKind.WRITE, "work_summary", Scope.CASE_PROPOSE, "medium"),
 }
 
 TOOL_CATALOG = ToolCatalog(
@@ -106,6 +117,7 @@ TOOL_CATALOG = ToolCatalog(
             input_schema=schema.model_json_schema(),
             output_schema=ToolOutput.model_json_schema(),
             required_capability=capability,
+            required_scope=required_scope,
             risk_level=risk_level,
             approval_required=kind is ToolKind.WRITE,
             timeout_seconds=30,
@@ -113,7 +125,7 @@ TOOL_CATALOG = ToolCatalog(
             supports_idempotency=kind is ToolKind.WRITE,
         )
         for name, schema in TOOL_SCHEMAS.items()
-        for kind, capability, risk_level in (_TOOL_METADATA[name],)
+        for kind, capability, required_scope, risk_level in (_TOOL_METADATA[name],)
     ),
 )
 
