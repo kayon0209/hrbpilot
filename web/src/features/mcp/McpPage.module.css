@@ -237,8 +237,7 @@
   line-height: 1.7;
 }
 
-.details code,
-.paramHints code {
+.details code {
   padding: 1px 5px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -294,13 +293,6 @@
 .toolTitle strong {
   font-size: var(--text-ui);
   color: var(--ink);
-}
-
-.toolName {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-micro);
-  word-break: break-all;
 }
 
 .toolWhat {
@@ -375,9 +367,12 @@
 }
 
 .field select,
-.field textarea {
+.field textarea,
+.formField select,
+.formField input,
+.formField textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 11px;
   color: var(--ink);
   background: #fbfbf8;
   border: 1px solid var(--line);
@@ -386,39 +381,69 @@
 }
 
 .field select:focus,
-.field textarea:focus {
+.field textarea:focus,
+.formField select:focus,
+.formField input:focus {
   border-color: var(--action);
   outline: none;
 }
 
-.field textarea {
+.field textarea,
+.formField textarea {
   font-family: var(--font-mono);
   resize: vertical;
 }
 
-.paramHints strong {
-  display: block;
-  margin-bottom: 8px;
+/* —— 参数表单（取代原来的「参数怎么填」说明列表） —— */
+.formGrid {
+  display: grid;
+  gap: 14px;
+}
+
+.formField {
+  display: grid;
+  gap: 6px;
+}
+
+.formLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
   color: var(--ink);
   font-size: var(--text-meta);
+  font-weight: 500;
 }
 
-.paramHints ul {
-  display: grid;
-  gap: 7px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.paramHints li {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
-  align-items: baseline;
-  color: var(--ink-soft);
+.required {
+  color: var(--warning);
   font-size: var(--text-micro);
-  line-height: 1.6;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.formHelp {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: var(--text-micro);
+  line-height: 1.7;
+}
+
+.tryWhat {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.hiddenNote {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  color: var(--ink-soft);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font-size: var(--text-meta);
+  line-height: 1.7;
 }
 
 .tryActions {

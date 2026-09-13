@@ -82,8 +82,13 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
 }
 
 _TOOL_METADATA = {
-    "search_policy": (ToolKind.READ, "policy.read", "low"),
-    "get_policy_source": (ToolKind.READ, "policy.read", "low"),
+    # 读工具的能力名必须取自 RBAC 矩阵里真实存在的取值。这里原先是
+    # "policy.read"——一个 ROLE_CAPABILITIES 里从来没有过的名字，意味着
+    # app/access/policies/hr_case.py 的 `required_capability in capabilities`
+    # 判定对读工具永远是 False（只是读工具当前不经过那条策略路径，
+    # 所以没有暴露成线上故障）。制度检索对应的既有能力是 "policy_qa"。
+    "search_policy": (ToolKind.READ, "policy_qa", "low"),
+    "get_policy_source": (ToolKind.READ, "policy_qa", "low"),
     "create_hr_case": (ToolKind.WRITE, "hr_case", "medium"),
     "assign_case_owner": (ToolKind.WRITE, "hr_case", "medium"),
     "send_case_notification": (ToolKind.WRITE, "hr_case", "medium"),

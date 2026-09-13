@@ -1,13 +1,14 @@
 /**
- * MCP 工具的用户语言词典（2026-09-13 普通用户可读性改造）。
+ * 外部工具页的用户语言词典（2026-09-13 普通用户可读性改造）。
  *
  * 后端 `/api/mcp/capabilities` 返回的是开发者视角的数据（工具名、capability、
- * input_schema JSON）。这里把每个工具翻译成普通使用者能看懂的三件事：
- * 「它做什么」「你可以对 AI 怎么说」「有什么要留意」。
+ * 参数结构 JSON）。这里把它翻译成普通使用者能看懂的东西：
+ * 「它做什么」「你可以对 AI 怎么说」「参数各是什么意思」「结果是好是坏」。
  *
- * 新增后端工具时在此补一条即可；缺条目会回落到 FALLBACK_TOOL_COPY，
- * 页面不会因为词典缺项而崩。
+ * 新增后端工具时在此补一条即可；缺条目会回落到通用文案，页面不会崩。
+ * 注意：字段的**类型/必填**来自后端 schema（见 toolForm.ts），这里只放"怎么说人话"。
  */
+import type { McpToolResult, ToolOutcome } from '../../api/mcp'
 
 export interface ToolCopy {
   /** 中文名，替代技术名做卡片主标题 */
@@ -74,76 +75,115 @@ export const TOOL_COPY: Record<string, ToolCopy> = {
   },
 }
 
-/** 在线体验区：每个参数的中文含义，替掉「JSON 里这串英文字段是什么」。 */
-export const PARAM_HINTS: Record<string, Record<string, string>> = {
-  search_policy: {
-    query: '你要问的问题，用一句大白话写',
-    kb_id: '制度库编号，管理员提供，不清楚就留空',
-    top_k: '返回几条结果（1–10）',
-  },
-  get_policy_source: {
-    document_name: '制度文件名，例如 请假管理制度.pdf',
-    section: '只看某一章，可留空',
-  },
-  hrbpilot_ping: {},
-  create_hr_case: {
-    case_id: '案件编号，必填',
-    title: '一句话说明这件事',
-    subject_ref: '涉及谁的员工编号',
-    category: '类别，例如 onboarding（入职）',
-    risk_level: '紧急程度：LOW / MEDIUM / HIGH',
-    description: '补充说明，可留空',
-  },
-  assign_case_owner: {
-    case_id: '案件编号，必填',
-    owner_id: '接手人的账号，例如 hr-manager-9',
-  },
-  send_case_notification: {
-    case_id: '案件编号，必填',
-    recipient_ref: '发给谁，例如 dept-hr（部门 HR）',
-    template: '通知模板，例如 policy_update',
-    channel: '发送方式，固定填 in_app（站内）',
-  },
-  update_case_status: {
-    case_id: '案件编号，必填',
-    status: '新状态，目前只能填 RESOLVED（已解决）',
-  },
-  create_work_task: {
-    case_id: '案件编号，必填',
-    title: '任务标题',
-    next_action: '下一步要做什么',
-    owner_user_id: '由谁负责，可留空',
-    waiting_for: '在等谁或等什么，可留空',
-    due_at: '截止时间，可留空',
-    total_units: '任务总量，可留空',
-  },
+/**
+ * 参数的中文说法，直接当表单字段的标签用。
+ *
+ * 字段名与控件的对应关系不在这里维护 —— 那来自后端 schema（toolForm.ts），
+ * 否则工具一改就会漂移。这里只负责"这个字段用中文怎么说"。
+ * 词典里没有的字段回落显示原始字段名（诚实：不编一个可能错的中文名）。
+ */
+export const FIELD_LABELS: Record<string, string> = {
+  case_id: '案件编号',
+  query: '你要问的问题',
+  kb_id: '制度库编号（不清楚就留空）',
+  top_k: '返回几条结果（1–10）',
+  document_name: '制度文件名',
+  section: '只看某一章（可留空）',
+  title: '一句话说明这件事',
+  subject_ref: '涉及谁的员工编号',
+  category: '类别',
+  risk_level: '紧急程度',
+  description: '补充说明（可留空）',
+  owner_id: '接手人的账号',
+  recipient_ref: '发给谁',
+  template: '通知模板',
+  channel: '发送方式',
+  status: '新状态',
+  next_action: '下一步要做什么',
+  owner_user_id: '由谁负责（可留空）',
+  waiting_for: '在等谁或等什么（可留空）',
+  due_at: '截止时间（可留空）',
+  total_units: '任务总量（可留空）',
+}
+
+/**
+ * 输入框里的灰字提示。
+ *
+ * 表单取代了原来那份「参数怎么填」的说明列表，所以填法示例直接写进控件里 ——
+ * 用户在这个字段上就能看到该怎么写，不必来回对照两处。
+ */
+export const FIELD_HINTS: Record<string, string> = {
+  case_id: '例如：case-20260913-001',
+  query: '例如：请假超过三天需要哪些审批？',
+  document_name: '照抄文件名，例如：请假管理制度.pdf',
+  section: '例如：第 4 章（不填就返回全文）',
+  title: '例如：试用期异常跟进',
+  subject_ref: '例如：EMP-001',
+  category: '例如：onboarding',
+  description: '补充背景，最多 4000 字',
+  owner_id: '例如：hr-manager-9',
+  recipient_ref: '例如：dept-hr',
+  template: '例如：policy_update',
+  next_action: '例如：联系员工补充劳动合同',
+  owner_user_id: '例如：hr-manager-9',
+  waiting_for: '例如：等待员工回传材料',
+}
+
+/** 固定取值的中文说法（例如 risk_level、status、channel）。 */
+export const OPTION_LABELS: Record<string, string> = {
+  LOW: '低',
+  MEDIUM: '中',
+  HIGH: '高',
+  RESOLVED: '已解决',
+  in_app: '站内通知',
 }
 
 export type ResultTone = 'ok' | 'warn' | 'error'
 
+const TONE_BY_OUTCOME: Record<ToolOutcome, ResultTone> = {
+  FOUND: 'ok',
+  // 没查到不是错误：它是"这次没有依据"，用户需要知道但不能被吓到。
+  NO_EVIDENCE: 'warn',
+  AWAITING_APPROVAL: 'warn',
+  AUTH_REQUIRED: 'warn',
+  FORBIDDEN: 'error',
+  FAILED: 'error',
+}
+
 /**
- * 把工具返回的原始 JSON 概括成一句人话。
- * 原始数据仍然可看（折叠区），但默认先给结论——这是本次改造的重点之一。
+ * 把工具返回结果概括成一句人话。
+ *
+ * 优先采用后端契约给出的 `user_message` 与 `outcome` —— 文案与判定都只在一个
+ * 地方定义（app/mcp/contract.py），前端不再自己猜"这个返回算成功还是失败"。
+ * 下面的兜底分支只服务于没有 outcome 的旧返回。
  */
-export function describeResult(res: Record<string, unknown>): { tone: ResultTone; text: string } {
+export function describeResult(res: McpToolResult): { tone: ResultTone; text: string } {
+  const message = typeof res.user_message === 'string' && res.user_message ? res.user_message : null
+
+  if (res.outcome && res.outcome in TONE_BY_OUTCOME) {
+    return { tone: TONE_BY_OUTCOME[res.outcome], text: message ?? DEFAULT_TEXT[res.outcome] }
+  }
+
   if (res.ok === false) {
-    const message = typeof res.message === 'string' ? res.message : '请检查填写内容后重试。'
-    return { tone: 'error', text: `没有成功：${message}` }
+    return { tone: 'error', text: message ?? '没有成功，请检查填写内容后重试。' }
   }
   if (typeof res.approval_id === 'string' && res.approval_id) {
-    return {
-      tone: 'warn',
-      text: `已生成一条待审批记录（编号 ${res.approval_id}）。请到「团队待处理」批准后才会真正执行。`,
-    }
+    return { tone: 'warn', text: `已生成一条待审批记录（编号 ${res.approval_id}）。请到「团队待处理」批准后才会真正执行。` }
   }
   if (Array.isArray(res.chunks)) {
     return { tone: 'ok', text: `查询完成，找到 ${res.chunks.length} 条相关制度。` }
   }
-  if (typeof res.warning === 'string' && res.warning) {
-    return { tone: 'warn', text: `已按规则受理，但暂时没取到实时数据（可能是制度库未就绪）。` }
-  }
   if (res.ok === true) {
-    return { tone: 'ok', text: '调用成功。' }
+    return { tone: 'ok', text: message ?? '调用成功。' }
   }
-  return { tone: 'warn', text: '已返回结果，详情见下方原始数据。' }
+  return { tone: 'warn', text: message ?? '已返回结果，详情见下方原始数据。' }
+}
+
+const DEFAULT_TEXT: Record<ToolOutcome, string> = {
+  FOUND: '查询完成，已找到相关内容。',
+  NO_EVIDENCE: '没有找到匹配的内容。',
+  AWAITING_APPROVAL: '已提交，等待 HR 批准后才会真正执行。',
+  AUTH_REQUIRED: '这次调用没有携带身份信息，因此没有返回真实数据。',
+  FORBIDDEN: '你当前的权限不包含这项能力。',
+  FAILED: '调用没有完成，请稍后重试。',
 }

@@ -289,16 +289,30 @@ class HRCaseService:
                 # High-risk cases are evidence-only: no write approval can be
                 # requested, so the agent loop hands off instead of escalating.
                 raise HighRiskWriteBlockedError(case.category, case.risk_level, tool_name)
-        case.status = case_state.transition(case.status, case_state.AWAITING_APPROVAL)
-        expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
-        # Normalize first so the stored params carry schema defaults; the
-        # execution-side re-validation then produces the identical dict.
+        # Normalize FIRST: the stored params carry schema defaults, the
+        # execution-side re-validation then produces the identical dict, and
+        # the canonical hash computed from it is what makes dedupe possible.
         from app.scenarios.hr_case_agent.tools import validate_tool_call
 
         try:
             normalized = validate_tool_call(tool_name, params)
         except Exception as e:
             raise ApprovalError(f"Invalid params for {tool_name}: {e}") from e
+        input_hash = _hash_params(tool_name, normalized)
+
+        reusable = await self._find_reusable_approval(case_id, tool_name, input_hash)
+        if reusable is not None:
+            # Same case + same tool + same params + still-unexpired PENDING:
+            # reuse that record instead of creating another. Without this the
+            # duplicate falls through to the state machine, which cannot move
+            # AWAITING_APPROVAL → AWAITING_APPROVAL, so the caller got a raw
+            # "Cannot transition case from AWAITING_APPROVAL to
+            # AWAITING_APPROVAL" instead of the approval they already had.
+            logger.info("approval_request_reused", case_id=case_id, tool=tool_name, approval_id=reusable.id)
+            return reusable
+
+        case.status = case_state.transition(case.status, case_state.AWAITING_APPROVAL)
+        expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         params_json = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
         approval = ApprovalRequest(
             tenant_id=self.tenant_id,
@@ -306,7 +320,7 @@ class HRCaseService:
             plan_id=plan_id,
             tool_name=tool_name,
             params_json=params_json,
-            input_hash=_hash_params(tool_name, normalized),
+            input_hash=input_hash,
             requested_by=agent_run_id,
             expires_at=expires,
         )
@@ -319,6 +333,37 @@ class HRCaseService:
             agent_run_id=agent_run_id,
         )
         return approval
+
+    async def _find_reusable_approval(self, case_id: str, tool_name: str, input_hash: str) -> ApprovalRequest | None:
+        """本案件上仍未过期、参数完全相同的待审批记录。
+
+        只按 `input_hash` 判定：它已经是「工具 + 规范化参数」的 sha256，且与
+        执行侧（`app/tools/gateway.py`、`app/outbox/dispatcher.py`）用的是同一个
+        值 —— 复用的记录必然也是执行侧会认可的记录，不存在"复用了却执行不了"。
+        过期判定放在 Python 侧做，避免不同方言对带时区时间的比较差异。
+        """
+        candidates = (
+            (
+                await self.session.execute(
+                    select(ApprovalRequest)
+                    .where(
+                        ApprovalRequest.tenant_id == self.tenant_id,
+                        ApprovalRequest.case_id == case_id,
+                        ApprovalRequest.tool_name == tool_name,
+                        ApprovalRequest.input_hash == input_hash,
+                        ApprovalRequest.status == "PENDING",
+                    )
+                    .order_by(ApprovalRequest.created_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        now = datetime.now(UTC)
+        for candidate in candidates:
+            if candidate.expires_at is None or _as_utc(candidate.expires_at) > now:
+                return candidate
+        return None
 
     async def decide_approval(
         self,
@@ -624,3 +669,8 @@ def _hash_params(tool_name: str, params: dict) -> str:
 
     blob = json.dumps({"tool": tool_name, "params": params}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Naive timestamps are stored as UTC; make that explicit for comparisons."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

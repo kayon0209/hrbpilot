@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models.base import Base
-from app.data.models.hr_case import ToolExecution
+from app.data.models.hr_case import ApprovalRequest, CaseEvent, ToolExecution
 from app.scenarios.hr_case_agent.service import (
     ApprovalError,
     CasePermissionDeniedError,
@@ -359,3 +359,100 @@ async def test_failed_execution_cannot_rerun_under_consumed_approval(session_fac
             await service.begin_tool_execution(
                 case_id, "update_case_status", {"status": "RESOLVED"}, request_id="req-f", approval_id=approval.id
             )
+
+
+# --- 重复提交的收敛（2026-09-13）-------------------------------------------
+#
+# 改造前实测：同案 + 同工具 + 同参数重复提交，第二次会撞状态机 ——
+#   InvalidTransitionError: Cannot transition case from AWAITING_APPROVAL to AWAITING_APPROVAL
+# 用户点第二次，换来一句中英混杂的内部异常。而如果案件在两次提交之间退回
+# PLAN_READY（例如上一条被驳回），**两条 PENDING 就能并存**（探针实测 2 条）。
+# 页面文案当时写的"重复提交会产生多条待审批记录"，只对后者成立。
+
+DUPLICATE_PARAMS = {"title": "试用期异常跟进", "subject_ref": "EMP-001", "category": "onboarding"}
+
+
+async def _case_in_plan_ready(session_factory) -> tuple[str, str]:
+    """返回 (case_id, plan_id)。"""
+    case_id = await make_case(session_factory)
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.transition_case(case_id, "TRIAGED")
+        await service.transition_case(case_id, "EVIDENCE_READY")
+        plan = await service.save_plan(case_id, steps=[])
+        await session.commit()
+        return case_id, plan.id
+
+
+async def test_duplicate_request_reuses_the_pending_approval(session_factory) -> None:
+    case_id, plan_id = await _case_in_plan_ready(session_factory)
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        first = await service.request_approval(case_id, "create_hr_case", DUPLICATE_PARAMS, plan_id=plan_id)
+        await session.commit()
+        # 第二次不再抛 InvalidTransitionError，而是把已有的那条还回来。
+        second = await service.request_approval(case_id, "create_hr_case", DUPLICATE_PARAMS, plan_id=plan_id)
+        await session.commit()
+
+    assert second.id == first.id
+
+    async with session_factory() as session:
+        approvals = (
+            (await session.execute(select(ApprovalRequest).where(ApprovalRequest.case_id == case_id))).scalars().all()
+        )
+        events = (
+            (
+                await session.execute(
+                    select(CaseEvent).where(CaseEvent.case_id == case_id, CaseEvent.event_type == "APPROVAL_REQUESTED")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(approvals) == 1, "重复提交不应产生第二条待审批记录"
+    # 复用不产生新事件：审计流里"请求过一次"这个事实不能被重复计数。
+    assert len(events) == 1
+
+
+async def test_different_params_are_not_treated_as_a_duplicate(session_factory) -> None:
+    """去重按参数哈希判定，不能把"同一个案件上的另一次真实办理"也吞掉。"""
+    case_id, plan_id = await _case_in_plan_ready(session_factory)
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        first = await service.request_approval(case_id, "create_hr_case", DUPLICATE_PARAMS, plan_id=plan_id)
+        await session.commit()
+        # 退回 PLAN_READY（现实里是上一条被驳回后的状态）再提一条不同标题的。
+        await service.transition_case(case_id, "PLAN_READY")
+        second = await service.request_approval(
+            case_id, "create_hr_case", {**DUPLICATE_PARAMS, "title": "另一件事"}, plan_id=plan_id
+        )
+        await session.commit()
+
+    assert second.id != first.id
+
+
+async def test_expired_pending_approval_is_not_reused(session_factory) -> None:
+    """过期记录不能当成"已提交过"而被复用 —— 它已经不能执行了。
+
+    过期 + 案件仍停在 AWAITING_APPROVAL 会撞状态机，这是既有的约束（本次不改）；
+    这里锁定的只有一条：没有把过期记录当成重复请求吞下去。
+    """
+    case_id, plan_id = await _case_in_plan_ready(session_factory)
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        await service.request_approval(case_id, "create_hr_case", DUPLICATE_PARAMS, plan_id=plan_id, ttl_seconds=-1)
+        await session.commit()
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1")
+        with pytest.raises(InvalidTransitionError):
+            await service.request_approval(case_id, "create_hr_case", DUPLICATE_PARAMS, plan_id=plan_id)
+
+    async with session_factory() as session:
+        approvals = (
+            (await session.execute(select(ApprovalRequest).where(ApprovalRequest.case_id == case_id))).scalars().all()
+        )
+    assert len(approvals) == 1
