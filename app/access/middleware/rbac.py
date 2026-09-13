@@ -59,6 +59,11 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "audit_read",
         "data_source_admin",
         "user_admin",
+        # 外部 Agent 的授权管理（列出安装实例 / 撤销凭据）。刻意**不**复用
+        # user_admin：两者是两种不同的爆炸半径。能增删用户的人不必因此就能撤销
+        # 所有外部 Agent 的访问，反之亦然 —— 共用一把钥匙，等于把一次误操作的
+        # 影响面扩大到两者之和。
+        "mcp_admin",
         # §4.1 reconciliation + dead-letter console (mutations are audited)
         "ops_reconciliation",
     },
@@ -99,6 +104,7 @@ ROUTE_CAPABILITY_MAP = {
     "/api/audit": "audit_read",
     "/api/data-sources": "data_source_admin",
     "/api/admin/users": "user_admin",
+    "/api/admin/mcp": "mcp_admin",
 }
 
 # Legacy aliases kept for internal callers
