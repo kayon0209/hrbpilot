@@ -1,0 +1,483 @@
+/* MCP 外部工具 —— 普通用户可读性改造（2026-09-13）
+ *
+ * 原实现全部走内联样式 + 硬编码色值（#e5e7eb / #6b7280 / #fff …），
+ * 与设计令牌脱节，是「排布不整齐」的直接原因。这里统一改用 tokens.css。
+ */
+
+.introGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.sectionTitle {
+  margin: 0 0 14px;
+  font: 600 var(--text-h3) var(--font-display);
+  color: var(--ink);
+}
+
+.muted {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.capabilityList {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capabilityList li {
+  display: grid;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.capabilityList strong {
+  color: var(--ink);
+  font-size: var(--text-ui);
+}
+
+.capabilityList span {
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.65;
+}
+
+.callout {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: var(--radius-2);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.noteBox {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-micro);
+  line-height: 1.7;
+}
+
+/* —— 两类工具对比 —— */
+.kindGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.kindCard {
+  padding: 22px;
+  background: var(--surface);
+}
+
+.kindCard header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kindCard header strong {
+  font-size: var(--text-ui);
+  color: var(--ink);
+}
+
+.kindCard dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.kindCard dl > div {
+  display: grid;
+  gap: 4px;
+}
+
+.kindCard dt {
+  color: var(--action);
+  font-size: var(--text-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.kindCard dd {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.chipRead,
+.chipWrite {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chipRead {
+  color: var(--info);
+  background: var(--info-soft);
+}
+
+.chipWrite {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+/* —— 三步流程 —— */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  background: var(--line);
+  border: 1px solid var(--line);
+  list-style: none;
+  counter-reset: none;
+}
+
+.steps > li {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 22px;
+  background: var(--surface);
+}
+
+.stepNo {
+  color: var(--action);
+  font-size: var(--text-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.steps > li > strong {
+  font: 600 var(--text-h3) / 1.4 var(--font-display);
+  color: var(--ink);
+}
+
+.steps > li > p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+/* —— 折叠区（接入信息 / 原始数据） —— */
+.details {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-subtle);
+}
+
+.details > summary {
+  padding: 9px 12px;
+  color: var(--action);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.details > summary::before {
+  content: "▸ ";
+}
+
+.details[open] > summary::before {
+  content: "▾ ";
+}
+
+.detailsBody {
+  padding: 0 12px 12px;
+}
+
+.meta {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.meta > div {
+  display: grid;
+  gap: 3px;
+}
+
+.meta dt {
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-weight: 600;
+}
+
+.meta dd {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.details code,
+.paramHints code {
+  padding: 1px 5px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  word-break: break-all;
+}
+
+/* —— 工具卡 —— */
+.catalog {
+  display: grid;
+  gap: 24px;
+}
+
+.groupTitle {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.toolCard {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-1);
+}
+
+.toolHead {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toolTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.toolTitle strong {
+  font-size: var(--text-ui);
+  color: var(--ink);
+}
+
+.toolName {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  word-break: break-all;
+}
+
+.toolWhat {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.toolSay {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--action-soft);
+  border-radius: var(--radius-2);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.toolSay span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--action);
+  font-size: var(--text-micro);
+  font-weight: 600;
+}
+
+.toolNote {
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--text-micro);
+}
+
+.tryButton {
+  justify-self: start;
+  min-height: 36px;
+  margin-top: 2px;
+  padding: 0 14px;
+  color: var(--action);
+  background: transparent;
+  border: 1px solid var(--action);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  font: 500 var(--text-meta) var(--font-body);
+}
+
+.tryButton:hover {
+  color: var(--surface);
+  background: var(--action);
+}
+
+/* —— 在线体验 —— */
+.tryLayout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 20px;
+  margin-top: 18px;
+  align-items: start;
+}
+
+.trySide {
+  display: grid;
+  gap: 16px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: #fbfbf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font: var(--text-meta) / 1.6 var(--font-body);
+}
+
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--action);
+  outline: none;
+}
+
+.field textarea {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.paramHints strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: var(--text-meta);
+}
+
+.paramHints ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paramHints li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--ink-soft);
+  font-size: var(--text-micro);
+  line-height: 1.6;
+}
+
+.tryActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--text-meta);
+}
+
+.result {
+  margin-top: 18px;
+}
+
+.resultOk,
+.resultWarn,
+.resultError {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-2);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.resultOk {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.resultWarn {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.resultError {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.raw {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: 1.6;
+}
+
+@media (max-width: 860px) {
+  .tryLayout {
+    grid-template-columns: 1fr;
+  }
+}
