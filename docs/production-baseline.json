@@ -1,27 +1,27 @@
 {
-  "frozen_at": "2026-09-12T13:03:20.479855+00:00",
-  "commit": "3efa0387f6a9b671ff551be8a9a986440a178dfb",
+  "frozen_at": "2026-09-13T08:55:05.426558+00:00",
+  "commit": "cabcc5db900f685f7e092231dd7a25bd4f28d4c9",
   "dirty": false,
-  "python": "3.12.0",
+  "python": "3.13.15",
   "pytest": {
     "command": "python -m pytest tests/ -q",
     "exit_code": 0,
-    "passed": 439,
-    "skipped": 49,
+    "passed": 530,
+    "skipped": 50,
     "failed": 0,
     "errors": 0
   },
   "ruff": {
     "command": "python -m ruff check app tests",
-    "exit_code": 1,
-    "errors": 74,
-    "note": "known pre-existing findings (fullwidth-punctuation comments, unused noqa); baseline=74 at freeze time"
+    "exit_code": 0,
+    "errors": 0,
+    "note": "exit_code 0 == clean"
   },
   "mypy": {
     "command": "python -m mypy app",
-    "exit_code": 1,
-    "errors": 2,
-    "note": "known pre-existing findings in retrieval/retriever.py and material_batches.py; baseline=2 at freeze time"
+    "exit_code": 0,
+    "errors": 0,
+    "note": "exit_code 0 == clean"
   },
   "web": {
     "eslint": {
@@ -42,8 +42,8 @@
     }
   },
   "locks": {
-    "pyproject": "66b6336762a6ef55178bf26a23b1b346b4f20a389d2c5dae16570f52fe28ff99",
-    "pnpm_lock": "07c6668339f046fcf246c2c8a1a8dff1da53425c47ad846163fc69b98b7b1498"
+    "pyproject": "e3b2188ba47455ba203681cc7bf322e12ce1a237fb801672b0ed085c866626a3",
+    "pnpm_lock": "74d02f3d148e8922b4bc6dc37bef414aed3d98ccf16cef315dc9c7fd8ea9f947"
   },
   "skips_policy": "every pytest skip is env-gated (HRBP_RUN_* / DATABASE_URL); no owner-less permanent skips",
   "environment": {
@@ -51,9 +51,9 @@
     "postgres_reachable": true,
     "redis_reachable": true,
     "minio_reachable": true,
-    "embedding_mode": "cloud",
-    "config_fingerprint": "dbe6e204923410e3",
+    "embedding_mode": "deterministic",
+    "config_fingerprint": "a32b3e0e3fbc2988",
     "note": "deps reachable at freeze time; a skipped integration test means a missing container, not a regression"
   },
-  "content_hash": "a995952d9eae011f32290f56eaf6cce87ddbf57d966962412ea6d608b7951c10"
+  "content_hash": "75ae5722ff8da1a0bdca9451170ba6aa15b595b571db293c1b29ee51b5259c7c"
 }
