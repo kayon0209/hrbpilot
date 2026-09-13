@@ -33,6 +33,12 @@
   <img alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white">
 </p>
 
+<p>
+  <img src="./assets/hrbpilot-hero.png" alt="HRBPilot 主视觉：HR 负责人核对带来源的证据卡片，AI 协助整理知识，护栏与人工审批贯穿流程。" width="100%">
+</p>
+
+<sub>证据优先，不替人做决定；把高频整理交给系统，把判断、审批与责任留给人。</sub>
+
 </div>
 
 ---
@@ -60,7 +66,7 @@ HR 场景真正的痛点是**风险与成本**，不是「能不能答出来」�
 |  |  |  |
 | :-- | :-- | :-- |
 | 🛡️ **护栏是一等公民** | 💰 **成本可核算** | 🔍 **RAG 不作假** |
-| 原始输入**先过护栏再进任何模型**：注入检测在查询改写之前完成，PII 先脱敏、改写结果再复检；观测日志只留长度与哈希，**不落原文**。注入攻击在 golden 集上 **5/5 全拦，误拦率 0.0** | 每次调用都计入租户月度 token 预算（默认 1000 万），**75% 预警 / 90% 严重告警**，成本随时可查 | dense + sparse + RRF 融合，**无 mock 回退**。外部服务不可用时抛出明确的基础设施错误，绝不假装检索成功 |
+| 原始输入**先过护栏再进任何模型**：注入检测在查询改写之前完成，PII 先脱敏、改写结果再复检；观测日志只留长度与哈希，**不落原文**。注入攻击在 golden 集上 **5/5 全拦，误拦率 0.0** | 每次调用都计入租户月度 token 预算（默认 1000 万），**75% 预警 / 90% 严重告警**，成本随时可查 | 原问题与改写问题双路 dense + sparse 召回，再经 RRF 融合；**无 mock 回退**。外部服务不可用时抛出明确的基础设施错误，绝不假装检索成功 |
 
 > [!NOTE]
 > 所有回答强制携带引用（citation）。检索不到证据时走 `no_evidence_fallback` 明确拒答，而不是编造答案。
@@ -120,40 +126,52 @@ python -m app.outbox.worker
 
 ```mermaid
 flowchart TB
-    Client(["🧑‍💼 HR / 员工"]) --> MW
+    Client(["🧑‍💼 HR / 员工 / 内部系统"]) --> Gateway
+    Gateway["🔐 API 治理层<br/>Rate limit · Auth · RBAC · Tenant context · Audit"] --> Scenarios
+    Gateway --> CaseAgent
 
-    MW["🔐 中间件链<br/>RequestID → CORS → RateLimit → Auth → RBAC → TenantContext → SecurityHeaders"]
-    MW --> Orch
-
-    Orch["🎯 场景编排层 · 5 × Orchestrator<br/>policy_qa · interview_digest · voice_insight · weekly_report · culture_content"]
-    Orch --> InGuard
-
-    InGuard["🛡️ 输入护栏<br/>注入检测 · PII · 合规校验"]
-    InGuard --> RAG
-
-    subgraph RAG["🔍 Hybrid RAG Pipeline"]
-        direction LR
-        Dense["Dense 召回<br/>Milvus 向量"] --> RRF["RRF 融合<br/>+ 独立证据置信度校准"]
-        Sparse["Sparse 召回<br/>PostgreSQL 全文 + jieba"] --> RRF
+    subgraph Knowledge["📚 安全入库与增量索引"]
+        Upload["文件上传"] --> UploadGuard["🛡️ 类型 / 魔数 / 路径 / PDF 结构校验"]
+        UploadGuard --> Source["MinIO 原文件 + PostgreSQL 元数据"]
+        Source --> IngestQueue["kb_ingest 队列"]
+        IngestQueue --> IngestWorker["Celery Worker<br/>解析 · 跨页拼接 · Chunk"]
+        IngestWorker --> Index["Milvus 向量 + PostgreSQL 全文"]
     end
 
-    RAG --> LLM["🤖 LLM 生成<br/>强制引用 top-k 证据"]
-    LLM --> OutGuard["🛡️ 输出护栏<br/>合规 · PII · 引用覆盖校验"]
-    OutGuard --> Resp(["✅ 结构化响应 + 引用"])
+    subgraph Answer["🔎 证据问答与可靠降级"]
+        Scenarios["🎯 5 × Scenario Orchestrator<br/>Policy QA · 面谈 · 声音 · 周报 · 文化"] --> InGuard["🛡️ 输入护栏<br/>注入拦截 · PII 脱敏"]
+        InGuard --> Variants["原问题 + 改写问题"]
+        Variants --> Dense["Milvus dense"]
+        Variants --> Sparse["PostgreSQL sparse"]
+        Dense --> Fusion["RRF 融合 + 页码证据"]
+        Sparse --> Fusion
+        Fusion --> Router["🤖 Provider Router<br/>请求级模型映射 + fallback"]
+        Router --> OutGuard["🛡️ 输出护栏 + 引用校验"]
+        OutGuard --> Response(["✅ 可显示回答 + 引用"])
+    end
 
-    LLM -. 异步 .-> Budget["💰 Token 预算<br/>租户月度 · 75% / 90% 告警"]
-    LLM -. 异步 .-> Eval["📊 质量评测<br/>LLM-as-judge 聚合"]
-    OutGuard -. 异步 .-> Audit["📝 审计日志<br/>租户隔离持久化"]
+    subgraph Execution["🧭 受控执行与恢复"]
+        CaseAgent["HR Case Agent<br/>风险识别 · 制度取证 · 计划"] --> Approval["👤 hr_manager 审批"]
+        Approval --> Outbox["ToolExecution + Outbox<br/>同事务落库"]
+        Outbox --> OutboxWorker["独立 Worker<br/>lease / fencing / retry"]
+        OutboxWorker --> Effect["受控外部副作用"]
+        OutboxWorker -. UNKNOWN / 失败 .-> Ops["DLQ + 对账控制台<br/>重放 / 丢弃 / 人工裁决"]
+    end
+
+    Index --> Fusion
+    Router -. 真实调用信号 .-> Ready["📡 /api/ready<br/>LLM 降级可见"]
+    OutGuard -. 异步 .-> Governance["💰 Token 预算 · 📊 评测 · 📝 审计"]
+    Ops -. 恢复演练 .-> Backup["🗄️ PostgreSQL 备份 / restore drill"]
 
     classDef guard fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#78350f
-    classDef gov fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95
     classDef core fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a
-    class InGuard,OutGuard guard
-    class Budget,Eval,Audit gov
-    class Orch,LLM core
+    classDef ops fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#14532d
+    class UploadGuard,InGuard,OutGuard guard
+    class Scenarios,Router core
+    class Approval,Outbox,OutboxWorker,Ops,Backup ops
 ```
 
-**存储层**：PostgreSQL（Alembic 迁移 + 行级隔离 RLS）· Redis · Celery · MinIO · Milvus
+**基础设施层**：PostgreSQL（Alembic 迁移 + 行级隔离 RLS）· Redis Broker / Backpressure · Celery（kb_ingest / scenario）· MinIO · Milvus
 
 <details>
 <summary>📐 查看静态架构图（SVG）</summary>
@@ -231,7 +249,8 @@ docker compose up --build           # ③ 启动
 1. PostgreSQL 就绪
 2. 应用执行 `alembic upgrade head` 迁移
 3. Milvus / MinIO / Redis 就绪
-4. FastAPI（uvicorn）与受控写操作的 Outbox Worker 启动
+4. FastAPI（uvicorn）启动
+5. Celery Worker 消费 kb_ingest 与 scenario 队列；Outbox Worker 处理已审批的受控写操作
 
 启动时自动确保 Milvus collection（维度须与 `EMBEDDING_DIMENSION` 一致）与 MinIO bucket 存在。PostgreSQL 应用账号为**非超级用户**，确保行级隔离 RLS 不会被连接账号绕过。
 
@@ -265,9 +284,10 @@ uvicorn app.main:app --reload --port 8000
 **索引（写入）**
 
 ```
-上传文件 → MinIO → documents (PostgreSQL, status=uploaded)
+上传文件 → 安全校验（类型 / 魔数 / 路径 / PDF 结构）
+        → MinIO → documents (PostgreSQL, status=uploaded)
         → 原子领取并投递 Redis/Celery 任务
-        → 解析 → 切分 → jieba 分词 → embedding
+        → 解析（含跨页拼接、DOCX 表格顺序与 OCR 页码诊断）→ 切分 → jieba 分词 → embedding
         → document_chunks (PostgreSQL) + Milvus upsert
         → 标记 indexed
 ```
@@ -282,7 +302,7 @@ uvicorn app.main:app --reload --port 8000
 
 **查询（读取）**
 
-PostgreSQL 关键词召回（`plainto_tsquery('simple', jieba_query)`）与 Milvus 稠密召回（`tenant_id` + `kb_id` 标量过滤）**并发执行** → RRF 融合 → 独立证据置信度校准 → top-k → LLM 引用。
+原问题与实际发生变化的改写问题分别执行 PostgreSQL 关键词召回（`plainto_tsquery('simple', jieba_query)`）和 Milvus 稠密召回（`tenant_id` + `kb_id` 标量过滤），再以 RRF 融合。这样改写只会增加召回候选，不会替换、丢失原始意图；页码证据随结果保留给 LLM 引用。
 
 Policy QA 只接受当前租户下**已启用**且 `scenario_id=policy_qa` 的真实知识库。
 
@@ -330,7 +350,7 @@ CI 在每次 push 与 PR 上执行后端（`ruff check` · `ruff format --check`
 
 ### 生产基线（可复现冻结）
 
-每个里程碑用 `scripts/freeze_production_baseline.py` 冻结一份**不可手改**的验证基线：绑定 commit SHA、依赖锁哈希与冻结时间，记录后端（pytest / ruff / mypy）与前端（lint / tsc / vitest）的实测结果，产物自带内容校验哈希，`--verify` 可检出任何手改。
+每个里程碑用 `scripts/freeze_production_baseline.py` 冻结一份**不可手改**的验证基线：绑定 commit SHA、依赖锁哈希与冻结时间，记录后端（pytest / ruff / mypy）与前端（lint / tsc / vitest）的实测结果，产物自带内容校验哈希，`--verify` 可检出任何手改。它是某次可复现验证的“收据”，不是永久有效的绿灯；代码、依赖或环境改变后必须重新冻结。
 
 当前冻结基线见 [`docs/production-baseline.json`](./docs/production-baseline.json)。测试中的 skip 全部为环境门控（`HRBP_RUN_*` / `DATABASE_URL`），不存在无人认领的永久 skip。
 

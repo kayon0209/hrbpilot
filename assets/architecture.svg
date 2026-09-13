@@ -1,68 +1,74 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 620" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <rect width="820" height="620" fill="#ffffff"/>
-  <text x="40" y="38" font-size="21" font-weight="700" fill="#0f172a">HRBPilot · 系统架构</text>
-  <text x="40" y="60" font-size="13" fill="#64748b">5 大 HR 场景 · 护栏 + 成本治理作为一等公民</text>
-
-  <!-- Client -->
-  <rect x="40" y="86" width="740" height="54" rx="12" fill="#0f172a"/>
-  <text x="60" y="114" font-size="15" font-weight="600" fill="#ffffff">Client（HR / 管理者 / 内部系统）</text>
-
-  <line x1="410" y1="140" x2="410" y2="172" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-
-  <!-- API Gateway -->
-  <rect x="40" y="176" width="740" height="58" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
-  <text x="60" y="204" font-size="15" font-weight="600" fill="#1e3a8a">API 网关</text>
-  <text x="200" y="204" font-size="12" fill="#1e40af">Auth · RBAC · 租户上下文中间件 · 结构化日志</text>
-
-  <line x1="410" y1="234" x2="410" y2="266" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-
-  <!-- Scenario Orchestrator -->
-  <rect x="40" y="270" width="740" height="62" rx="12" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
-  <text x="60" y="298" font-size="15" font-weight="600" fill="#065f46">5 × Scenario Orchestrator</text>
-  <text x="300" y="298" font-size="12" fill="#047857">policy_qa · interview_digest · culture_content · voice_insight · weekly_report</text>
-
-  <!-- three branches -->
-  <line x1="180" y1="332" x2="180" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="410" y1="332" x2="410" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="640" y1="332" x2="640" y2="364" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-
-  <!-- RAG Pipeline -->
-  <rect x="40" y="368" width="240" height="86" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
-  <text x="60" y="396" font-size="14" font-weight="600" fill="#9a3412">RAG Pipeline</text>
-  <text x="60" y="418" font-size="12" fill="#c2410c">dense / sparse /</text>
-  <text x="60" y="436" font-size="12" fill="#c2410c">hybrid + 可选 rerank</text>
-
-  <!-- Guardrails -->
-  <rect x="290" y="368" width="240" height="86" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
-  <text x="310" y="396" font-size="14" font-weight="600" fill="#92400e">Guardrails 护栏</text>
-  <text x="310" y="418" font-size="12" fill="#92400e">输入护栏 → 合规校验</text>
-  <text x="310" y="436" font-size="12" fill="#92400e">→ 输出护栏 → 限流</text>
-
-  <!-- Token Budget -->
-  <rect x="540" y="368" width="240" height="86" rx="12" fill="#fce7f3" stroke="#db2777" stroke-width="2"/>
-  <text x="560" y="396" font-size="14" font-weight="600" fill="#9d174d">Token Budget</text>
-  <text x="560" y="418" font-size="12" fill="#be185d">租户月度预算（默认</text>
-  <text x="560" y="436" font-size="12" fill="#be185d">10M）· 75% 预警 / 90% 严重</text>
-
-  <!-- to storage -->
-  <line x1="160" y1="454" x2="160" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="410" y1="454" x2="410" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-  <line x1="660" y1="454" x2="660" y2="486" stroke="#475569" stroke-width="2" marker-end="url(#a)"/>
-
-  <!-- Storage -->
-  <rect x="40" y="490" width="740" height="58" rx="12" fill="#e8f0fe" stroke="#336791" stroke-width="2"/>
-  <text x="60" y="518" font-size="15" font-weight="600" fill="#1e3a5f">存储层</text>
-  <text x="200" y="518" font-size="12" fill="#1e3a5f">PostgreSQL(Alembic) · Redis · Celery · MinIO · Milvus</text>
-
-  <!-- Evaluation -->
-  <rect x="470" y="270" width="310" height="62" rx="12" fill="#f1f5f9" stroke="#475569" stroke-width="2" stroke-dasharray="6 4"/>
-  <text x="490" y="298" font-size="14" font-weight="700" fill="#334155">Evaluation 评测</text>
-  <text x="490" y="318" font-size="12" fill="#475569">质量指标聚合 + golden dataset</text>
-
-  <path d="M470 300 C 430 300 430 300 410 300" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#d)"/>
-
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">HRBPilot 可信 HR Agent 架构</title>
+  <desc id="desc">从请求治理、知识库安全入库和双路检索，到人工审批的受控执行、异步队列、死信对账与备份恢复演练的 HRBPilot 系统架构。</desc>
   <defs>
-    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
-    <marker id="d" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eff6ff"/></linearGradient>
+    <linearGradient id="navy" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#183b66"/><stop offset="1" stop-color="#24558f"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dbeafe"/><stop offset="1" stop-color="#eff6ff"/></linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d1fae5"/><stop offset="1" stop-color="#ecfdf5"/></linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fef3c7"/><stop offset="1" stop-color="#fffbeb"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1e3a5f" flood-opacity=".11"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#84a7c9"/></marker>
+    <style>
+      .title { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f2742; }
+      .label { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 16px; font-weight: 700; fill: #12395f; }
+      .body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; fill: #49657f; }
+      .tiny { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 11px; fill: #5f7890; }
+      .line { stroke: #84a7c9; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
   </defs>
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <circle cx="1310" cy="-20" r="220" fill="#dbeafe" opacity=".45"/>
+  <circle cx="80" cy="850" r="210" fill="#d1fae5" opacity=".35"/>
+  <text x="58" y="58" class="title" font-size="28" font-weight="800">HRBPilot · 可信 HR Agent 架构</text>
+  <text x="58" y="85" class="title" font-size="14" fill="#5f7890">证据优先 · 人工审批 · 可观测、可对账、可恢复</text>
+  <rect x="1120" y="40" width="252" height="40" rx="20" fill="#e0f2fe"/>
+  <text x="1246" y="65" text-anchor="middle" class="label" font-size="13" fill="#0369a1">多租户 · 最小权限 · 审计留痕</text>
+  <g filter="url(#shadow)">
+    <rect x="58" y="126" width="252" height="104" rx="18" fill="url(#blue)" stroke="#bfdbfe"/>
+    <text x="82" y="162" class="label">① 请求与内容</text><text x="82" y="188" class="body">HR / 员工 / 内部系统</text><text x="82" y="209" class="tiny">问答、上传、审批、任务操作</text>
+    <rect x="406" y="126" width="630" height="104" rx="18" fill="url(#navy)"/>
+    <text x="434" y="162" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="17" font-weight="700" fill="#fff">② API 治理层</text>
+    <text x="434" y="189" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="13" fill="#dbeafe">Request ID · 限流 · Auth · RBAC · Tenant Context · 安全响应头</text>
+    <text x="434" y="210" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="11" fill="#bfdbfe">所有路径先确定身份、租户与能力边界，再进入业务层</text>
+    <rect x="1132" y="126" width="240" height="104" rx="18" fill="url(#green)" stroke="#a7f3d0"/>
+    <text x="1156" y="162" class="label" fill="#065f46">运行信号</text><text x="1156" y="188" class="body">ready / health / cost</text><text x="1156" y="209" class="tiny">真实 LLM 失败可见为 degraded</text>
+  </g>
+  <path d="M310 178 H392" class="line"/><path d="M1036 178 H1118" class="line"/>
+  <g filter="url(#shadow)">
+    <rect x="58" y="282" width="638" height="104" rx="18" fill="#fff" stroke="#dbeafe"/>
+    <text x="82" y="318" class="label">③ 场景编排</text><text x="82" y="345" class="body">Policy QA · 面谈纪要 · 员工声音 · 周报 · 文化内容</text><text x="82" y="366" class="tiny">独立 orchestrator / config / schema，可单独演进</text>
+    <rect x="744" y="282" width="628" height="104" rx="18" fill="#fff" stroke="#fde68a"/>
+    <text x="768" y="318" class="label">④ HR Case Agent · 受控行动</text><text x="768" y="345" class="body">风险识别 → 制度取证 → 计划 → 人工审批 → 独立 Worker</text><text x="768" y="366" class="tiny">审批仅 hr_manager；HTTP 请求不直接触发外部副作用</text>
+  </g>
+  <path d="M721 230 V268" class="line"/><path d="M377 386 V424" class="line"/><path d="M1058 386 V424" class="line"/>
+  <g filter="url(#shadow)">
+    <rect x="58" y="446" width="400" height="288" rx="20" fill="url(#green)" stroke="#a7f3d0"/>
+    <text x="84" y="482" class="label" fill="#065f46">安全入库与增量索引</text>
+    <rect x="82" y="506" width="352" height="48" rx="12" fill="#fff" opacity=".92"/><text x="100" y="536" class="body">上传安全门：类型 / 魔数 / 路径 / PDF 结构校验</text>
+    <path d="M258 554 V580" class="line"/>
+    <rect x="82" y="590" width="352" height="54" rx="12" fill="#fff" opacity=".92"/><text x="100" y="618" class="body">解析、跨页拼接、页码诊断、确定性 Chunk ID</text><text x="100" y="636" class="tiny">不变内容复用 embedding，降低重建成本</text>
+    <path d="M258 644 V670" class="line"/>
+    <rect x="82" y="680" width="352" height="34" rx="12" fill="#065f46"/><text x="258" y="702" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" font-weight="700" fill="#fff">kb_ingest 队列 → Celery Worker</text>
+    <rect x="520" y="446" width="400" height="288" rx="20" fill="url(#blue)" stroke="#bfdbfe"/>
+    <text x="546" y="482" class="label">证据问答与可靠降级</text>
+    <rect x="544" y="506" width="352" height="48" rx="12" fill="#fff" opacity=".92"/><text x="562" y="536" class="body">输入护栏：注入拦截、PII 脱敏、日志不落原文</text>
+    <path d="M720 554 V580" class="line"/>
+    <rect x="544" y="590" width="352" height="54" rx="12" fill="#fff" opacity=".92"/><text x="562" y="618" class="body">原问题 + 改写问题双路召回 → RRF 融合</text><text x="562" y="636" class="tiny">PostgreSQL sparse + Milvus dense，保留页码证据</text>
+    <path d="M720 644 V670" class="line"/>
+    <rect x="544" y="680" width="352" height="34" rx="12" fill="#1d4ed8"/><text x="720" y="702" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" font-weight="700" fill="#fff">Provider Router → 请求级 fallback → 引用回答</text>
+    <rect x="982" y="446" width="390" height="288" rx="20" fill="url(#amber)" stroke="#fde68a"/>
+    <text x="1008" y="482" class="label" fill="#92400e">受控执行与运营恢复</text>
+    <rect x="1006" y="506" width="342" height="48" rx="12" fill="#fff" opacity=".92"/><text x="1024" y="536" class="body">批准后的 ToolExecution + Outbox 同事务落库</text>
+    <path d="M1177 554 V580" class="line"/>
+    <rect x="1006" y="590" width="342" height="54" rx="12" fill="#fff" opacity=".92"/><text x="1024" y="618" class="body">Worker lease / fencing / 重试；不确定结果标 UNKNOWN</text><text x="1024" y="636" class="tiny">DLQ 可查看、重放、丢弃；所有决定带审计</text>
+    <path d="M1177 644 V670" class="line"/>
+    <rect x="1006" y="680" width="342" height="34" rx="12" fill="#b45309"/><text x="1177" y="702" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" font-weight="700" fill="#fff">对账控制台 · PostgreSQL 备份 / 恢复演练</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="58" y="778" width="1314" height="72" rx="18" fill="#0f2742"/>
+    <text x="86" y="810" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="14" font-weight="700" fill="#fff">基础设施与证据存储</text>
+    <text x="86" y="833" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#bfdbfe">PostgreSQL + RLS · Redis Broker / Backpressure · MinIO 原文件 · Milvus 向量 · Celery 队列 · 结构化日志 / 审计 / 评测基线</text>
+    <rect x="1112" y="800" width="224" height="28" rx="14" fill="#1e4b78"/><text x="1224" y="819" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif" font-size="11" font-weight="700" fill="#dbeafe">安全 · 韧性 · 可追溯</text>
+  </g>
 </svg>

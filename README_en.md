@@ -33,6 +33,12 @@ Making AI in HR **affordable and safe to ship**
   <img alt="Docker" src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white">
 </p>
 
+<p>
+  <img src="./assets/hrbpilot-hero.png" alt="HRBPilot hero: an HR professional reviews cited evidence cards while AI organizes knowledge, with guardrails and human approval visible throughout the flow." width="100%">
+</p>
+
+<sub>Evidence first, never deciding for people: the system handles high-volume organization while judgement, approval, and accountability remain human.</sub>
+
 </div>
 
 ---
@@ -60,7 +66,7 @@ The real pain in HR scenarios is **risk and cost**, not whether a model can prod
 |  |  |  |
 | :-- | :-- | :-- |
 | 🛡️ **Guardrails as a first-class citizen** | 💰 **Cost you can account for** | 🔍 **RAG that never fakes it** |
-| Input passes guardrails, output passes them again, with compliance checks and rate limiting in between. On the golden set: **5/5 injections blocked, 0.0 false-positive rate** | Every call counts against a per-tenant monthly token budget (10M by default), with **75% warning / 90% critical alerts** | Dense + sparse retrieval fused via RRF, with **no mock fallback**. If an external service is down it raises an explicit infrastructure error instead of pretending retrieval succeeded |
+| Raw input passes guardrails before any model call: injection detection precedes query rewriting, PII is masked, rewrites are re-checked, and observability logs retain only lengths and hashes. On the golden set: **5/5 injections blocked, 0.0 false-positive rate** | Every call counts against a per-tenant monthly token budget (10M by default), with **75% warning / 90% critical alerts** | Original and rewritten queries both run dense + sparse retrieval and are fused through RRF, with **no mock fallback**. If an external service is down it raises an explicit infrastructure error instead of pretending retrieval succeeded |
 
 > [!NOTE]
 > Every answer is required to carry citations. When no supporting evidence is retrieved, the pipeline takes the `no_evidence_fallback` path and explicitly declines rather than fabricating an answer.
@@ -102,7 +108,8 @@ Alongside the five analytical scenarios, HRBPilot provides a deliberately bounde
 | **Governed writes** | `create_hr_case`, `assign_case_owner`, `update_case_status`, and `create_work_task` require an approved, unexpired, parameter-hash-matched, unconsumed approval. `/execute` only accepts the request atomically and returns `202`; it never performs an external side effect inside the HTTP transaction. |
 | **Durable dispatch** | ToolExecution, an exact ExecutionGrant, and a `tool.dispatch` Outbox message are persisted in one transaction. The worker uses lease/fencing and a stable `request_id`; deterministic failures can retry or enter the DLQ, while an uncertain outcome becomes `UNKNOWN` and must not be retried blindly. |
 | **Traceability** | `GET /api/v1/hr-cases/{id}/runs/{run_id}` exposes the plan, tool execution, approval, and event trail. The case state machine only permits `NEW → TRIAGED → EVIDENCE_READY → PLAN_READY → AWAITING_APPROVAL → EXECUTING → RESOLVED/FAILED`. |
-| **Policy-Q&A protections** | Policy Q&A loads bounded context only for the current tenant, user, session, and scenario. Each request chooses immutable model configuration and a fallback order from scenario/risk/cost inputs without changing the global model selection. A streamed response is displayable only after output guardrails and the no-evidence fallback complete. |
+| **Approval authority** | Only `hr_manager` can decide an approval. Platform admins hold no HR business capability, so route, service, and navigation semantics stay aligned. |
+| **Policy-Q&A protections** | Policy Q&A keeps the newest conversation turns under a token budget, carries retrieved evidence in an explicit untrusted user-role block rather than a system message, and creates an immutable request-level model plan. Each provider uses its own model name in the fallback chain; streaming output is displayable only after output guardrails and the no-evidence fallback complete. |
 | **In-app notifications** | `GET /api/notifications` and the read endpoint expose only the current recipient's notification metadata. A notification ID belonging to another recipient returns 404; case content remains behind the case ACL. |
 
 Governed writes require an independent Outbox Worker. Docker Compose starts it already; for local or other deployments, start:
@@ -119,40 +126,52 @@ Use `python -m app.outbox.worker --once --max-messages 100` for a bounded operat
 
 ```mermaid
 flowchart TB
-    Client(["🧑‍💼 HR / Employee"]) --> MW
+    Client(["🧑‍💼 HR / employee / internal system"]) --> Gateway
+    Gateway["🔐 API governance<br/>Rate limit · Auth · RBAC · Tenant context · Audit"] --> Scenarios
+    Gateway --> CaseAgent
 
-    MW["🔐 Middleware chain<br/>RequestID → CORS → RateLimit → Auth → RBAC → TenantContext → SecurityHeaders"]
-    MW --> Orch
-
-    Orch["🎯 Scenario layer · 5 × Orchestrator<br/>policy_qa · interview_digest · voice_insight · weekly_report · culture_content"]
-    Orch --> InGuard
-
-    InGuard["🛡️ Input guardrails<br/>Injection detection · PII · compliance"]
-    InGuard --> RAG
-
-    subgraph RAG["🔍 Hybrid RAG Pipeline"]
-        direction LR
-        Dense["Dense retrieval<br/>Milvus vectors"] --> RRF["RRF fusion<br/>+ evidence confidence calibration"]
-        Sparse["Sparse retrieval<br/>PostgreSQL FTS + jieba"] --> RRF
+    subgraph Knowledge["📚 Safe ingestion and incremental indexing"]
+        Upload["Upload"] --> UploadGuard["🛡️ Type / magic bytes / path / PDF structural checks"]
+        UploadGuard --> Source["MinIO source + PostgreSQL metadata"]
+        Source --> IngestQueue["kb_ingest queue"]
+        IngestQueue --> IngestWorker["Celery Worker<br/>parse · cross-page stitch · chunk"]
+        IngestWorker --> Index["Milvus vectors + PostgreSQL full text"]
     end
 
-    RAG --> LLM["🤖 LLM generation<br/>citations enforced over top-k"]
-    LLM --> OutGuard["🛡️ Output guardrails<br/>Compliance · PII · citation coverage"]
-    OutGuard --> Resp(["✅ Structured response + citations"])
+    subgraph Answer["🔎 Evidence answers and reliable fallback"]
+        Scenarios["🎯 5 Scenario Orchestrators<br/>Policy QA · interview · voice · weekly · culture"] --> InGuard["🛡️ Input guardrails<br/>injection block · PII masking"]
+        InGuard --> Variants["Original + rewritten query"]
+        Variants --> Dense["Milvus dense"]
+        Variants --> Sparse["PostgreSQL sparse"]
+        Dense --> Fusion["RRF fusion + page evidence"]
+        Sparse --> Fusion
+        Fusion --> Router["🤖 Provider Router<br/>request-level models + fallback"]
+        Router --> OutGuard["🛡️ Output guardrails + citation checks"]
+        OutGuard --> Response(["✅ Displayable answer + citations"])
+    end
 
-    LLM -. async .-> Budget["💰 Token budget<br/>per-tenant monthly · 75% / 90% alerts"]
-    LLM -. async .-> Eval["📊 Quality evaluation<br/>LLM-as-judge aggregation"]
-    OutGuard -. async .-> Audit["📝 Audit log<br/>tenant-scoped persistence"]
+    subgraph Execution["🧭 Governed execution and recovery"]
+        CaseAgent["HR Case Agent<br/>risk · evidence · plan"] --> Approval["👤 hr_manager approval"]
+        Approval --> Outbox["ToolExecution + Outbox<br/>one transaction"]
+        Outbox --> OutboxWorker["Independent Worker<br/>lease / fencing / retry"]
+        OutboxWorker --> Effect["Controlled side effect"]
+        OutboxWorker -. UNKNOWN / failed .-> Ops["DLQ + reconciliation<br/>replay / discard / human decision"]
+    end
+
+    Index --> Fusion
+    Router -. observed calls .-> Ready["📡 /api/ready<br/>LLM degradation visible"]
+    OutGuard -. async .-> Governance["💰 Token budget · 📊 evaluation · 📝 audit"]
+    Ops -. recovery drill .-> Backup["🗄️ PostgreSQL backup / restore drill"]
 
     classDef guard fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#78350f
-    classDef gov fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95
     classDef core fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a
-    class InGuard,OutGuard guard
-    class Budget,Eval,Audit gov
-    class Orch,LLM core
+    classDef ops fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#14532d
+    class UploadGuard,InGuard,OutGuard guard
+    class Scenarios,Router core
+    class Approval,Outbox,OutboxWorker,Ops,Backup ops
 ```
 
-**Storage layer:** PostgreSQL (Alembic migrations + row-level security) · Redis · Celery · MinIO · Milvus
+**Infrastructure layer:** PostgreSQL (Alembic migrations + row-level security) · Redis broker / backpressure · Celery queues · MinIO · Milvus
 
 <details>
 <summary>📐 View the static architecture diagram (SVG)</summary>
@@ -165,7 +184,9 @@ flowchart TB
 
 ## 📊 Evaluation results (real LLM run)
 
-On 2026-07-30 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM. Composition: `policy_qa` and `interview_digest` account for **100 hand-written samples**; `voice_insight`, `weekly_report`, and `culture_content` are **150 deterministically parameterized samples** — the two groups must not be presented as a single data-quality figure.
+On 2026-08-28 the full pipeline was run against a **250-sample golden set** (50 per scenario, including 5 injection-refusal cases) using a real LLM (Gitee AI `qwen3.8-flash`). Composition: `policy_qa` and `interview_digest` account for **100 hand-written samples**; `voice_insight`, `weekly_report`, and `culture_content` are **150 deterministically expanded template samples** — the two groups must not be presented as a single data-quality figure.
+
+The externally claimable artifact is `evaluation/results/golden_eval_20260828T215711Z.json`: `for_external_claims: true`, all 250 samples completed, and zero errors. Its repair history discloses two transient-error repairs and three partial reruns after a guardrail fix.
 
 <table>
 <tr>
@@ -178,9 +199,9 @@ On 2026-07-30 the full pipeline was run against a **250-sample golden set** (50 
 | Guardrail overall | **1.0** |
 | Injection recall | **1.0** (5/5 blocked) |
 | False-positive rate | **0.0** |
-| Total tokens | 225,133 (99.78% real billing) |
-| Budget consumed | **2.25%** of the 10M monthly budget |
-| Implied capacity | ~**44 calls / tenant / month** |
+| Total tokens | 554,387 (99.9% real billing) |
+| Budget consumed | **5.54%** of the 10M monthly budget |
+| Implied capacity | ~**18 calls / tenant / month** |
 
 </td>
 <td width="50%" valign="top">
@@ -189,11 +210,11 @@ On 2026-07-30 the full pipeline was run against a **250-sample golden set** (50 
 
 | Scenario | Keyword hit | Citation coverage |
 | :--- | :---: | :---: |
-| `policy_qa` | 0.58 | 0.33 |
-| `interview_digest` | 0.83 | **1.0** |
-| `voice_insight` | 0.89 | **1.0** |
-| `weekly_report` | 0.32 | **1.0** |
-| `culture_content` | 0.62 | **1.0** |
+| `policy_qa` | 0.908 | 0.9 |
+| `interview_digest` | 0.79 | **1.0** |
+| `voice_insight` | 0.91 | **1.0** |
+| `weekly_report` | 0.536 | **1.0** |
+| `culture_content` | 0.104 | **1.0** |
 
 </td>
 </tr>
@@ -228,7 +249,8 @@ docker compose up --build           # 3. start
 1. PostgreSQL becomes ready
 2. The app runs `alembic upgrade head`
 3. Milvus / MinIO / Redis become ready
-4. FastAPI (uvicorn) and the governed-write Outbox Worker start
+4. FastAPI (uvicorn) starts
+5. The Celery Worker consumes kb_ingest and scenario queues; the Outbox Worker handles approved governed writes
 
 On startup the app ensures the Milvus collection (its dimension must match `EMBEDDING_DIMENSION`) and the MinIO bucket exist. The PostgreSQL application account is a **non-superuser**, so row-level security cannot be bypassed through the connection account.
 
@@ -262,9 +284,10 @@ Open **http://localhost:8000/docs** for the interactive API documentation.
 **Indexing (write path)**
 
 ```
-Upload → MinIO → documents (PostgreSQL, status=uploaded)
+Upload → safety gate (type / magic bytes / path / PDF structure)
+       → MinIO → documents (PostgreSQL, status=uploaded)
        → atomically claimed and dispatched as a Redis/Celery task
-       → parse → chunk → jieba tokenization → embedding
+       → parse (cross-page stitching, DOCX table order, OCR page diagnostics) → chunk → jieba tokenization → embedding
        → document_chunks (PostgreSQL) + Milvus upsert
        → marked indexed
 ```
@@ -273,7 +296,7 @@ A failed rebuild **keeps the previous usable vectors**; old and new versions are
 
 **Querying (read path)**
 
-PostgreSQL keyword retrieval (`plainto_tsquery('simple', jieba_query)`) and Milvus dense retrieval (scalar filtering on `tenant_id` + `kb_id`) run **concurrently** → RRF fusion → independent evidence confidence calibration → top-k → LLM citation.
+The original query and a rewritten query (only when it actually changed) both run PostgreSQL keyword retrieval (`plainto_tsquery('simple', jieba_query)`) and Milvus dense retrieval (scalar filtering on `tenant_id` + `kb_id`), then fuse through RRF. A rewrite therefore adds recall candidates instead of replacing and losing the original intent; page evidence stays attached for LLM citations.
 
 Policy QA only accepts real knowledge bases that are **enabled** for the current tenant and carry `scenario_id=policy_qa`.
 
@@ -319,12 +342,17 @@ pytest -m "not integration"         # skip tests that need live PostgreSQL / Mil
 
 CI runs `ruff check` · `ruff format --check` · `mypy` · `pytest` on every push and pull request.
 
+### Reproducible production baseline
+
+Each milestone can run `scripts/freeze_production_baseline.py` to freeze a **non-hand-editable** verification receipt: commit SHA, dependency-lock hashes, timestamp, and measured backend and web checks are bound together with a content hash. `--verify` detects manual edits. It is evidence for one reproducible run, not a permanent green badge; code, dependency, or environment changes require a new freeze.
+
 ---
 
 ## ⚠️ Known limitations
 
-- The keyword-hit score for `weekly_report` (0.32) is low, mostly because free-form weekly-report text is hard to measure with keywords. The evaluation approach is being reworked.
-- Citation coverage for `policy_qa` (0.33) still has room to improve and is the current priority.
+- The keyword-hit score for `weekly_report` (0.536) is lower than the other structured scenarios because free-form weekly-report text is hard to measure with keyword matching. The evaluation approach is being reworked.
+- The keyword-hit score for `culture_content` (0.104) is not a useful quality proxy for authored prose; citation coverage remains 1.0, and metric applicability is now tracked per scenario.
+- Policy-QA citation coverage is 0.9 in the REAL-LLM run. The structured offline citation gate reports source recall 0.9333 and source precision 1.0; the measures are intentionally not conflated.
 - HR Case Agent quality gates are still offline and deterministic; no REAL-LLM end-to-end metric is claimed. `send_case_notification` has no verifiable external provider yet, so its dispatch enters the DLQ rather than falsely reporting delivery.
 
 ---
