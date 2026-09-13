@@ -67,6 +67,10 @@ def anonymous_read_envelope(tool_name: str, params: dict[str, Any]) -> dict[str,
 
     刻意**不**做匿名检索 —— 没有身份就没有作用范围，任何返回都可能是别的
     单位的内容。
+
+    现在**只服务 stdio 传输**：HTTP 出口（``/mcp``）在传输层就把无凭据请求挡成
+    401 + RFC 9728 挑战，根本走不到工具层。stdio 没有状态码，信封是它唯一能表达
+    "这次调用没有作用范围"的方式。详见 ``app/mcp/server.py`` 的 ``_run_read``。
     """
     try:
         validated = validate_tool_call(tool_name, params)

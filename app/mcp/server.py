@@ -6,8 +6,23 @@ uses — there is no second, weaker implementation behind this surface.
 Write tools: create ``ApprovalRequest`` (never auto-execute) — preserves the
 human approval gate (``APPROVED → CONSUMED``) and Outbox/Worker path.
 
-Auth: stdio has no headers (anonymous); HTTP carries ``Authorization: Bearer <JWT>``
-which is decoded by ``app.access.tokens`` (the one place that decodes them).
+Auth — two transports, two ways of saying "credentials required"
+--------------------------------------------------------------
+- **HTTP** (``/mcp``): the *transport layer* authenticates first
+  (``app/access/middleware/auth.py``). A request without credentials never reaches
+  this module — it gets **401 + an RFC 9728 challenge**
+  (``app/access/resource_metadata.py``) so the MCP client can discover the
+  authorization server. With credentials present, identity is resolved again from
+  ``ctx.headers`` — through the same decoder (``app.access.tokens``), so there is
+  still only one place that interprets a token.
+- **stdio**: no headers exist, so every call is anonymous. Read tools return the
+  ``AUTH_REQUIRED`` envelope — a process with no status codes has no other way to
+  express "this call has no scope".
+
+The difference is deliberate, not an inconsistency: the two transports have
+different channels for expressing refusal. What must stay identical is the
+**authorization decision** on the tool call, and that is shared
+(``app.mcp.auth.authorize_tool_call``).
 
 授权（2026-09 改造）
 --------------------
@@ -91,6 +106,12 @@ async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None)
     if principal is None:
         # 匿名不是"错误"，是"没有作用范围"：返回 AUTH_REQUIRED 信封，只回显
         # 已校验参数，不含任何真实数据（anonymous_read_envelope 保证这一点）。
+        #
+        # 这条分支现在**只服务 stdio 传输**。HTTP 出口在传输层就返回了 401 +
+        # RFC 9728 挑战（app/access/middleware/auth.py 的 _dispatch_mcp），请求
+        # 根本到不了这里 —— stdio 没有状态码可用，信封是它唯一能表达"需要身份"
+        # 的方式。这个差异来自凭据信道不同，不是不一致；必须一致的是**判定**
+        # （上面那行 authorize_tool_call）。
         return anonymous_read_envelope(tool_name, params)
     return denial_envelope(decision, tenant_id=principal.tenant_id)
 
@@ -294,7 +315,12 @@ async def hrbpilot_capabilities() -> str:
         "write_tools": sorted(_WRITE_TOOL_NAMES),
         "write_mode": "create-approval-request",
         "transports": ["stdio", "streamable-http:/mcp"],
-        "auth": ("Authorization: Bearer <JWT>；匿名调用不返回任何真实业务数据（读工具返回 AUTH_REQUIRED，写工具被拒）"),
+        "auth": (
+            "HTTP /mcp：需 Authorization: Bearer <token>；未携带时在**传输层**返回 401 与"
+            " RFC 9728 挑战（客户端据此发现授权服务器），不进入工具层。"
+            "stdio：无凭据概念，读工具返回 AUTH_REQUIRED 信封且不含任何真实业务数据。"
+            "两种传输的表达方式不同，但工具调用的判定是同一个。"
+        ),
         "authorization": (
             "每个工具在调用时按 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限 判定，"
             "两条出口（/mcp 与 /api/mcp）共用同一判定；不通过返回 FORBIDDEN，"

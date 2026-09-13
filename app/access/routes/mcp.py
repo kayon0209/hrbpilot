@@ -127,7 +127,10 @@ async def capabilities(request: Request) -> dict[str, Any]:
             {
                 "kind": "streamable-http",
                 "url": "/mcp",
-                "note": "远程：需 Authorization: Bearer <JWT>；匿名调用不返回任何真实业务数据",
+                "note": (
+                    "远程：需 Authorization: Bearer <token>；未携带时传输层返回 401 与 "
+                    "RFC 9728 挑战（resource_metadata 指向 /.well-known/oauth-protected-resource）"
+                ),
             },
         ],
         "tenant_id": tenant_id,
