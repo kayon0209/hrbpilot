@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models.base import Base
 from app.data.models.chat import ChatMessage, ChatSession
@@ -22,22 +22,17 @@ from app.shared.errors import NotFoundError
 
 
 @pytest.fixture()
-def engine():
-    return create_async_engine("sqlite+aiosqlite://")
-
-
-@pytest.fixture()
-def session_factory(engine):
-    return async_sessionmaker(engine, expire_on_commit=False)
+def session_factory(sqlite_engine):
+    return async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
 
 @pytest.fixture(autouse=True)
-async def _tables(engine):
+async def _tables(sqlite_engine):
     from typing import cast
 
     from sqlalchemy import Table
 
-    async with engine.begin() as conn:
+    async with sqlite_engine.begin() as conn:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
                 c,

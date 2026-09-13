@@ -7,7 +7,7 @@ the caller.
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models import infra as infra_models
 from app.data.models.base import Base
@@ -19,21 +19,11 @@ from app.shared.token_ledger import (
 
 
 @pytest.fixture()
-def session_factory():
-    engine = create_async_engine("sqlite+aiosqlite://")
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    import asyncio
-
-    async def make():
-        async with engine.begin() as conn:
-            await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[infra_models.TokenLedgerEntry.__table__]))
-
-    asyncio.run(make())
-    yield factory
-    import asyncio
-
-    asyncio.run(engine.dispose())
+async def session_factory(sqlite_engine):
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
+    async with sqlite_engine.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[infra_models.TokenLedgerEntry.__table__]))
+    return factory
 
 
 async def test_double_settle_returns_same_entry(session_factory):

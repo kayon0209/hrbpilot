@@ -9,7 +9,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models.base import Base
 from app.data.models.hr_case import ToolExecution
@@ -21,20 +21,15 @@ from app.scenarios.hr_case_agent.tools import ToolError, validate_tool_call
 
 
 @pytest.fixture()
-def engine():
-    return create_async_engine("sqlite+aiosqlite://")
-
-
-@pytest.fixture()
-def session_factory(engine):
-    return async_sessionmaker(engine, expire_on_commit=False)
+def session_factory(sqlite_engine):
+    return async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
 
 @pytest.fixture(autouse=True)
-async def _tables(engine):
+async def _tables(sqlite_engine):
     from app.data.models import hr_case
 
-    async with engine.begin() as conn:
+    async with sqlite_engine.begin() as conn:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
                 c,

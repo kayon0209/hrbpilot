@@ -5,7 +5,7 @@ events for one run — everything needed to reconstruct what happened.
 """
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models import hr_case
 from app.data.models.base import Base
@@ -16,33 +16,25 @@ H = hr_case  # short alias used in the table list below
 
 
 @pytest.fixture()
-def session_factory():
-    engine = create_async_engine("sqlite+aiosqlite://")
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+async def session_factory(sqlite_engine):
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
-    import asyncio
-
-    async def make():
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: Base.metadata.create_all(
-                    c,
-                    tables=[
-                        H.HRCase.__table__,
-                        H.CasePlan.__table__,
-                        H.ApprovalRequest.__table__,
-                        H.ToolExecution.__table__,
-                        H.CaseEvent.__table__,
-                        H.AgentRun.__table__,
-                    ],
-                )
+    async with sqlite_engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c,
+                tables=[
+                    H.HRCase.__table__,
+                    H.CasePlan.__table__,
+                    H.ApprovalRequest.__table__,
+                    H.ToolExecution.__table__,
+                    H.CaseEvent.__table__,
+                    H.AgentRun.__table__,
+                ],
             )
+        )
 
-    asyncio.run(make())
-    yield factory
-    import asyncio
-
-    asyncio.run(engine.dispose())
+    return factory
 
 
 @pytest.fixture(autouse=True)

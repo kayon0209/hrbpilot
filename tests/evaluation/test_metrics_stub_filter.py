@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models import infra as infra_models
 from app.data.models.base import Base
@@ -21,15 +21,11 @@ from app.evaluation.metrics import MetricsAggregator
 
 
 @pytest.fixture()
-def session_factory(monkeypatch):
-    engine = create_async_engine("sqlite+aiosqlite://")
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+async def session_factory(sqlite_engine, monkeypatch):
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
-    async def _create_tables():
-        async with engine.begin() as conn:
-            await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[infra_models.EvalResult.__table__]))
-
-    asyncio.run(_create_tables())
+    async with sqlite_engine.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[infra_models.EvalResult.__table__]))
 
     # Route the aggregator's ``from app.data.database import get_db_session``
     # to a session bound to this sqlite engine. Do NOT set session.info
@@ -40,9 +36,7 @@ def session_factory(monkeypatch):
             yield session
 
     monkeypatch.setattr("app.data.database.get_db_session", fake_get_db_session)
-    yield factory
-
-    asyncio.run(engine.dispose())
+    return factory
 
 
 async def _seed(session_factory, rows: list[dict]) -> None:

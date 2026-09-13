@@ -9,7 +9,7 @@ import json
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.data.models.base import Base
 from app.data.models.hr_case import ToolExecution
@@ -23,26 +23,17 @@ from app.shared.errors import NotFoundError
 
 
 @pytest.fixture()
-def engine():
-    try:
-        import aiosqlite  # noqa: F401
-    except ImportError:
-        pytest.skip("aiosqlite not installed")
-    return create_async_engine("sqlite+aiosqlite://")
-
-
-@pytest.fixture()
-def session_factory(engine):
-    return async_sessionmaker(engine, expire_on_commit=False)
+def session_factory(sqlite_engine):
+    return async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
 
 @pytest.fixture(autouse=True)
-async def _tables(engine, session_factory):
+async def _tables(sqlite_engine, session_factory):
     # Only create the tables this service touches — the full metadata
     # includes PG-specific TSVECTOR columns SQLite can't render.
     from app.data.models import hr_case
 
-    async with engine.begin() as conn:
+    async with sqlite_engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(
                 sync_conn,
