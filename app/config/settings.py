@@ -9,62 +9,88 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
-def _normalize_public_base_url(value: str, *, production: bool) -> str:
-    """校验并规范化对外基址，返回不带尾斜杠的 origin。
+def _normalize_origin(value: str, *, production: bool, name: str) -> str:
+    """校验并规范化一个对外 origin，返回不带尾斜杠的形式。
 
     为什么值得在启动期就拒绝
     ------------------------
-    这个值会派生三项对外契约：RFC 9728 元数据里的 ``resource``、401 挑战头里的
-    ``resource_metadata``、以及将来 access token 必须绑定的 audience。它们被
-    客户端用于**自动发现**授权服务器 —— 也就是说，一旦写错，失败发生在客户端，
-    表现为"授权流程莫名其妙地走不通"，而本服务的日志里什么也看不到。
-    客户端不会把"我读到的 issuer 不是 https"或"URL 里多了一条路径"报回来。
+    这类值（``PUBLIC_BASE_URL``、``OAUTH_ISSUER``）会被写进**客户端拿去自动发现**的
+    文档里 —— RFC 9728 元数据的 ``resource``、401 挑战头的 ``resource_metadata``、
+    RFC 8414 文档的 ``issuer``、以及 access token 必须绑定的 audience。一旦写错，
+    失败发生在客户端，表现为"授权流程莫名其妙地走不通"，而本服务的日志里什么都
+    看不到：客户端不会把"我读到的 issuer 不是 https"或"URL 里多了一条路径"报回来。
 
     所以这里宁可启动失败，也不接受"看着差不多"的写法。可接受的只有 origin：
-    带路径会让 ``/.well-known/`` 的解析位置改变（RFC 9728 §3.1 明确把
-    well-known 插在 host 与 path 之间），尾斜杠会拼出 ``//.well-known``。
+    带路径会让 ``/.well-known/`` 的解析位置改变（RFC 9728 §3.1 与 RFC 8414 §3.1
+    都把 well-known 插在 host 与 path 之间），尾斜杠会拼出 ``//.well-known``。
+
+    ``name`` 只影响错误文案 —— 但**不是**细节：多个配置项共用这条校验时，报错必须
+    指名道姓说哪一个是错的，否则运维要从一句"must be an origin"去猜是哪个变量。
     """
     raw = value.strip()
     if not raw:
-        raise ValueError("PUBLIC_BASE_URL must not be empty")
+        raise ValueError(f"{name} must not be empty")
     if any(character.isspace() for character in raw):
-        raise ValueError("PUBLIC_BASE_URL must not contain whitespace")
+        raise ValueError(f"{name} must not contain whitespace")
     parts = urlsplit(raw)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
-        raise ValueError("PUBLIC_BASE_URL must be an absolute URL, for example https://hrbp.example.com")
+        raise ValueError(f"{name} must be an absolute URL, for example https://hrbp.example.com")
     if parts.username or parts.password:
-        raise ValueError("PUBLIC_BASE_URL must not embed credentials (user:pass@)")
+        raise ValueError(f"{name} must not embed credentials (user:pass@)")
     if parts.query or parts.fragment:
-        raise ValueError("PUBLIC_BASE_URL must not contain a query string or fragment")
+        raise ValueError(f"{name} must not contain a query string or fragment")
     if parts.path.strip("/"):
-        raise ValueError("PUBLIC_BASE_URL must be an origin only — it must not contain a path component")
+        raise ValueError(f"{name} must be an origin only — it must not contain a path component")
     host = (parts.hostname or "").lower()
     if not host:
-        raise ValueError("PUBLIC_BASE_URL must include a host")
+        raise ValueError(f"{name} must include a host")
     loopback = host in _LOOPBACK_HOSTS
     if production and (parts.scheme != "https" or loopback):
-        raise ValueError("PUBLIC_BASE_URL must be a public https origin in staging or production")
+        raise ValueError(f"{name} must be a public https origin in staging or production")
     if parts.scheme == "http" and not loopback:
-        raise ValueError("PUBLIC_BASE_URL must use https unless the host is loopback (local development)")
+        raise ValueError(f"{name} must use https unless the host is loopback (local development)")
     return f"{parts.scheme}://{parts.netloc}"
 
 
-def _parse_authorization_servers(value: str) -> tuple[str, ...]:
+def _normalize_public_base_url(value: str, *, production: bool) -> str:
+    """Resource Server 的对外基址（见 ``_normalize_origin`` 的通用说明）。"""
+    return _normalize_origin(value, production=production, name="PUBLIC_BASE_URL")
+
+
+def _parse_authorization_servers(value: str, *, production: bool) -> tuple[str, ...]:
     """解析逗号分隔的授权服务器 issuer 列表。
 
-    每一项都必须是 https 绝对 URL：issuer 与元数据文档里 ``issuer`` 字段的
-    **逐字节一致**是 RFC 9207 mix-up 防御的前提，所以这里不接受 http，
-    也不接受相对形式 —— 它们都无法参与那个比对。
+    每一项都必须是绝对 URL：issuer 与元数据文档里 ``issuer`` 字段的**逐字节一致**
+    是 RFC 9207 mix-up 防御的前提，所以这里不接受相对形式 —— 它无法参与那个比对。
+
+    与 ``_normalize_origin`` 的两点差别，都是**故意**的：
+
+    1. **允许带路径**。issuer 带路径是合法的，RFC 8414 §3.1 规定了此时 well-known
+       的位置（插在 host 与 path 之间）。RS 侧取 AS 元数据时按这条规则拼 URL。
+       把带路径的 issuer 拒掉会让"AS 挂在 /auth 子路径下"这一常见部署无法配置。
+    2. **环回主机允许 http**。理由与 ``_normalize_origin`` 相同：本机联调时 AS 跑在
+       ``http://localhost:8001``。生产/预发仍然强制公网 https —— 信任列表里出现一个
+       明文地址，等于允许任何能在链路上注入的人伪造一个受信任的 issuer。
     """
     servers: list[str] = []
     for item in (part.strip() for part in value.split(",")):
         if not item:
             continue
         parts = urlsplit(item)
-        if parts.scheme != "https" or not parts.netloc:
-            raise ValueError(f"MCP_AUTHORIZATION_SERVERS entries must be absolute https URLs, got {item!r}")
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError(f"MCP_AUTHORIZATION_SERVERS entries must be absolute URLs, got {item!r}")
         if parts.username or parts.password or parts.query or parts.fragment:
             raise ValueError(f"MCP_AUTHORIZATION_SERVERS entry must not carry credentials, query or fragment: {item!r}")
+        host = (parts.hostname or "").lower()
+        if not host:
+            raise ValueError(f"MCP_AUTHORIZATION_SERVERS entry must include a host: {item!r}")
+        loopback = host in _LOOPBACK_HOSTS
+        if production and (parts.scheme != "https" or loopback):
+            raise ValueError(
+                f"MCP_AUTHORIZATION_SERVERS entries must be public https URLs in staging or production: {item!r}"
+            )
+        if parts.scheme == "http" and not loopback:
+            raise ValueError(f"MCP_AUTHORIZATION_SERVERS entry must use https unless the host is loopback: {item!r}")
         servers.append(item.rstrip("/"))
     return tuple(servers)
 
@@ -145,7 +171,11 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     # 逗号分隔的授权服务器 issuer。为空时 RFC 9728 元数据**省略**
     # `authorization_servers` 字段，而不是返回空数组 —— 空数组的语义规范未定义，
-    # 省略则明确表示"尚未配置"，并触发规范定义的 fallback。AS 上线后填入。
+    # 省略则明确表示"尚未配置"，并触发规范定义的 fallback。
+    #
+    # 它同时是 **Resource Server 的信任列表**：``/mcp`` 只接受 ``iss`` 命中这份列表的
+    # 令牌（``app/access/as_tokens.py``）。因此这个字段一旦填写，就是一次安全决策，
+    # 不是"顺便多填一个地址"。
     mcp_authorization_servers: str = ""
     # /mcp 是否接受平台自签 access token（网页登录用的那套 HS256 JWT）。
     #
@@ -155,6 +185,53 @@ class Settings(BaseSettings):
     # （ADR-0002 §4）—— 届时把它翻成 false 是一个**有意为之**的动作，会被
     # deployment 记录看到，而不是悄悄发生。
     mcp_accepts_platform_tokens: bool = True
+
+    # ---- OAuth 2.1 授权服务器（ADR-0002 §6；同仓独立应用，独立进程）----
+    # AS 自身的对外标识（issuer，RFC 8414 §2）。
+    #
+    # 刻意是**独立配置项**，不从 public_base_url 派生。ADR-0002 §5 曾写
+    # `issuer = https://<public_base_url>/oauth`，但那个取值隐含两个未验证的假设：
+    # (a) AS 与 RS 必须同 host —— 那需要反向代理才成立，而本仓库里没有反代配置；
+    # (b) 带路径的 issuer 会把元数据端点推到
+    #     `/.well-known/oauth-authorization-server/oauth`（RFC 8414 §3.1 的规则），
+    #     而不是 ADR 里写的无后缀路径 —— 即原文那一条本身就与规范不符。
+    # issuer 是 AS 的对外身份，与 resource 是 RS 的对外身份，两者是**不同的东西**，
+    # 各自显式配置比用一个拼接触发的不一致假设更稳。
+    oauth_issuer: str = "http://localhost:8001"
+    # ES256（ECDSA P-256）签名私钥。接受 PEM 原文，或 base64 编码的 PEM
+    # （编排层常常破坏多行值，两种都收）。生产/预发必须配置；
+    # 开发环境留空会生成**进程级临时密钥**（重启即失效，只影响本地联调）。
+    oauth_signing_key_pem: str = ""
+    # 仅用于**验签**的旧公钥（多块 PEM 拼接），供密钥轮换的过渡窗口使用：
+    # 轮换时新密钥转正、旧公钥留在这里，等在途令牌自然过期后清空。
+    oauth_rotated_public_keys_pem: str = ""
+    oauth_access_token_ttl_seconds: int = 900
+    # 授权码是**一次性且极短命**的：它在浏览器地址栏/Referer 里出现过，60 秒足够
+    # 完成一次重定向加一次换令牌，超出这个窗口的收益远小于被截获的代价。
+    oauth_authorization_code_ttl_seconds: int = 60
+    oauth_refresh_token_ttl_days: int = 30
+    # Dynamic Client Registration（RFC 7591）开关，**默认关闭**。
+    #
+    # ADR-0002 §3 把它降级为"兼容回退（MAY，已弃用）"，主路径是 CIMD 与预注册。
+    # 依据是一项对 119 个启用 OAuth 的 MCP 服务器的研究：119/119 至少一项授权缺陷，
+    # 96.6% 存在 DCR 相关缺陷。默认关闭意味着"没有实测证据就不开启这条路"，
+    # 而不是"为了保险两边都开" —— 后者会让 CIMD 的校验优势被绕过。
+    oauth_enable_dynamic_registration: bool = False
+    # DCR 的目标注册上限（单实例每小时的注册请求数）。开启 DCR 时它同时是限速依据：
+    # DCR 是未认证端点，没有任何上限就等于给了攻击者一个无限量的客户端注册入口。
+    oauth_dynamic_registration_per_hour: int = 20
+    # CIMD 文档在库里的保鲜期。超出后重新抓取一次。
+    #
+    # 不做"每次授权都重取"：那会让授权端点的延迟取决于客户端域名的响应速度，也会把
+    # 一个未认证端点变成"可以反复让我去访问某个 URL"的放大器。也不做"永不重取"：
+    # 客户端会演进它的 redirect_uris，永不更新会让库里停在一个谁都不再维护的旧值上。
+    oauth_cimd_cache_ttl_seconds: int = 86400
+    # 预注册客户端（运维声明的企业内部固定客户端），JSON 数组。每个元素形如：
+    #   {"client_id": "...", "client_name": "...",
+    #    "redirect_uris": ["http://127.0.0.1/callback"], "scope": "hrb:policy:read"}
+    # AS 启动时把它同步进数据库 —— 配置是**声明**，数据库是运行时的**唯一查询入口**，
+    # 三条注册路径（预注册/CIMD/DCR）因此共用同一条解析路径。
+    oauth_pre_registered_clients: str = "[]"
 
     guardrail_pii_detection_enabled: bool = True
     guardrail_prompt_injection_enabled: bool = True
@@ -209,7 +286,22 @@ class Settings(BaseSettings):
         "三处不一致"留口子。
         """
         self.public_base_url = _normalize_public_base_url(self.public_base_url, production=self.is_production)
-        _ = _parse_authorization_servers(self.mcp_authorization_servers)
+        _ = _parse_authorization_servers(self.mcp_authorization_servers, production=self.is_production)
+        return self
+
+    @model_validator(mode="after")
+    def validate_oauth_authorization_server(self) -> "Settings":
+        """规范化 AS 的 issuer，并让"生产没配签名密钥"在启动期就失败。
+
+        签名密钥的**格式**不在这里校验（那需要 import cryptography，而密钥的
+        解析逻辑属于 AS 自己的模块）。这里只挡住最贵的一种错误：生产环境忘了配
+        密钥，然后服务正常启动、正常 200，直到第一个客户走到换令牌那一步才发现
+        签不出东西 —— 那时错误现场在客户端，而服务端日志里只有一次普通请求。
+        AS 启动时会主动加载一次密钥，把格式错误也拉到启动期（fail fast）。
+        """
+        self.oauth_issuer = _normalize_origin(self.oauth_issuer, production=self.is_production, name="OAUTH_ISSUER")
+        if self.is_production and not self.oauth_signing_key_pem.strip():
+            raise ValueError("OAUTH_SIGNING_KEY_PEM must be configured in staging or production")
         return self
 
     @property
@@ -218,8 +310,13 @@ class Settings(BaseSettings):
 
     @property
     def authorization_servers(self) -> tuple[str, ...]:
-        """RFC 9728 ``authorization_servers`` 的取值；空元组表示尚未配置 AS。"""
-        return _parse_authorization_servers(self.mcp_authorization_servers)
+        """RFC 9728 ``authorization_servers`` 的取值；空元组表示尚未配置 AS。
+
+        同一个取值被两处使用：发现面把它写进元数据文档，RS 侧把它当**信任列表**
+        （``app/access/as_tokens.py`` 的 ``accepts_issuer``）—— 两处必须是同一份，
+        否则会出现"告诉客户端去 A 拿令牌，而自己只认 B"的死锁。
+        """
+        return _parse_authorization_servers(self.mcp_authorization_servers, production=self.is_production)
 
     @property
     def mcp_resource_url(self) -> str:
