@@ -13,8 +13,9 @@ Auth — two transports, two ways of saying "credentials required"
   this module — it gets **401 + an RFC 9728 challenge**
   (``app/access/resource_metadata.py``) so the MCP client can discover the
   authorization server. With credentials present, identity is resolved again from
-  ``ctx.headers`` — through the same decoder (``app.access.tokens``), so there is
-  still only one place that interprets a token.
+  ``ctx.headers`` — through the same entry point the transport layer uses
+  (``app.access.as_tokens.resolve_access_claims``), so there is still only one place
+  that interprets a token.
 - **stdio**: no headers exist, so every call is anonymous. Read tools return the
   ``AUTH_REQUIRED`` envelope — a process with no status codes has no other way to
   express "this call has no scope".
@@ -73,11 +74,15 @@ _READ_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "
 _WRITE_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "write")
 
 
-def _principal_from_ctx(ctx: Context | None) -> McpPrincipal | None:
+async def _principal_from_ctx(ctx: Context | None) -> McpPrincipal | None:
     """从 MCP 调用上下文取出已验证身份；无法确定身份时返回 ``None``（匿名）。
 
     ``ctx.headers`` 在 stdio 传输下会抛 ``ValueError``（没有 HTTP 头），
     这不是错误而是"这个传输方式没有凭据"。
+
+    ``async``：AS 签发的令牌要取一次 JWKS 并查一次撤销表（见
+    ``app.mcp.auth.adapters``）。平台自签令牌不需要这些，但两条路径共用同一入口 ——
+    "哪种凭据要查库"不该由调用点来分辨。
     """
     if ctx is None:
         return None
@@ -85,7 +90,7 @@ def _principal_from_ctx(ctx: Context | None) -> McpPrincipal | None:
         headers = ctx.headers
     except ValueError:
         return None
-    return principal_from_headers(headers)
+    return await principal_from_headers(headers)
 
 
 def _actor_label(principal: McpPrincipal | None) -> str:
@@ -96,7 +101,7 @@ def _actor_label(principal: McpPrincipal | None) -> str:
 
 async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None) -> dict[str, Any]:
     """读工具的统一入口：先授权，再交给 ``run_read_tool``。"""
-    principal = _principal_from_ctx(ctx)
+    principal = await _principal_from_ctx(ctx)
     decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
 
     if principal is not None and decision.allowed:
@@ -152,7 +157,7 @@ async def get_policy_source(
     description="Health/debug tool for the HRBPilot MCP server. Carries no tenant business data, so it is the one tool callable without credentials.",
 )
 async def hrbpilot_ping(ctx: Context | None = None) -> dict[str, Any]:
-    principal = _principal_from_ctx(ctx)
+    principal = await _principal_from_ctx(ctx)
     return {
         "ok": True,
         "server": "hrbpilot-mcp",
@@ -170,7 +175,7 @@ async def _create_approval_via_mcp(
     case_id: str,
     ctx: Context | None,
 ) -> dict[str, Any]:
-    principal = _principal_from_ctx(ctx)
+    principal = await _principal_from_ctx(ctx)
     decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
     if not decision.allowed:
         log_denial(decision, principal, surface=_SURFACE)

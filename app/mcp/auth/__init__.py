@@ -3,7 +3,8 @@
 模块内容：
 
 - ``principal``: ``McpPrincipal`` / ``AuthMethod`` —— 一次调用的已验证身份；
-- ``adapters``: 凭据（Authorization 头 / 已验证 claim）→ 主体；
+- ``adapters``: 凭据（Authorization 头 / 已验证 claim）→ 主体。解析是 ``async`` 的：
+  AS 签发的令牌需要一次 JWKS 取值与一次撤销表查询（见 ``adapters`` 模块头部）。
 - ``authorization``: ``authorize_tool_call`` 与 ``denial_envelope`` —— 唯一的判定
   与拒绝响应构造，两条出口共用。
 

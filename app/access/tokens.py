@@ -14,6 +14,12 @@ claim 校验收敛成一次。
 职责边界：本模块只回答"这个令牌说明了什么身份"。**怎么向调用方表达拒绝**
 不在这里 —— HTTP 中间件要返回带具体文案的 401，MCP 出口则把匿名当作"未认证
 但不是错误"（见 ``app/mcp/contract`` 的 AUTH_REQUIRED 语义）。
+
+本模块只处理**平台自签**令牌（HS256）。外部 Agent 的令牌由授权服务器用 ES256 签发，
+校验规则完全不同（JWKS、audience 绑定、撤销表），那些在 ``app/access/as_tokens.py``；
+**分流**（一个 bearer 值该走哪条校验路径）也在那里，入口是
+``as_tokens.resolve_access_claims``。刻意不把分流写在这里：分流需要 AS 侧的校验能力，
+放在这里会形成循环导入，而"两条路径各写一遍分流判断"正是 WP1 修掉的那类漂移。
 """
 
 from __future__ import annotations
@@ -38,6 +44,11 @@ _BEARER_PREFIX = "Bearer "
 #: （有测试断言）。定义在 access 层是为了让中间件不依赖 mcp 层。
 SCOPE_AUTH_METHOD_INTERNAL = "internal"
 
+#: AS 签发凭据的来源标记。取值必须与 ``AuthMethod.OAUTH`` 一致（同一个测试断言）。
+#: 与 ``INTERNAL`` 的区别不是标签问题：REST 桥对 ``oauth`` 主体 fail-closed，
+#: 因为它拿不到客户端与授权上限。
+SCOPE_AUTH_METHOD_OAUTH = "oauth"
+
 
 class TokenRejection(StrEnum):
     """凭据被拒的类别。刻意只区分**调用方需要区别对待**的几种。"""
@@ -45,6 +56,13 @@ class TokenRejection(StrEnum):
     MALFORMED = "malformed"  # 签名 / 过期 / audience / issuer 不通过，或根本不是 JWT
     WRONG_TYPE = "wrong_type"  # 是有效令牌，但不是 access token（例如 refresh token）
     INCOMPLETE = "incomplete"  # 缺 sub / role / tenant_id —— 无法确定作用范围
+    #: 令牌本身合法，但已被撤销（RFC 7009 / 重用检测）。
+    #:
+    #: 与 ``MALFORMED`` 分开，是因为运维处置完全不同：前者要查客户端为什么拿着一个
+    #: 坏令牌，后者是一次**已生效的策略动作**（用户撤销了授权，或系统检测到
+    #: refresh token 重用）。混在一起会让"有人刚刚撤销了授权"这条信号消失在
+    #: 一堆过期令牌里。对调用方，两者都只是 401。
+    REVOKED = "revoked"
 
 
 @dataclass(frozen=True, slots=True)

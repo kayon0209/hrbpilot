@@ -3,9 +3,21 @@
 Verifies access tokens from Authorization header.
 Sets user_id, role, tenant_id in request state for downstream use.
 
-解码与 claim 校验本身不在本文件 —— 它收敛在 ``app.access.tokens``。
-这里只负责"怎么向调用方表达拒绝"以及把已验证身份写进 ``request.state`` /
-``request.scope``。
+解码与 claim 校验本身不在本文件 —— 平台自签令牌收敛在 ``app.access.tokens``，
+AS 签发令牌收敛在 ``app.access.as_tokens``（并**按 ``iss`` 分流**，入口
+``as_tokens.resolve_access_claims``）。这里只负责"怎么向调用方表达拒绝"以及把已验证
+身份写进 ``request.state`` / ``request.scope``。
+
+两类路径接受的凭据**刻意不同**
+------------------------------
+- ``/mcp``（外部 Agent 入口）：两类都收 —— AS 令牌是正路，平台令牌由过渡开关控制。
+- 其余所有 ``/api/*``（含 REST 桥 ``/api/mcp``、网页工作台）：**只收平台自签令牌**。
+  这里仍走 ``read_access_claims``，它用 HS256 校验，AS 的 ES256 令牌必然验不过。
+
+这不是不一致：``/api/mcp`` 是工作台 UI 的内部接口，不是外部 Agent 的入口（ADR-0002
+§4）。而它即使收到一个 AS 令牌也无法安全处理 —— 它只能从 claim 重建主体，拿不到
+客户端与授权上限，那会把客户端上限静默丢掉。让它在验签阶段就失败，比让它持有一个
+残缺的主体更安全。
 
 两种"拒绝的表达"，不可互换
 --------------------------
@@ -22,10 +34,12 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.access.as_tokens import AsAccessClaims, resolve_access_claims
 from app.access.protocol_paths import WELL_KNOWN_PREFIX
 from app.access.resource_metadata import BEARER_ERROR_INVALID_TOKEN, www_authenticate_challenge
 from app.access.tokens import (
     SCOPE_AUTH_METHOD_INTERNAL,
+    SCOPE_AUTH_METHOD_OAUTH,
     TokenRejection,
     bearer_token,
     read_access_claims,
@@ -54,6 +68,7 @@ _REJECTION_MESSAGES: dict[TokenRejection, str] = {
     TokenRejection.MALFORMED: "Invalid or expired token",
     TokenRejection.WRONG_TYPE: "Not an access token",
     TokenRejection.INCOMPLETE: "Invalid token claims",
+    TokenRejection.REVOKED: "Token has been revoked",
 }
 
 
@@ -145,10 +160,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "这份凭据能不能调那个工具"。那属于工具调用层
         （``app.mcp.auth.authorize_tool_call``），两条出口在那里共用同一判定。
 
-        **过渡状态**：当前可接受的凭据只有平台自签 JWT，且它由
-        ``mcp_accepts_platform_tokens`` 控制。AS 上线后该开关置 false，本出口只接受
-        audience 绑定到 MCP resource 的令牌（ADR-0002 §4）。届时这个分支会多一条
-        "按 ``iss`` 分流"的路径，而不是"再接受一种令牌"。
+        这一层接受**两类**凭据，由 ``resolve_access_claims`` 按 ``iss`` 分流：
+
+        - **AS 签发的 access token**（ES256 + JWKS + 撤销表）—— 外部 Agent 的正路。
+        - **平台自签 JWT**（网页登录那一套），受 ``mcp_accepts_platform_tokens`` 控制。
+          这是过渡开关：AS 上线后置 false，本出口就只接受 audience 绑定到 MCP resource
+          的令牌（ADR-0002 §4）。置 false 后内部会话令牌在这里被**策略**拒绝，而不是
+          因为签名验不过 —— 两者分不同的日志，否则运维会把"策略收紧"误读成"令牌损坏"。
         """
         token = bearer_token(request.headers.get("Authorization"))
         if token is None:
@@ -156,7 +174,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # 不带 error 参数 —— 标成 invalid_token 会让它以为自己的令牌坏了。
             return _mcp_challenge()
 
-        claims = read_access_claims(token)
+        claims = await resolve_access_claims(token)
+
+        if isinstance(claims, AsAccessClaims):
+            request.scope["auth"] = {
+                "user_id": claims.user_id,
+                "role": claims.role,
+                "tenant_id": claims.tenant_id,
+                "auth_method": SCOPE_AUTH_METHOD_OAUTH,
+            }
+            return await call_next(request)
+
         if isinstance(claims, TokenRejection):
             logger.warning("mcp_token_rejected", reason=claims.value)
             return _mcp_challenge(error=BEARER_ERROR_INVALID_TOKEN)

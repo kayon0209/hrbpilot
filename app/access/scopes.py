@@ -49,6 +49,29 @@ CAPABILITY_SCOPES: dict[str, frozenset[Scope]] = {
 BASELINE_SCOPES: frozenset[Scope] = frozenset({Scope.PROFILE_READ})
 
 
+def parse_scopes(raw: str) -> frozenset[Scope]:
+    """空格分隔的 scope 串 → 集合；**认不出的取值被丢弃**。
+
+    RFC 6749 §3.3 的形式（单空格分隔、大小写敏感）。输入来自外部数据 —— 令牌的
+    ``scope`` claim、客户端注册元数据 —— 所以这里不能抛异常：一个拼错的 scope 的
+    正确后果是"它不授予任何东西"，而不是让整个校验链路 500。丢弃是 fail-closed 方向
+    （认不出 ⇒ 没有权限），与 ``scopes_for_role`` 对未知角色的处理一致。
+
+    反过来，如果将来某个 scope 从词表里被删除，用旧词表签出的令牌会因为这一行而
+    少一个 scope，而不是构造失败 —— 这是想要的：令牌应当因权限收缩而"部分失效"，
+    而不是变成一把谁都验不过的废纸。
+    """
+    parsed: set[Scope] = set()
+    for item in raw.split(" "):
+        if not item:
+            continue
+        try:
+            parsed.add(Scope(item))
+        except ValueError:
+            continue
+    return frozenset(parsed)
+
+
 def scopes_for_role(role: str | None) -> frozenset[Scope]:
     """把角色能力投影成 scope。
 
