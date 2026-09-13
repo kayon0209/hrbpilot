@@ -71,7 +71,7 @@ HR 场景真正的痛点是**风险与成本**，不是「能不能答出来」�
 > [!NOTE]
 > 所有回答强制携带引用（citation）。检索不到证据时走 `no_evidence_fallback` 明确拒答，而不是编造答案。
 
-![HRBPilot 产品特色总览：制度问答附带来源，日常 HR 工作可由系统协助整理，涉及建单、指派或状态更新等行动必须由负责人明确审批。](./assets/hrbpilot-feature-overview.svg)
+![HRBPilot 产品特色总览：制度问答附来源与页码，面谈、员工声音与周报等材料先由系统整理；敏感输入先防护，关键行动需要人工审批，并保留可对账、可恢复的执行记录。](./assets/hrbpilot-feature-overview.png)
 
 ---
 

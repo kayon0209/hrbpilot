@@ -71,7 +71,7 @@ The real pain in HR scenarios is **risk and cost**, not whether a model can prod
 > [!NOTE]
 > Every answer is required to carry citations. When no supporting evidence is retrieved, the pipeline takes the `no_evidence_fallback` path and explicitly declines rather than fabricating an answer.
 
-![HRBPilot product highlights: policy answers cite evidence, routine HR work is assisted by structured drafting, and operational actions require an explicit human approval.](./assets/hrbpilot-feature-overview.svg)
+![HRBPilot product highlights: policy answers include citations and page numbers; interview notes, employee voice, and weekly reports are organized first; sensitive input is protected before model use, and consequential actions need human approval with an auditable, recoverable record.](./assets/hrbpilot-feature-overview.png)
 
 ---
 
