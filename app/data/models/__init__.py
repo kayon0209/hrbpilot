@@ -24,6 +24,12 @@ from app.data.models.infra import AsyncTask, AuditLog, EvalResult, TokenLedgerEn
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.data.models.material import Employee, InterviewRecord, MaterialBatch, VoiceEntry
 from app.data.models.notification import InAppNotification
+from app.data.models.oauth import (
+    OAuthAuthorizationCode,
+    OAuthClient,
+    OAuthRevokedToken,
+    OAuthToken,
+)
 from app.data.models.runtime import ExecutionGrant, OutboxMessage
 from app.data.models.scenarios import (
     CultureContent,
@@ -69,7 +75,11 @@ __all__ = [
     "KnowledgeFeedbackCandidate",
     "ManagerOrgScope",
     "MaterialBatch",
+    "OAuthAuthorizationCode",
+    "OAuthClient",
     "OAuthNonce",
+    "OAuthRevokedToken",
+    "OAuthToken",
     "OrgUnit",
     "OutboxMessage",
     "Tenant",

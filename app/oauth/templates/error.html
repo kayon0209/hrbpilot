@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>无法继续 · HRBPilot 授权</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
+           align-items: center; justify-content: center; }
+    main { width: 100%; max-width: 440px; background: #fff; border: 1px solid #d8dee4;
+           border-radius: 10px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    p { font-size: 13.5px; line-height: 1.7; color: #59636e; margin: 0 0 10px; }
+    code { background: #f6f8fa; border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>无法继续这次授权</h1>
+    <p>{{ message }}</p>
+    {% if detail %}<p><code>{{ detail }}</code></p>{% endif %}
+    <p>请回到发起授权的应用，确认它的注册信息是否正确，然后重试。</p>
+  </main>
+</body>
+</html>

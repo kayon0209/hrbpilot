@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · HRBPilot 授权</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
+           align-items: center; justify-content: center; }
+    main { width: 100%; max-width: 400px; background: #fff; border: 1px solid #d8dee4;
+           border-radius: 10px; padding: 28px 28px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    .muted { color: #59636e; font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
+    .error { background: #fff2f0; border: 1px solid #ffc9c0; color: #a40e26;
+             border-radius: 6px; padding: 9px 11px; font-size: 13px; margin: 0 0 16px; }
+    label { display: block; font-size: 13px; color: #1f2328; margin-bottom: 12px; }
+    input[type=email], input[type=password] { width: 100%; box-sizing: border-box; margin-top: 5px;
+           padding: 9px 11px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; }
+    input:focus { outline: 2px solid #0969da33; border-color: #0969da; }
+    button { width: 100%; padding: 10px; font-size: 14px; font-weight: 600; color: #fff;
+             background: #1f6feb; border: 0; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #1a60cf; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>登录以继续</h1>
+    <p class="muted">
+      应用 <strong>{{ client_name }}</strong> 正在请求访问你的 HRBPilot 账户与其中的 HR 数据。
+    </p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/oauth/authorize/login">
+      {% for name, value in params.items() %}
+      <input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+      <label>邮箱
+        <input type="email" name="email" autocomplete="username" required autofocus>
+      </label>
+      <label>密码
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">登录并继续</button>
+    </form>
+  </main>
+</body>
+</html>

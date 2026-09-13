@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>授权 · HRBPilot</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
+           align-items: center; justify-content: center; }
+    main { width: 100%; max-width: 440px; background: #fff; border: 1px solid #d8dee4;
+           border-radius: 10px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    .muted { color: #59636e; font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+    ul.scopes { list-style: none; padding: 0; margin: 0 0 18px; }
+    ul.scopes li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid #eceff2;
+                   font-size: 13px; line-height: 1.5; }
+    ul.scopes li:first-child { border-top: 0; }
+    .scope-id { color: #59636e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px; white-space: nowrap; }
+    .account { font-size: 12px; color: #59636e; margin: 0 0 18px; }
+    .actions { display: flex; gap: 10px; }
+    button { flex: 1; padding: 10px; font-size: 14px; font-weight: 600; border-radius: 6px;
+             cursor: pointer; border: 1px solid transparent; }
+    button.allow { color: #fff; background: #1f6feb; }
+    button.allow:hover { background: #1a60cf; }
+    button.deny { color: #1f2328; background: #f6f8fa; border-color: #d0d7de; }
+    button.deny:hover { background: #eef1f4; }
+    .warn { background: #fff8e5; border: 1px solid #f2d894; color: #7a5b00;
+            border-radius: 6px; padding: 9px 11px; font-size: 12.5px; line-height: 1.6; margin: 0 0 16px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>授权请求</h1>
+    <p class="muted">
+      应用 <strong>{{ client_name }}</strong> 请求以你的身份访问以下 HR 数据。
+      授权后它会持续持有访问权，直到你撤销。
+    </p>
+    <p class="account">当前账户：{{ session.email }}（{{ session.role }}）</p>
+
+    <ul class="scopes">
+      {% for scope in scopes %}
+      <li>
+        <span class="scope-id">{{ scope.value }}</span>
+        <span>{{ scope.description }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if unregistered_scopes %}
+    <p class="warn">
+      另有 {{ unregistered_scopes|length }} 个已授权范围尚未被任何工具使用。
+      它们现在不会带来额外访问能力。
+    </p>
+    {% endif %}
+
+    <form method="post" action="/oauth/authorize/consent">
+      {% for name, value in params.items() %}
+      <input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+      <div class="actions">
+        <button class="deny" type="submit" name="decision" value="deny">拒绝</button>
+        <button class="allow" type="submit" name="decision" value="allow">授权</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
