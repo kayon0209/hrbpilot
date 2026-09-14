@@ -287,6 +287,55 @@ async def list_clients(request: Request) -> list[ClientOut]:
     ]
 
 
+@router.post("/revoke-all")
+@require_auth
+@require_capability("mcp_admin")
+async def revoke_all(request: Request) -> RevokeOut:
+    """撤销本租户下**所有**外部 Agent 的授权。
+
+    这是"我们怀疑有人拿到了凭据，先把门关上"用的那个入口。它必须存在且必须便宜：
+    应急处置时要求管理员先列出客户端再逐个点，等于把响应时间绑在界面操作上。
+
+    幂等：没有活跃安装实例时返回 0 而不是报错 —— 紧急按钮不该因为"已经没有可撤销的
+    东西"而失败。
+    """
+    tenant_id = require_tenant_id(request)
+    async with db_session(tenant_id) as session:
+        families = [
+            str(row)
+            for row in (
+                await session.execute(
+                    select(func.distinct(OAuthToken.family_id)).where(
+                        OAuthToken.tenant_id == tenant_id,
+                        OAuthToken.revoked_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        ]
+
+    for family_id in families:
+        await revoke_family_in_own_session(family_id, reason=REVOKED_REASON_USER_REVOKED, tenant_id=tenant_id)
+
+    async with db_session(tenant_id) as session:
+        await append_security_audit_event(
+            session,
+            tenant_id=tenant_id,
+            actor_id=str(getattr(request.state, "user_id", "") or ""),
+            action="mcp_all_installations_revoked",
+            object_type="oauth_tenant",
+            object_id=tenant_id,
+            details={"revoked_families": len(families), "revoked_at": datetime.now(UTC).isoformat()},
+        )
+        await session.commit()
+
+    return RevokeOut(
+        revoked_families=len(families),
+        message=f"已撤销本租户下的全部 {len(families)} 个外部 Agent 授权",
+    )
+
+
 @router.post("/clients/{client_id:path}/revoke")
 @require_auth
 @require_capability("mcp_admin")

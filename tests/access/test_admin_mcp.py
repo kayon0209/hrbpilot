@@ -38,6 +38,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/admin/mcp/installations/{family_id}/revoke"),
     ("GET", "/api/admin/mcp/clients"),
     ("POST", "/api/admin/mcp/clients/{client_id:path}/revoke"),
+    ("POST", "/api/admin/mcp/revoke-all"),
 }
 
 
@@ -61,7 +62,7 @@ def test_the_route_prefix_maps_to_the_capability() -> None:
     assert ROUTE_CAPABILITY_MAP.get("/api/admin/mcp") == "mcp_admin"
 
 
-def test_all_four_routes_are_mounted() -> None:
+def test_all_routes_are_mounted() -> None:
     mounted = {(method, route.path) for route in router.routes for method in route.methods}
     for expected in EXPECTED_ROUTES:
         assert expected in mounted, f"缺少路由 {expected}"

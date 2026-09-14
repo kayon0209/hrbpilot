@@ -168,6 +168,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
           的令牌（ADR-0002 §4）。置 false 后内部会话令牌在这里被**策略**拒绝，而不是
           因为签名验不过 —— 两者分不同的日志，否则运维会把"策略收紧"误读成"令牌损坏"。
         """
+        if not settings.mcp_external_enabled:
+            # 回滚开关。503 而不是 401：401 会让客户端去走完整套 OAuth 发现与授权，
+            # 用户登录完再来一次 401 —— 而真实原因只是"这个功能被关了"。
+            # 503 表达的是"暂时不可用"，客户端的正确反应是稍后重试。
+            logger.warning("mcp_external_disabled", path=request.url.path)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "SERVICE_UNAVAILABLE",
+                    "status": 503,
+                    "message": "MCP 接入暂时不可用，请稍后再试。",
+                },
+                headers={"Retry-After": "300"},
+            )
+
         token = bearer_token(request.headers.get("Authorization"))
         if token is None:
             # 没带凭据**不是错误**：客户端正是靠这个 401 开始发现流程，所以这里
