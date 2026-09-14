@@ -38,11 +38,6 @@ export const TOOL_COPY: Record<string, ToolCopy> = {
     what: '按文件名调出制度原文，也可以只挑其中某一章看。',
     say: '把《请假管理制度》第 4 章的原文给我。',
   },
-  hrbpilot_ping: {
-    label: '检查连接',
-    what: '确认 AI 助手和本系统之间的连接是否正常。',
-    say: '系统还能连上吗？',
-  },
   create_hr_case: {
     label: '新建 HR 案件',
     what: '登记一条新的员工事务，例如试用期异常、离职面谈、投诉受理。',

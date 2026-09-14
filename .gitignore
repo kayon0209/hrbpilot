@@ -96,3 +96,7 @@ web/_mg_e2e.mjs
 
 # 本地 pytest 临时目录（CI/本地跑测试时由 TMPDIR 或 --basetemp 指向）
 .pytest-tmp/
+
+# secrets: key material (HRBPILOT MCP P0)
+*.pem
+*.b64

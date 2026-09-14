@@ -32,7 +32,6 @@ const CASE_ID_PLACEHOLDER = '请替换成真实案件编号'
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   search_policy: { query: '请假超过三天需要哪些审批？', top_k: 3 },
   get_policy_source: { document_name: '请假管理制度.pdf' },
-  hrbpilot_ping: {},
   create_hr_case: { case_id: CASE_ID_PLACEHOLDER, title: '试用期异常跟进', subject_ref: 'EMP-001', category: 'onboarding' },
   assign_case_owner: { case_id: CASE_ID_PLACEHOLDER, owner_id: 'hr-manager-9' },
   send_case_notification: { case_id: CASE_ID_PLACEHOLDER, recipient_ref: 'dept-hr', template: 'policy_update' },
@@ -136,7 +135,7 @@ function ConnectInfo({ data }: { data: McpCapabilities }) {
           </div>
           <div>
             <dt>身份与权限</dt>
-            <dd>查询类允许匿名试用；办理类必须登录后携带身份凭证才受理。{data.auth}</dd>
+            <dd>业务查询与办理都需要登录后携带身份凭证；未登录时本页的「在线体验」只会返回需要登录的提示，不会返回真实数据。仅工具清单这类公开信息可以匿名查看。{data.auth}</dd>
           </div>
           <div>
             <dt>当前环境</dt>
