@@ -40,6 +40,25 @@ class GetMyAccessProfileInput(BaseModel):
     """无参数：要读的是"我自己"，任何入参都只会变成可伪造的输入。"""
 
 
+class SearchCasesInput(BaseModel):
+    limit: int = Field(20, ge=1, le=50)
+    status: str | None = Field(None, max_length=30)
+    category: str | None = Field(None, max_length=50)
+
+
+class CaseIdInput(BaseModel):
+    """按案件读取的入参。``case_id`` 必填 —— 不存在"不指定就返回全部"的用法。"""
+
+    case_id: str = Field(..., min_length=1, max_length=36)
+
+
+class ApprovalStatusInput(BaseModel):
+    case_id: str = Field(..., min_length=1, max_length=36)
+    #: 可选：只查某一条。不传则返回该案件下的审批列表。
+    #: **不能**只凭 approval_id 查 —— 那样 id 就变成了猜测即可命中的凭据。
+    approval_id: str | None = Field(None, max_length=36)
+
+
 class CreateHRCaseInput(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     subject_ref: str = Field(..., min_length=1, max_length=120)
@@ -80,6 +99,9 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "search_policy": SearchPolicyInput,
     "get_policy_source": GetPolicySourceInput,
     "get_my_access_profile": GetMyAccessProfileInput,
+    "search_cases": SearchCasesInput,
+    "get_case_summary": CaseIdInput,
+    "get_approval_status": ApprovalStatusInput,
     "create_hr_case": CreateHRCaseInput,
     "assign_case_owner": AssignCaseOwnerInput,
     "send_case_notification": SendCaseNotificationInput,
@@ -103,6 +125,10 @@ _TOOL_METADATA = {
     # 读取"这份凭据能做什么"。所有角色都应该能问这个问题 —— 否则用户无法自查
     # "为什么某个工具在我这里不见了"，只能去猜。
     "get_my_access_profile": (ToolKind.READ, "self_profile", Scope.PROFILE_READ, "low"),
+    # 案件上下文闭环（WP7）。三个都只读，都按 ACL 收窄 —— 能看见才读得到。
+    "search_cases": (ToolKind.READ, "hr_case", Scope.CASE_READ, "low"),
+    "get_case_summary": (ToolKind.READ, "hr_case", Scope.CASE_READ, "low"),
+    "get_approval_status": (ToolKind.READ, "hr_case", Scope.APPROVAL_READ, "low"),
     "create_hr_case": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
     "assign_case_owner": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
     "send_case_notification": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),

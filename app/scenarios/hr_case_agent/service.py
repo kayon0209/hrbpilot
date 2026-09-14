@@ -161,6 +161,66 @@ class HRCaseService:
             raise NotFoundError("HR case", case_id)
         return case
 
+    async def search_cases(
+        self,
+        *,
+        limit: int = 20,
+        status: str | None = None,
+        category: str | None = None,
+    ) -> list[HRCase]:
+        """按 ACL 列出案件。
+
+        与 ``get_case`` 共用 ``_visible_creator_ids`` 这一份可见性判据 —— 否则"能不能
+        按 id 读"与"能不能在列表里看到"会漂移，而漂移的一侧通常是列表更宽
+        （列表查询最容易只按租户过滤就交差）。这里刻意不写第二条判据。
+
+        **不返回** ``description``：那是自由文本，通常含员工具体情况。列表的用途是
+        "找到那个案件"，不是"读完它"；要看内容得按 id 走 ``get_case_summary``，
+        那一步同样受 ACL 约束，但它是**针对性**的一次读取。
+        """
+        statement = select(HRCase).where(HRCase.tenant_id == self.tenant_id)
+        visible_creator_ids = self._visible_creator_ids()
+        if visible_creator_ids is not None:
+            if self.actor_id is not None:
+                statement = statement.where(
+                    or_(HRCase.created_by.in_(visible_creator_ids), HRCase.owner_id == self.actor_id)
+                )
+            else:
+                statement = statement.where(HRCase.created_by.in_(visible_creator_ids))
+        if status:
+            statement = statement.where(HRCase.status == status)
+        if category:
+            statement = statement.where(HRCase.category == category)
+        statement = statement.order_by(HRCase.created_at.desc()).limit(max(1, min(limit, 50)))
+        return list((await self.session.execute(statement)).scalars().all())
+
+    async def get_approval(self, case_id: str, approval_id: str) -> ApprovalRequest:
+        """读取一条审批。租户 + 案件双重限定，且案件本身也要过 ACL。
+
+        先 ``get_case``（它做 ACL）再查审批，而不是直接按 approval_id 查 —— 后者
+        只要有 id 就能读到，而 id 是会被猜的。
+        """
+        await self.get_case(case_id)  # ACL：看不见案件就看不见它的审批
+        statement = select(ApprovalRequest).where(
+            ApprovalRequest.id == approval_id,
+            ApprovalRequest.case_id == case_id,
+            ApprovalRequest.tenant_id == self.tenant_id,
+        )
+        approval = (await self.session.execute(statement)).scalars().first()
+        if approval is None:
+            raise NotFoundError("Approval request", approval_id)
+        return approval
+
+    async def list_approvals(self, case_id: str) -> list[ApprovalRequest]:
+        """某个案件的审批列表（同样先过案件的 ACL）。"""
+        await self.get_case(case_id)
+        statement = (
+            select(ApprovalRequest)
+            .where(ApprovalRequest.case_id == case_id, ApprovalRequest.tenant_id == self.tenant_id)
+            .order_by(ApprovalRequest.created_at.desc())
+        )
+        return list((await self.session.execute(statement)).scalars().all())
+
     def _visible_creator_ids(self) -> set[str] | None:
         """Return a user actor's readable creators; internal actors stay explicit."""
         if self.actor_id is None or self.actor_role is None:
@@ -280,6 +340,9 @@ class HRCaseService:
         plan_id: str | None = None,
         agent_run_id: str | None = None,
         ttl_seconds: int = 3600,
+        requester_user_id: str | None = None,
+        client_id: str | None = None,
+        installation_id: str | None = None,
     ) -> ApprovalRequest:
         case = await self.get_case(case_id)
         if tool_name in WRITE_TOOLS:
@@ -323,6 +386,9 @@ class HRCaseService:
             input_hash=input_hash,
             requested_by=agent_run_id,
             expires_at=expires,
+            requester_user_id=requester_user_id,
+            client_id=client_id,
+            installation_id=installation_id,
         )
         self.session.add(approval)
         await self.session.flush()
@@ -392,6 +458,22 @@ class HRCaseService:
         )
         if approval is None:
             raise NotFoundError("Approval request", approval_id)
+
+        # 发起这条审批的安装实例若已被撤销，就不放行。
+        #
+        # 为什么必须在这里判：撤销授权时用户/运维期望的是"这个 Agent 从此不能再动我的
+        # 东西"。若只挡住新调用，那条已经躺在队列里的写操作在几小时后的审批通过时
+        # 照样会执行 —— 撤销看起来生效了，实际上漏掉了最要紧的那一个。
+        if approval.installation_id and await self._grant_is_revoked(approval.installation_id):
+            logger.warning(
+                "approval_blocked_installation_revoked",
+                approval_id=approval_id,
+                case_id=case_id,
+                installation_id=approval.installation_id,
+            )
+            raise CasePermissionDeniedError(
+                "发起这条审批的授权已被撤销，因此不能再批准或执行它。请重新发起授权并提交新的审批。"
+            )
 
         # Expiry is evaluated and PERSISTED atomically BEFORE any decision can
         # race it.  An expired approval becomes EXPIRED in the database and the
@@ -477,6 +559,17 @@ class HRCaseService:
         return approval
 
     # --- tool execution (idempotent, approval-gated) ---
+
+    async def _grant_is_revoked(self, installation_id: str) -> bool:
+        """该安装实例（授权会话）是否已被撤销。
+
+        复用 AS/RS 共用的撤销判据（``oauth_revocations.is_revoked``），只按 family
+        粒度查 —— 审批绑定的是**授权会话**，不是某一把具体的 access token。
+        另写一条查询会让"撤销"在两处各有一个定义，而它们迟早会不一致。
+        """
+        from app.data.repositories.oauth_revocations import is_revoked
+
+        return await is_revoked(self.session, jti="", family_id=installation_id)
 
     async def begin_tool_execution(
         self,

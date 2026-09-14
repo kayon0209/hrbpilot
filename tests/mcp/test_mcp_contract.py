@@ -239,9 +239,16 @@ def test_roles_see_exactly_what_they_can_invoke() -> None:
 
 
 def test_employee_only_sees_read_tools() -> None:
+    """employee 看得见制度检索与自我描述，看不见案件与写入。
+
+    案件工具需要 ``hr_case`` 能力，employee 没有 —— 这是**有意**的：普通员工不该
+    通过 MCP 列出案件，即使那些案件的 ACL 最终也会把他挡在外面。两层都要有。
+    """
     visible, hidden = partition_tools(TOOL_CATALOG, "employee")
-    assert {t.name for t in visible} == set(READ_TOOL_NAMES)
-    assert {t.name for t in hidden} == set(WRITE_TOOL_NAMES)
+    assert {t.name for t in visible} == {"search_policy", "get_policy_source", "get_my_access_profile"}
+    hidden_names = {t.name for t in hidden}
+    assert hidden_names >= set(WRITE_TOOL_NAMES)
+    assert hidden_names >= {"search_cases", "get_case_summary", "get_approval_status"}
 
 
 def test_unknown_role_is_fail_closed() -> None:

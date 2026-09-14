@@ -128,6 +128,13 @@ class ApprovalRequest(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
         String(20), nullable=False, default="PENDING"
     )  # PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED
     requested_by: Mapped[str | None] = mapped_column(String(36), default=None)  # agent run
+    #: 发起这条审批的**外部客户端**与**安装实例**（方案 §WP7 要求绑定到 client /
+    #: installation）。绑定的用途不是审计好看，而是让"撤销授权"能覆盖已经躺在队列里
+    #: 的写操作 —— 否则撤销只挡住新调用，挡不住旧的待审批。
+    #: 平台自签凭据没有这两个概念，那时为 NULL。
+    requester_user_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    client_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    installation_id: Mapped[str | None] = mapped_column(String(36), default=None)
     approver_id: Mapped[str | None] = mapped_column(String(36), default=None)
     decision_reason: Mapped[str | None] = mapped_column(Text, default=None)
     expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), default=None)

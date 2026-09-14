@@ -143,9 +143,11 @@ async def test_every_denied_role_tool_pair_matches_across_surfaces(monkeypatch) 
             assert from_protocol == from_rest, (role, tool.name, from_protocol, from_rest)
 
     # 精确断言而不是"至少若干条"：策略变了就该显式改这条，而不是被阈值掩盖。
+    # employee 读得到制度，但读不到案件：案件工具要 hr_case 能力，他没有。
+    case_tools = {"search_cases", "get_case_summary", "get_approval_status"}
     expected = (
-        # employee 有 policy_qa，读得到制度；所有写工具都要 hr_case / work_summary。
         {("employee", name) for name in WRITE_TOOLS}
+        | {("employee", name) for name in case_tools}
         # admin 不持有任何 HR 业务能力 —— 但持有 self_profile，所以它**能**读自己的
         # 权限摘要。自我描述不是业务内容，把这一条写进策略变更清单里。
         | {("admin", tool.name) for tool in TOOL_CATALOG.tools if tool.required_capability != "self_profile"}
@@ -237,11 +239,13 @@ def test_tool_hidden_from_discovery_is_still_denied_at_execution() -> None:
         decision = authorize_tool_call(admin, tool.name, catalog=TOOL_CATALOG)
         assert decision.allowed is False, tool.name
 
-    # employee 看得见读工具、看不见写工具；看不见的那些同样在执行期被拒
+    # employee 看得见"制度检索 + 自我描述"，看不见案件读工具与全部写工具；
+    # 看不见的那些同样在执行期被拒 —— 发现侧收窄不构成安全边界。
     employee = _internal("employee")
     visible, hidden = visible_tools(employee, TOOL_CATALOG)
-    assert {t.name for t in visible} == {t.name for t in TOOL_CATALOG.tools if t.kind.value == "read"}
-    assert {t.name for t in hidden} == WRITE_TOOLS
+    assert {t.name for t in visible} == {"search_policy", "get_policy_source", "get_my_access_profile"}
+    case_tools = {"search_cases", "get_case_summary", "get_approval_status"}
+    assert {t.name for t in hidden} == set(WRITE_TOOLS) | case_tools
     for tool in hidden:
         assert authorize_tool_call(employee, tool.name, catalog=TOOL_CATALOG).allowed is False
 
@@ -272,7 +276,11 @@ async def test_allowed_write_only_creates_an_approval_request(monkeypatch) -> No
             self.tenant_id = tenant_id
             self.actor = actor
 
-        async def request_approval(self, case_id: str, *, tool_name: str, params: dict[str, Any]) -> Any:
+        async def request_approval(
+            self, case_id: str, *, tool_name: str, params: dict[str, Any], **_binding: Any
+        ) -> Any:
+            # ``**_binding``：审批现在还要绑 requester/client/installation。替身不关心
+            # 这些值，但签名必须容忍它们 —— 否则测的是替身的签名而不是被测行为。
             recorded.append({"case_id": case_id, "tool_name": tool_name, "params": params, "actor": self.actor})
             return SimpleNamespace(id="AP-77", status="PENDING")
 

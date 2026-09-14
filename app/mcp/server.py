@@ -182,6 +182,57 @@ async def get_policy_source(
 
 
 @mcp_server.tool(
+    name="search_cases",
+    description=(
+        "Read-only: list the HR cases THIS caller is allowed to see, with a minimal field set "
+        "(no free-text descriptions, no employee identity). Use it to find a case before acting on it. "
+        "Requires Authorization."
+    ),
+)
+async def search_cases(
+    limit: int = 20,
+    status: str | None = None,
+    category: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": limit}
+    if status is not None:
+        params["status"] = status
+    if category is not None:
+        params["category"] = category
+    return await _run_read("search_cases", params, ctx)
+
+
+@mcp_server.tool(
+    name="get_case_summary",
+    description=(
+        "Read-only: read one case you have access to, including its approval history. "
+        "A case you cannot see is reported exactly like a case that does not exist. Requires Authorization."
+    ),
+)
+async def get_case_summary(case_id: str, ctx: Context | None = None) -> dict[str, Any]:
+    return await _run_read("get_case_summary", {"case_id": case_id}, ctx)
+
+
+@mcp_server.tool(
+    name="get_approval_status",
+    description=(
+        "Read-only: check the status of approval requests on a case you have access to. "
+        "Always scoped by case_id — approval ids are never a standalone lookup key. Requires Authorization."
+    ),
+)
+async def get_approval_status(
+    case_id: str,
+    approval_id: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"case_id": case_id}
+    if approval_id is not None:
+        params["approval_id"] = approval_id
+    return await _run_read("get_approval_status", params, ctx)
+
+
+@mcp_server.tool(
     name="get_my_access_profile",
     description=(
         "Read-only: summarize what THIS credential can do — your identity, the scopes in effect, "
@@ -256,7 +307,15 @@ async def _create_approval_via_mcp(
 
         async with tenant_session(principal.tenant_id) as session:
             service = HRCaseService(session, principal.tenant_id, actor=_actor_label(principal))
-            approval = await service.request_approval(case_id, tool_name=tool_name, params=validated)
+            approval = await service.request_approval(
+                case_id,
+                tool_name=tool_name,
+                params=validated,
+                # 绑定发起它的客户端与安装实例：撤销授权时必须能覆盖这条待审批。
+                requester_user_id=principal.user_id,
+                client_id=principal.client_id,
+                installation_id=str(principal.installation_id) if principal.installation_id else None,
+            )
             await session.commit()
             # 审计要能把"这次调用"与"它产生的审批"串起来 —— 事后追责时问的正是
             # "这条审批是哪个客户端、哪一次调用发起的"。

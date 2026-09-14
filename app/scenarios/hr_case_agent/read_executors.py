@@ -19,14 +19,20 @@ then hands off to a human instead of inventing a policy answer.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from sqlalchemy import select
 
 from app.data.database import make_tenant_session
+from app.data.models.hr_case import ApprovalRequest, HRCase
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.scenarios.hr_case_agent.agent_loop import register_tool_executor
 from app.scenarios.hr_case_agent.read_context import current_read_principal, current_read_tenant
 from app.scenarios.hr_case_agent.tools import ToolError
 from app.shared.logger import get_logger
+
+if TYPE_CHECKING:  # 只在类型标注里用到：顶层导入会与 app.mcp.* 形成循环
+    from app.mcp.auth.principal import McpPrincipal
 
 logger = get_logger(__name__)
 
@@ -185,10 +191,145 @@ async def execute_get_my_access_profile(params: dict) -> dict:
     return access_profile(principal, TOOL_CATALOG)  # type: ignore[arg-type]
 
 
+def _require_principal() -> McpPrincipal:
+    """取当前已绑定主体。缺失即失败 —— 案件相关工具没有"匿名降级"这一档。"""
+
+    principal = current_read_principal()
+    if not isinstance(principal, McpPrincipal):
+        raise ToolError(
+            "PRINCIPAL_CONTEXT_MISSING",
+            "case tools require a verified principal (MCP transports bind it)",
+        )
+    return principal
+
+
+def _case_view(case: HRCase) -> dict[str, Any]:
+    """案件的最小字段集。
+
+    **不含** ``description``：那是自由文本，通常写着员工的具体情况。列表的用途是
+    "找到那个案件"，不是"读完它"。也不含任何真实员工标识 —— ``subject_ref`` 是
+    合成引用，本来就是为这个用途设计的。
+    """
+    return {
+        "case_id": case.id,
+        "title": case.title,
+        "subject_ref": case.subject_ref,
+        "category": case.category,
+        "risk_level": case.risk_level,
+        "status": case.status,
+        "created_at": case.created_at.isoformat() if case.created_at else None,
+    }
+
+
+def _approval_view(approval: ApprovalRequest) -> dict[str, Any]:
+    """审批的最小字段集。**不含** ``params_json`` —— 那是工具参数的原文。"""
+    return {
+        "approval_id": approval.id,
+        "case_id": approval.case_id,
+        "tool_name": approval.tool_name,
+        "status": approval.status,
+        "created_at": approval.created_at.isoformat() if approval.created_at else None,
+        "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+        "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
+    }
+
+
+async def execute_search_cases(params: dict) -> dict:
+    """按 ACL 搜索案件。跨租户与越权案件在这里就不可见 —— 不是"返回空摘要"。"""
+    from app.scenarios.hr_case_agent.service import HRCaseService
+
+    tenant_id = _require_tenant()
+    principal = _require_principal()
+
+    session = await make_tenant_session(tenant_id)
+    try:
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        cases = await service.search_cases(
+            limit=int(params.get("limit") or 20),
+            status=params.get("status"),
+            category=params.get("category"),
+        )
+    finally:
+        await session.close()
+
+    if not cases:
+        return {"summary": "没有找到你有权查看的案件。", "cases": [], "count": 0}
+    return {
+        "summary": f"找到 {len(cases)} 个案件。",
+        "cases": [_case_view(case) for case in cases],
+        "count": len(cases),
+    }
+
+
+async def execute_get_case_summary(params: dict) -> dict:
+    """读取单个有权案件的上下文。看不见的案件按"不存在"处理（不泄漏存在性）。"""
+    from app.scenarios.hr_case_agent.service import HRCaseService
+    from app.shared.errors import NotFoundError
+
+    tenant_id = _require_tenant()
+    principal = _require_principal()
+    case_id = str(params["case_id"])
+
+    session = await make_tenant_session(tenant_id)
+    try:
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        try:
+            case = await service.get_case(case_id)
+        except NotFoundError:
+            # 与"案件真的不存在"返回同一个结果：区分两者会让本工具变成案件 id
+            # 的存在性探测器，而 id 是会被猜的。
+            return {"summary": "没有找到这个案件，或你无权查看它。", "case": None}
+        view = _case_view(case)
+        view["description"] = case.description
+        approvals = await service.list_approvals(case_id)
+    finally:
+        await session.close()
+
+    view["approvals"] = [_approval_view(item) for item in approvals]
+    return {"summary": f"案件 {case.id} 当前状态 {case.status}。", "case": view}
+
+
+async def execute_get_approval_status(params: dict) -> dict:
+    """查询审批状态。只能查调用者有权查看的案件下的审批。"""
+    from app.scenarios.hr_case_agent.service import HRCaseService
+    from app.shared.errors import NotFoundError
+
+    tenant_id = _require_tenant()
+    principal = _require_principal()
+    case_id = str(params["case_id"])
+
+    session = await make_tenant_session(tenant_id)
+    try:
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        try:
+            approval_id = params.get("approval_id")
+            if approval_id:
+                approvals = [await service.get_approval(case_id, str(approval_id))]
+            else:
+                approvals = await service.list_approvals(case_id)
+        except NotFoundError:
+            return {"summary": "没有找到这个审批，或你无权查看它。", "approvals": []}
+    finally:
+        await session.close()
+
+    return {
+        "summary": f"共 {len(approvals)} 条审批记录。",
+        "approvals": [_approval_view(item) for item in approvals],
+    }
+
+
+def _actor_label(principal: McpPrincipal) -> str:
+    """与 ``app/mcp/server.py`` 相同的 actor 写法，供 HRCaseService 解析出 id/role。"""
+    return f"user:{principal.user_id}|role:{principal.role}"
+
+
 READ_TOOL_EXECUTORS = {
     "search_policy": execute_search_policy,
     "get_policy_source": execute_get_policy_source,
     "get_my_access_profile": execute_get_my_access_profile,
+    "search_cases": execute_search_cases,
+    "get_case_summary": execute_get_case_summary,
+    "get_approval_status": execute_get_approval_status,
 }
 
 
