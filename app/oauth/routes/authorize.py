@@ -200,9 +200,25 @@ def _validate_authorization_request(
 
     requested_scope = params.get("scope")
     if requested_scope is None or not requested_scope.strip():
-        # 未指定 scope 时授予客户端注册时的全部范围。这是安全的：客户端注册范围本身
-        # 就是它的上限，而且比"默认拒绝"少一轮来回。
-        granted = frozenset(client.scopes)
+        # 未指定 scope 时：优先用运维显式配置的默认套餐（OAUTH_DEFAULT_SCOPE），
+        # 未配置则维持既有回退 —— 授予客户端注册时的全部范围（注册范围本身
+        # 就是它的上限，且比"默认拒绝"少一轮来回）。
+        #
+        # 安全边界（任务书 T2 路线 B）：默认 scope 只决定"本次**申请**哪些权限"；
+        # 最终一次工具调用能否通过仍由 RS 侧 authorize_tool_call
+        # （角色能力 ∩ 令牌 scope ∩ 客户端上限）判定，这里发放的任何值
+        # 都穿不透那道交集。
+        configured = settings.oauth_default_scope
+        if configured:
+            # DCR/CIMD 注册且尚未绑定租户的客户端，默认套餐不得包含写权限
+            # （hrb:case:propose）：写权限必须由用户在授权页显式选择 —— 这类
+            # 客户端"是谁"尚未被任何租户背书，默认放行等于把最敏感的一档
+            # 交给了谁都能走的注册通道。
+            if client.tenant_id == UNBOUND_TENANT:
+                configured = configured - {Scope.CASE_PROPOSE}
+            granted = frozenset(configured) & set(client.scopes)
+        else:
+            granted = frozenset(client.scopes)
     else:
         granted = frozenset(part for part in requested_scope.split(" ") if part)
     over_reach = sorted(granted - set(client.scopes))

@@ -239,6 +239,22 @@ class Settings(BaseSettings):
     # DCR 的目标注册上限（单实例每小时的注册请求数）。开启 DCR 时它同时是限速依据：
     # DCR 是未认证端点，没有任何上限就等于给了攻击者一个无限量的客户端注册入口。
     oauth_dynamic_registration_per_hour: int = 20
+
+    # 授权请求未携带 scope 时的**可配置默认**（任务书 2026-09-15 T2 路线 B）。
+    #
+    # 空串 = 维持既有行为：回退到该客户端注册时的全部 scope（DCR 客户端注册未声明
+    # scope 时即全部 5 项，见 app/oauth/clients.py 的回退）。
+    #
+    # 安全边界（不得绕过，改动前先读这条）：
+    # 1. 默认 scope 只决定"这次授权**申请**哪些权限"；一次工具调用能否通过仍由
+    #    RS 侧 authorize_tool_call（角色能力 ∩ 令牌 scope ∩ 客户端上限）判定，
+    #    effective_scopes = scopes ∩ client_ceiling —— 这道交集没有任何配置能跳过。
+    # 2. 写权限（hrb:case:propose）不得经由默认值发放给 DCR/CIMD 注册、且尚未
+    #    绑定租户的客户端：见 authorize 路由里的过滤。同意页仍会逐项列出所申请的
+    #    scope，用户在那一步看得到并可以拒绝。
+    # 3. 配置值只接受本服务词表内的 scope（校验见 validate_oauth_default_scope），
+    #    拼错的取值在启动期即报错，而不是静默变成"什么都没配"。
+    oauth_default_scope_raw: str = ""
     # CIMD 文档在库里的保鲜期。超出后重新抓取一次。
     #
     # 不做"每次授权都重取"：那会让授权端点的延迟取决于客户端域名的响应速度，也会把
@@ -359,6 +375,39 @@ class Settings(BaseSettings):
         return frozenset(
             item.strip().lower() for item in self.oauth_cimd_allowed_private_hosts_raw.split(",") if item.strip()
         )
+
+    @property
+    def oauth_default_scope(self) -> "frozenset[str]":
+        """授权请求未携带 scope 时的默认申请范围（空 = 维持既有回退，见字段注释）。
+
+        返回原始字符串集合（词表值）；调用方（authorize 路由）会再与客户端
+        注册范围做交集。解析用 ``parse_scopes`` 的同款丢弃语义：
+        认不出的取值不抛错 —— 启动期的 ``validate_oauth_default_scope``
+        已经挡住了"拼错还不知道"的情形。
+        """
+        from app.access.scopes import parse_scopes
+
+        return parse_scopes(self.oauth_default_scope_raw.replace(",", " "))
+
+    @model_validator(mode="after")
+    def validate_oauth_default_scope(self) -> "Settings":
+        """默认 scope 只接受本服务词表内的取值 —— 拼错要在启动期炸，不是静默为空。
+
+        静默为空的后果是"以为配了查询版、实际维持全集回退"，两种读法南辕北辙；
+        这种配置漂移在授权类系统里属于最贵的那类事故。
+        """
+        if self.oauth_default_scope_raw.strip():
+            from app.access.scopes import Scope
+
+            raw_items = [p for p in self.oauth_default_scope_raw.replace(",", " ").split(" ") if p]
+            known = {scope.value for scope in Scope}
+            unknown = [item for item in raw_items if item not in known]
+            if unknown:
+                raise ValueError(
+                    f"OAUTH_DEFAULT_SCOPE contains unknown scope(s): {', '.join(unknown)}; "
+                    f"known scopes: {', '.join(sorted(known))}"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_oauth_authorization_server(self) -> "Settings":
