@@ -180,4 +180,7 @@ def validate_tool_call(tool_name: str, params: dict) -> dict:
     try:
         return schema.model_validate(params).model_dump(mode="json", exclude_none=True)
     except Exception as e:
+        # message 是 pydantic 的校验事实（哪个字段、什么约束）—— 这是受控的
+        # 结构化信息，MCP 侧把它作为 failure_envelope 的 detail 透出给调用方
+        # 自纠错；它不是异常堆栈，不存在"泄漏内部路径"的问题。
         raise ToolError("INVALID_PARAMS", str(e)) from e

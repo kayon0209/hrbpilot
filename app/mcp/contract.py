@@ -79,6 +79,32 @@ FAILURE_MESSAGES: dict[str, str] = {
     "NOT_FOUND": "没有找到对应的案件，请核对案件编号。",
 }
 
+#: 错误码 → ``fix``（怎么改才能通过）与 ``retryable``（同一输入重试是否有意义）。
+#:
+#: 目的：让调用方（尤其是外部 AI Agent）**能自纠错**，而不是拿一个裸
+#: ``INVALID_PARAMS`` 盲目重试。``fix`` 写的是"哪个字段、约束是什么、正确格式
+#: 长什么样"；``retryable=False`` 的错误重试一万次也不会成功，模型应当改参数
+#: 或改问法，而不是再调一次。
+#:
+#: 未登记的 code：``fix=None`` + ``retryable=False`` —— 没有可靠的自纠路径时，
+#: 诚实地告诉模型"别重试"，比编一条似是而非的指引更安全。
+FAILURE_HINTS: dict[str, tuple[str | None, bool]] = {
+    "INVALID_PARAMS": (
+        "参数校验失败：请对照错误详情里指出的字段补全或修正取值。"
+        "常见约束：query 不能为空且不超过 500 字；case_id 必须是完整案件编号"
+        "（先用 search_cases 拿到编号）；top_k 在 1–10 之间。",
+        False,
+    ),
+    "CASE_ID_REQUIRED": ("先调用 search_cases 找到案件编号，再带上 case_id 重新提交。", False),
+    "UNKNOWN_TOOL": (None, False),
+    "NO_KNOWLEDGE_BASE": ("请管理员在「知识库管理」里为当前单位启用制度库后再查询。", False),
+    "RETRIEVAL_UNAVAILABLE": ("依赖的检索服务暂时不可用，可稍后用相同参数重试。", True),
+    "INVALID_CASE_TRANSITION": ("请先在「团队待处理」里处理该案件的既有请求，再提交新的。", False),
+    "APPROVAL_INVALID": ("这条请求已失效，请用相同参数重新提交一条新的。", False),
+    "NOT_FOUND": ("案件编号可能不对：先用 search_cases 列出案件，确认编号后再试。", False),
+    "INTERNAL_ERROR": ("服务内部错误，可稍后重试；若持续失败请联系管理员。", True),
+}
+
 
 #: 写工具提交成功后统一的用户说明。刻意包含"不会重复建单"这一事实：
 #: `HRCaseService.request_approval` 会复用同参数的待审批记录，所以这里既
@@ -125,12 +151,32 @@ def envelope(
     return payload
 
 
-def failure_envelope(tool_name: str, code: str, **extra: Any) -> dict[str, Any]:
-    """失败信封：只暴露受控的 ``error_code``，不透出原始异常内容。"""
-    return envelope(
+def failure_envelope(
+    tool_name: str,
+    code: str,
+    *,
+    detail: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """失败信封：只暴露受控的 ``error_code``，不透出原始异常内容。
+
+    - ``fix``：怎么改才能通过（哪个字段、什么约束、正确格式）。没有可靠指引
+      的错误码给 ``None`` —— 编一条似是而非的指引比没有更糟。
+    - ``retryable``：同一输入重试是否有意义。``False`` 时模型应当改参数或改
+      问法，而不是原样再调一次。
+    - ``detail``：受控的补充信息（例如 pydantic 校验错误里"哪个字段不满足什么
+      约束"）。**只放结构化的校验事实，不放原始异常的堆栈或内部路径**。
+    """
+    fix, retryable = FAILURE_HINTS.get(code, (None, False))
+    payload = envelope(
         tool_name,
         ToolOutcome.FAILED,
         user_message=FAILURE_MESSAGES.get(code, USER_MESSAGES[ToolOutcome.FAILED]),
         error_code=code,
+        fix=fix,
+        retryable=retryable,
         **extra,
     )
+    if detail:
+        payload["detail"] = detail
+    return payload

@@ -49,6 +49,7 @@ from typing import Any
 
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.server import MCPServer
+from mcp.types import ToolAnnotations
 
 from app.mcp.audit import record_mcp_call
 from app.mcp.auth import (
@@ -60,6 +61,7 @@ from app.mcp.auth import (
 )
 from app.mcp.contract import APPROVAL_SUBMITTED_TEMPLATE, ToolOutcome, envelope, failure_envelope
 from app.mcp.read_dispatch import anonymous_read_envelope, run_read_tool
+from app.mcp.tool_descriptions import TOOL_DESCRIPTIONS
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, ToolError, validate_tool_call
 from app.shared.errors import AppError
 from app.shared.logger import get_logger
@@ -74,6 +76,42 @@ _SURFACE = "mcp_protocol"
 
 _READ_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "read")
 _WRITE_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "write")
+
+
+def _annotations_for(tool_name: str) -> ToolAnnotations:
+    """从 catalog 元数据派生协议层 annotations —— 映射，不是第二份事实。
+
+    取值保守（任务书 T3-1）：
+
+    - 读工具：``read_only_hint=True``，其余无副作用语义；
+    - 写工具：``read_only_hint=False``、``destructive_hint=True``（真正的副作用
+      在人工审批之后，宁可让客户端多确认一步，也不低估风险）、
+      ``idempotent_hint=True``（写工具声明了 ``supports_idempotency``，同参数
+      重复提交会复用同一条待审批记录）；
+    - 全部 ``open_world_hint=False``：工具只与本公司系统交互。
+
+    从 catalog 派生而非手写：新工具登记进 catalog 就自动带正确取值，
+    "新增工具漏配 annotations"这一类漂移从根上消失。
+    """
+    is_read = tool_name in _READ_TOOL_NAMES
+    return ToolAnnotations(
+        title=tool_name,
+        read_only_hint=is_read,
+        destructive_hint=not is_read,
+        idempotent_hint=True,
+        open_world_hint=False,
+    )
+
+
+def _describe(tool_name: str) -> str:
+    """集中描述的取用口；catalog 新增工具而描述未登记时立刻暴露（不静默回落）。"""
+    try:
+        return TOOL_DESCRIPTIONS[tool_name]
+    except KeyError:  # pragma: no cover - 新工具忘写描述时的快速失败
+        raise KeyError(
+            f"tool {tool_name!r} has no entry in app/mcp/tool_descriptions.py — "
+            "every catalog tool needs a versioned description (何时用/何时不用/例子)"
+        ) from None
 
 
 async def _principal_from_ctx(ctx: Context | None) -> McpPrincipal | None:
@@ -152,11 +190,9 @@ async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None)
 
 @mcp_server.tool(
     name="search_policy",
-    description=(
-        "查询公司制度。输入一个自然语言问题，返回相关的制度条文与出处"
-        "（制度名称、条款位置、原文片段）。回答制度问题时应当引用这些出处，"
-        "不要凭常识补充。需要登录。找不到内容时会明确说明没有检索到。"
-    ),
+    description=_describe("search_policy"),
+    annotations=_annotations_for("search_policy"),
+    structured_output=True,
 )
 async def search_policy(
     query: str,
@@ -172,7 +208,9 @@ async def search_policy(
 
 @mcp_server.tool(
     name="get_policy_source",
-    description="读取某份制度的原文（可以只取指定的一节），用于引用具体条款。需要登录。",
+    description=_describe("get_policy_source"),
+    annotations=_annotations_for("get_policy_source"),
+    structured_output=True,
 )
 async def get_policy_source(
     document_name: str,
@@ -187,10 +225,9 @@ async def get_policy_source(
 
 @mcp_server.tool(
     name="search_cases",
-    description=(
-        "列出你有权查看的人事案件，用于先找到案件、再对它提交动作。"
-        "只返回案件编号、标题、类别、风险等级与状态，不含案件描述正文与员工身份信息。需要登录。"
-    ),
+    description=_describe("search_cases"),
+    annotations=_annotations_for("search_cases"),
+    structured_output=True,
 )
 async def search_cases(
     limit: int = 20,
@@ -208,10 +245,9 @@ async def search_cases(
 
 @mcp_server.tool(
     name="get_case_summary",
-    description=(
-        "读取某一个你有权查看的人事案件，包含它的审批记录。"
-        "看不见的案件会与「不存在」返回同样的结果 —— 这是刻意的，不是故障。需要登录。"
-    ),
+    description=_describe("get_case_summary"),
+    annotations=_annotations_for("get_case_summary"),
+    structured_output=True,
 )
 async def get_case_summary(case_id: str, ctx: Context | None = None) -> dict[str, Any]:
     return await _run_read("get_case_summary", {"case_id": case_id}, ctx)
@@ -219,10 +255,9 @@ async def get_case_summary(case_id: str, ctx: Context | None = None) -> dict[str
 
 @mcp_server.tool(
     name="get_approval_status",
-    description=(
-        "查询某个案件的审批状态。必须提供案件编号 —— 审批编号本身不能单独作为查询依据。"
-        "当用户问「刚才提交的动作办好了吗」时应使用本工具，不要凭印象回答。需要登录。"
-    ),
+    description=_describe("get_approval_status"),
+    annotations=_annotations_for("get_approval_status"),
+    structured_output=True,
 )
 async def get_approval_status(
     case_id: str,
@@ -237,10 +272,9 @@ async def get_approval_status(
 
 @mcp_server.tool(
     name="get_my_access_profile",
-    description=(
-        "查看当前连接的身份与可用的能力范围，包括哪些工具可以用。"
-        "当某个工具不可用、或需要向用户说明当前权限时使用。只返回你自己的信息，不包含其他用户的数据。"
-    ),
+    description=_describe("get_my_access_profile"),
+    annotations=_annotations_for("get_my_access_profile"),
+    structured_output=True,
 )
 async def get_my_access_profile(ctx: Context | None = None) -> dict[str, Any]:
     """当前凭据的身份摘要与可用范围。
@@ -284,7 +318,8 @@ async def _create_approval_via_mcp(
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
-        return failure_envelope(tool_name, e.code)
+        # detail 是受控的校验事实（哪个字段、什么约束），让调用方能自纠错。
+        return failure_envelope(tool_name, e.code, detail=str(e.__cause__) if e.code == "INVALID_PARAMS" else None)
 
     try:
         from app.data.database import tenant_session
@@ -337,7 +372,9 @@ async def _create_approval_via_mcp(
 
 @mcp_server.tool(
     name="create_hr_case",
-    description="为一个已存在的人事案件提交「新建案件记录」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
+    description=_describe("create_hr_case"),
+    annotations=_annotations_for("create_hr_case"),
+    structured_output=True,
 )
 async def mcp_create_hr_case(
     case_id: str,
@@ -361,7 +398,9 @@ async def mcp_create_hr_case(
 
 @mcp_server.tool(
     name="assign_case_owner",
-    description="为某个案件提交「变更负责人」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
+    description=_describe("assign_case_owner"),
+    annotations=_annotations_for("assign_case_owner"),
+    structured_output=True,
 )
 async def mcp_assign_case_owner(case_id: str, owner_id: str, ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("assign_case_owner", {"owner_id": owner_id}, case_id, ctx)
@@ -369,7 +408,9 @@ async def mcp_assign_case_owner(case_id: str, owner_id: str, ctx: Context | None
 
 @mcp_server.tool(
     name="send_case_notification",
-    description="为某个案件提交「通知相关人员」的审批请求（仅站内通知）。只创建待审批记录，不会直接发送。需要登录并提供案件编号。",
+    description=_describe("send_case_notification"),
+    annotations=_annotations_for("send_case_notification"),
+    structured_output=True,
 )
 async def mcp_send_case_notification(
     case_id: str, recipient_ref: str, template: str, ctx: Context | None = None
@@ -384,7 +425,9 @@ async def mcp_send_case_notification(
 
 @mcp_server.tool(
     name="update_case_status",
-    description="为某个案件提交「标记为已解决」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
+    description=_describe("update_case_status"),
+    annotations=_annotations_for("update_case_status"),
+    structured_output=True,
 )
 async def mcp_update_case_status(case_id: str, status: str = "RESOLVED", ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("update_case_status", {"status": status}, case_id, ctx)
@@ -392,7 +435,9 @@ async def mcp_update_case_status(case_id: str, status: str = "RESOLVED", ctx: Co
 
 @mcp_server.tool(
     name="create_work_task",
-    description="为某个案件提交「创建跟进任务」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
+    description=_describe("create_work_task"),
+    annotations=_annotations_for("create_work_task"),
+    structured_output=True,
 )
 async def mcp_create_work_task(
     case_id: str,

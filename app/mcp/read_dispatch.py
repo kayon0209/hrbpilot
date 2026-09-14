@@ -59,7 +59,8 @@ async def run_read_tool(
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
-        return failure_envelope(tool_name, e.code)
+        # detail 是受控的校验事实（哪个字段、什么约束），让调用方能自纠错。
+        return failure_envelope(tool_name, e.code, detail=str(e.__cause__) if e.code == "INVALID_PARAMS" else None)
 
     executor = READ_TOOL_EXECUTORS.get(tool_name)
     if executor is None:
@@ -109,7 +110,7 @@ def anonymous_read_envelope(tool_name: str, params: dict[str, Any]) -> dict[str,
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
-        return failure_envelope(tool_name, e.code)
+        return failure_envelope(tool_name, e.code, detail=str(e.__cause__) if e.code == "INVALID_PARAMS" else None)
     return envelope(
         tool_name,
         ToolOutcome.AUTH_REQUIRED,
