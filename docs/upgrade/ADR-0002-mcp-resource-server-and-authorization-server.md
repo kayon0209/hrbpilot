@@ -469,9 +469,11 @@ Authlib** —— `pyproject.toml` 的依赖清单与基线逐行一致。这是�
 - ~~**CIMD 未做端到端验证**~~ —— **已补齐**（见 §14.8 与 e2e 第 10 节）：本地自签
   HTTPS 文档服务器 + `OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS_RAW`/`OAUTH_CIMD_CA_BUNDLE`
   （仅 development 合法）即可跑通，无需公网。
-- **登录租户固定为 `"default"`。** `app/oauth/identity.py` 与平台登录共用 `get_db_session()`，
-  其默认租户是 `"default"`，而 `users` 受 RLS 约束。这是**既有**行为（不是本次引入），但意味着
-  AS 登录只能看到 `tenant_id == "default"` 的用户。多租户部署要接外部 Agent 时这条必须先解决。
+- **登录租户固定为 `"default"`（单租户已显式钉死）。** `app/oauth/identity.py` 的
+  `authenticate()` 现在把 `AsSession.tenant_id` **钉死**为常量 `DEFAULT_TENANT`（不再继承
+  `user.tenant_id`），并以 `get_db_session(DEFAULT_TENANT)` 显式进入默认租户 RLS 上下文，
+  只可见 `tenant_id == "default"` 的用户；`tests/oauth/test_identity_tenant.py` 守护此不变式。
+  剩余限制：**多租户**部署要接外部 Agent 时这条必须先解（需按请求/租户路由选择登录库）。
 - **密钥轮换的执行路径**（`OAUTH_ROTATED_PUBLIC_KEYS_PEM`）有实现与单测，但没在真实进程里
   跑过轮换窗口。
 - **匿名/半匿名端点没有独立限流**（T-11、T-12，属 WP3/WP8）：RS 元数据、AS 元数据、
