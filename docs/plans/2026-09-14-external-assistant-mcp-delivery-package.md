@@ -14,12 +14,13 @@
 | 仓库 | `https://github.com/kayon0209/hrbpilot.git` |
 | 分支 | `codex/external-assistant-mcp` |
 | base SHA | `868c6aecb80d436f5faeb2858d46a0cda018329c` |
-| HEAD SHA | `af9d305b65fcdcb6b6bc37db1baf9beae773c29b` |
+| HEAD SHA | `b012eb68e3ed05614ded6a0555d6c65a290157cc` |
 | **是否已推送** | **否**。按方案 §10"不得自行直接推送"，全部提交留在本地分支，由验收方决定推送与合并。 |
+| 说明 | 上表 HEAD SHA 是**交付内容**的终态。本文档自身的提交紧随其后（只更新本页的 SHA 与统计，不含代码变更），因此 `git rev-parse HEAD` 会比它多一个提交 —— 验收时以本文档所在提交为准即可。 |
 
 ## 2. 提交清单（按工作包）
 
-`git log --oneline <base>..HEAD` 共 21 个提交。按方案 §10 的建议序列对应如下：
+`git log --oneline <base>..HEAD` 共 24 个提交。按方案 §10 的建议序列对应如下：
 
 | 工作包 | 提交 | 目的 |
 | --- | --- | --- |
@@ -39,7 +40,7 @@
 
 ```
 git diff --stat 868c6aecb80d436f5faeb2858d46a0cda018329c...HEAD
-→ 96 files changed, 13482 insertions(+), 290 deletions(-)
+→ 99 files changed, 13482 insertions(+), 290 deletions(-)
 → 新增文件 71 个，修改文件 25 个
 ```
 
