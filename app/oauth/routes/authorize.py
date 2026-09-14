@@ -249,7 +249,10 @@ async def authorize(request: Request) -> Response:
         )
 
     session = read_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
-    if session is None:
+    if session is None or session.tenant_id != client.tenant_id:
+        # 会话要么不存在，要么属于**另一个租户**（用户先授权了别的客户端）。租户是
+        # 会话的边界：acme 租户的登录态不能给缺省租户的客户端签授权码 —— 同意的
+        # 必须是"这个租户里的这个人"。回登录页，登录会按当前客户端的租户重新认证。
         return render_page("login.html", client_name=client.client_name, params=authorization.params)
     return render_page("consent.html", **_consent_context(authorization, session))
 
@@ -284,7 +287,12 @@ async def authorize_login(request: Request) -> Response:
         assert failure is not None
         return failure
 
-    session = await authenticate(str(form.get("email") or ""), str(form.get("password") or ""))
+    # 会话租户必须与客户端归属租户一致：登录是按**那个客户端**的租户进行的（见
+    # ``identity.authenticate``）。不设这道闸，一个在缺省租户登录的会话就能给
+    # acme 租户的客户端签授权码 —— 令牌上的租户成了表单可改的字段。
+    session = await authenticate(
+        str(form.get("email") or ""), str(form.get("password") or ""), tenant_id=authorization.client.tenant_id
+    )
     if session is None:
         # 不区分"邮箱不存在"与"密码错误"（见 identity.authenticate）。
         return render_page(
@@ -307,8 +315,9 @@ async def authorize_consent(request: Request) -> Response:
         return failure
 
     session = read_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
-    if session is None:
-        # 会话在打开同意页之后过期了。回到登录页，而不是默默用别人的身份签发授权码。
+    if session is None or session.tenant_id != authorization.client.tenant_id:
+        # 会话过期，或它属于另一个租户（见 ``authorize`` 里同一道闸）。回登录页，
+        # 而不是默默用"另一个租户的人"的身份签发授权码。
         return render_page(
             "login.html",
             status_code=401,

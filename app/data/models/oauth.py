@@ -46,6 +46,13 @@ REGISTRATION_SOURCES = ("pre_registered", "cimd", "dcr")
 REVOCATION_KIND_JTI = "jti"
 REVOCATION_KIND_FAMILY = "family"
 
+#: 客户端归属租户的缺省值。``oauth_clients`` 不受 RLS（见模块头部），所以这个列
+#: **不承担隔离职责**，它的用途是回答"授权这个客户端时，该去哪个租户的用户目录里
+#: 找人"：AS 登录按客户端的租户进入对应用户表的 RLS 上下文（``app/oauth/identity.py``）。
+#: 自助注册路径（DCR / CIMD）一律落回这个缺省值 —— 让 self-service 注册自选租户
+#: 等于把跨租户入口交给匿名请求。
+DEFAULT_TENANT = "default"
+
 
 class OAuthClient(Base, TimestampMixin):
     """一个已注册的 OAuth 客户端。"""
@@ -68,6 +75,12 @@ class OAuthClient(Base, TimestampMixin):
     registration_source: Mapped[str] = mapped_column(String(32), nullable=False)
     #: CIMD 客户端的文档地址（与 client_id 逐字节一致）。非 CIMD 为 NULL。
     metadata_document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 客户端归属的租户。预注册客户端由运维在配置里声明（``OAUTH_PRE_REGISTERED_CLIENTS``
+    #: 条目的 ``tenant_id`` 键）；DCR / CIMD 一律为缺省租户 —— 见 ``DEFAULT_TENANT`` 的
+    #: 说明：这个值决定 AS 登录去哪个租户的用户目录里找人，**不能**由注册文档自带。
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=DEFAULT_TENANT, server_default=DEFAULT_TENANT
+    )
 
     __table_args__ = (Index("ix_oauth_clients_source", "registration_source"),)
 

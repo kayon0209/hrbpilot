@@ -19,9 +19,8 @@ host 与 path 之间。本服务的 resource 是 ``<base>/mcp``，所以规范�
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.access.resource_metadata import protected_resource_metadata
 
@@ -29,14 +28,26 @@ from app.access.resource_metadata import protected_resource_metadata
 #: 客户端不会去 ``/api/.well-known/...`` 找。
 router = APIRouter(tags=["oauth-discovery"])
 
+#: 元数据的缓存时长。与 AS 侧元数据的 ``public, max-age=60`` 同一个量级
+#: （``app/oauth/routes/discovery.py``）：客户端在发起授权前会读这份文档，缓存让
+#: 发现面不至于成为每次授权的固定往返；60 秒是"改了配置（比如换授权服务器地址）
+#: 之后，旧文档最坏还能被客户端用多久"的上界 —— 换址是部署级操作，一分钟窗口
+#: 完全可控。这里**必须**可缓存而令牌端点**必须**不可缓存：前者只是地址簿，
+#: 后者带着凭据。
+_METADATA_MAX_AGE_SECONDS = 60
+
+
+def _metadata_response() -> JSONResponse:
+    return JSONResponse(content=protected_resource_metadata(), headers={"Cache-Control": f"public, max-age={_METADATA_MAX_AGE_SECONDS}"})
+
 
 @router.get("/.well-known/oauth-protected-resource")
-async def protected_resource_metadata_document() -> dict[str, Any]:
+async def protected_resource_metadata_document() -> JSONResponse:
     """规范路径的根变体。"""
-    return protected_resource_metadata()
+    return _metadata_response()
 
 
 @router.get("/.well-known/oauth-protected-resource/mcp")
-async def protected_resource_metadata_document_for_mcp() -> dict[str, Any]:
+async def protected_resource_metadata_document_for_mcp() -> JSONResponse:
     """带 path 的变体 —— resource 为 ``<base>/mcp`` 时客户端的首选位置。"""
-    return protected_resource_metadata()
+    return _metadata_response()

@@ -33,7 +33,12 @@
    ``/mcp`` 的下一次调用立刻失败（协议验收第 7 条）；
 9. refresh 轮换与**重用检测**：重放旧 refresh token 会让整条 family 失效；
 10. CIMD 客户端（``client_id`` 为 https URL）走 授权 → 同意 → 换令牌，且库里落
-    ``registration_source='cimd'``（**主**注册路径，过去只靠 ``tests/oauth`` 的单测覆盖）。
+    ``registration_source='cimd'``（**主**注册路径，过去只靠 ``tests/oauth`` 的单测覆盖）；
+11. 多租户路由：预注册客户端声明 ``tenant_id``，登录按**客户端的租户**进对应用户目录，
+    令牌携带该租户并被 RS 接受；缺省租户的用户无法给该客户端登录（也不暴露任何信息）；
+12. 密钥轮换（``OAUTH_ROTATED_PUBLIC_KEYS_PEM``）在**真实进程**里演练：AS 换签名密钥、
+    旧公钥进 rotated 后，旧令牌仍被 RS 接受、新令牌经"未知 kid 强制刷新"被接受、
+    陌生密钥仍被拒、JWKS 同时含新旧两个 kid。
 
 用法
 ----
@@ -80,10 +85,10 @@ from uuid import uuid4
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: 登录租户。AS 与平台登录都走 ``get_db_session()``，其默认租户是 ``"default"``
-#: （``app/data/database.py``），而 ``users`` 受 FORCE RLS 约束 —— 于是登录只能看到
-#: ``tenant_id == "default"`` 的用户。这是**既有**行为（平台登录同一份代码路径），
-#: 不是本次改动引入的；e2e 必须按它来种数据，同时把它记进验收报告。
+#: 缺省租户（``app.data.models.oauth.DEFAULT_TENANT``）。AS 登录的租户由**授权请求的
+#: 客户端**决定（``oauth_clients.tenant_id``，见第 11 节）：预注册客户端可在配置里声明
+#: 租户，DCR / CIMD 一律落回这里。``users`` 受 FORCE RLS 约束 —— 登录在客户端租户的
+#: 用户目录里找人，签出的令牌携带同一租户。不带租户声明的客户端全部走本缺省值。
 LOGIN_TENANT = "default"
 
 _ALL_SCOPES = ("hrb:policy:read", "hrb:case:read", "hrb:case:propose", "hrb:approval:read", "hrb:profile:read")
@@ -557,6 +562,12 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
     pre_registered_id = f"e2e-prereg-{run_id}"
     created_client_ids: list[str] = []
 
+    # 多租户（第 11 节）：一个预注册客户端声明归属 acme 租户，配套一个该租户的用户。
+    # 租户名带 run_id：本次运行写进库的行可被 _cleanup 按键清掉，不与历史运行混淆。
+    tenant_acme = f"acme-{run_id}"
+    acme_email = f"oauth-e2e-acme-{run_id}@example.invalid"
+    pre_registered_acme_id = f"e2e-prereg-acme-{run_id}"
+
     await _assert_schema_ready(database_url)
     print(f"目标库可用；run_id={run_id}")
 
@@ -588,7 +599,14 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                 "client_name": "OAuth E2E 预注册客户端",
                 "redirect_uris": [redirect_uri],
                 "scope": " ".join(_ALL_SCOPES),
-            }
+            },
+            {
+                "client_id": pre_registered_acme_id,
+                "client_name": "OAuth E2E 多租户客户端",
+                "redirect_uris": [redirect_uri],
+                "scope": " ".join(_ALL_SCOPES),
+                "tenant_id": tenant_acme,
+            },
         ]
     )
 
@@ -639,8 +657,11 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
         report.ok("RS 进程就绪")
 
         created_client_ids.append(pre_registered_id)
+        created_client_ids.append(pre_registered_acme_id)
         await _seed_user(database_url, email=email, password=password, role="hrbp", tenant_id=LOGIN_TENANT)
         print(f"  已种入可登录用户 {email}（tenant={LOGIN_TENANT}，role=hrbp）")
+        await _seed_user(database_url, email=acme_email, password=password, role="hrbp", tenant_id=tenant_acme)
+        print(f"  已种入多租户用户 {acme_email}（tenant={tenant_acme}，role=hrbp）")
 
         document_server = start_document_server(cimd_cert_path, cimd_key_path)
         print(f"  CIMD 文档服务器 → {document_server.base_url}")
@@ -1118,6 +1139,170 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                 f"{row}",
             )
 
+            # ------------------------------------------------------------ 多租户路由
+            _section("11. 多租户：登录按客户端租户路由")
+            # 负例**必须**在正向 acme 登录之前做：此刻共享的 httpx client 还握着
+            # 缺省租户的会话 cookie（来自前面几节的登录），恰好用来验证租户闸。
+            # 正向流程之后再做，cookie 已是 acme 会话，两个负例的前提都不成立了。
+            deny_params = _authorize_params(
+                client_id=pre_registered_acme_id,
+                redirect_uri=redirect_uri,
+                scope=" ".join(_ALL_SCOPES),
+                resource=mcp_resource,
+                state=f"state-acme-deny-{run_id}",
+            )
+            deny_public = {key: value for key, value in deny_params.items() if not key.startswith("_")}
+            deny_page = await client.get(f"{as_url}/oauth/authorize", params=deny_public)
+            report.expect(
+                "缺省租户的会话访问 acme 客户端的授权页被送回登录页（租户闸）",
+                deny_page.status_code == 200 and "/oauth/authorize/login" in deny_page.text,
+                f"HTTP {deny_page.status_code}",
+            )
+            deny_login = await client.post(
+                f"{as_url}/oauth/authorize/login", data={**deny_public, "email": email, "password": password}
+            )
+            report.expect(
+                "缺省租户的用户无法给 acme 客户端登录（401，查询按租户显式过滤）",
+                deny_login.status_code == 401,
+                f"HTTP {deny_login.status_code}",
+            )
+
+            # 正向：预注册客户端声明了 tenant_id=acme-{run_id}，配套用户已种进该租户。
+            # 登录在**那个**目录里找人，令牌携带那个租户。
+            acme_tokens = await _full_flow(
+                client,
+                as_url=as_url,
+                client_id=pre_registered_acme_id,
+                redirect_uri=redirect_uri,
+                resource=mcp_resource,
+                scope=" ".join(_ALL_SCOPES),
+                email=acme_email,
+                password=password,
+                state=f"state-acme-{run_id}",
+            )
+            report.expect(
+                "acme 客户端走完授权并换到令牌",
+                bool(acme_tokens.get("access_token")),
+                f"client_id={pre_registered_acme_id}",
+                fatal=True,
+            )
+            _, acme_claims = _decode_unverified(acme_tokens["access_token"])
+            report.expect(
+                "令牌的 tenant_id 是客户端声明的租户",
+                acme_claims.get("tenant_id") == tenant_acme,
+                f"{acme_claims.get('tenant_id')!r} vs {tenant_acme!r}",
+                fatal=True,
+            )
+            try:
+                acme_call = await _call_mcp_with_token(f"{rs_url}/mcp", acme_tokens["access_token"])
+                report.expect(
+                    "非缺省租户的令牌被 RS 接受（authenticated=true）",
+                    bool(acme_call["payload"] and acme_call["payload"].get("authenticated") is True),
+                    f"payload={acme_call['payload']!r}",
+                )
+            except Exception as exc:
+                report.fail("非缺省租户的令牌被 RS 接受", f"{type(exc).__name__}: {exc}")
+
+            # ------------------------------------------------------------ 密钥轮换
+            _section("12. 密钥轮换（OAUTH_ROTATED_PUBLIC_KEYS_PEM）在真实进程演练")
+            # 轮换**前**由 AS 正常签发一把令牌（不能复用前面几节的：第 6 节已把它撤销）。
+            pre_rotation = await _full_flow(
+                client,
+                as_url=as_url,
+                client_id=pre_registered_id,
+                redirect_uri=redirect_uri,
+                resource=mcp_resource,
+                scope=" ".join(_ALL_SCOPES),
+                email=email,
+                password=password,
+                state=f"state-rot-pre-{run_id}",
+            )
+            old_token = pre_rotation["access_token"]
+            old_header, _ = _decode_unverified(old_token)
+
+            from cryptography.hazmat.primitives import serialization
+
+            new_signing_key = generate_signing_key()
+            rotated_public_pem = (
+                signing_key.public_key.public_bytes(
+                    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+            ).decode("ascii")
+
+            # 轮换动作本体：停掉旧 AS，用"新签名密钥 + 旧公钥进 rotated"重启。issuer 与
+            # 端口都不变 —— 那是部署里轮换的真实形态：同一个授权服务器换了签名密钥。
+            _stop(authorization_server)
+            rotation_as_env = {
+                **as_env,
+                "OAUTH_SIGNING_KEY_PEM": new_signing_key.private_pem.decode("utf-8"),
+                "OAUTH_ROTATED_PUBLIC_KEYS_PEM": rotated_public_pem,
+            }
+            authorization_server = _spawn(
+                "authorization-server-rotated", "app.oauth.main:app", port=as_port, env=rotation_as_env, log_dir=log_dir
+            )
+            servers[0] = authorization_server
+            await _wait_ready(authorization_server, "/.well-known/oauth-authorization-server")
+            report.ok("AS 已用新签名密钥重启（旧公钥进 OAUTH_ROTATED_PUBLIC_KEYS_PEM）")
+
+            jwks_after = (await client.get(f"{as_url}/.well-known/jwks.json")).json()
+            kids_after = {entry.get("kid") for entry in jwks_after.get("keys", [])}
+            report.expect(
+                "轮换后 JWKS 同时含新旧两个 kid",
+                old_header.get("kid") in kids_after and new_signing_key.kid in kids_after,
+                f"kid(旧)={old_header.get('kid')!r} kid(新)={new_signing_key.kid!r} JWKS={sorted(kids_after)}",
+            )
+
+            try:
+                old_call = await _call_mcp_with_token(f"{rs_url}/mcp", old_token)
+                report.expect(
+                    "轮换窗口内旧私钥签发的令牌仍被 RS 接受",
+                    bool(old_call["payload"] and old_call["payload"].get("authenticated") is True),
+                    f"payload={old_call['payload']!r}",
+                )
+            except Exception as exc:
+                report.fail("轮换窗口内旧私钥签发的令牌仍被 RS 接受", f"{type(exc).__name__}: {exc}")
+
+            post_rotation = await _full_flow(
+                client,
+                as_url=as_url,
+                client_id=pre_registered_id,
+                redirect_uri=redirect_uri,
+                resource=mcp_resource,
+                scope=" ".join(_ALL_SCOPES),
+                email=email,
+                password=password,
+                state=f"state-rot-post-{run_id}",
+            )
+            try:
+                new_call = await _call_mcp_with_token(f"{rs_url}/mcp", post_rotation["access_token"])
+                report.expect(
+                    "新签名密钥签发的令牌经'未知 kid 强制刷新'被 RS 接受",
+                    bool(new_call["payload"] and new_call["payload"].get("authenticated") is True),
+                    f"payload={new_call['payload']!r}",
+                )
+            except Exception as exc:
+                report.fail("新签名密钥签发的令牌经'未知 kid 强制刷新'被 RS 接受", f"{type(exc).__name__}: {exc}")
+
+            now_rotation = int(time.time())
+            rotation_claims = {
+                "iss": as_url,
+                "sub": str(uuid4()),
+                "tenant_id": LOGIN_TENANT,
+                "role": "hrbp",
+                "client_id": pre_registered_id,
+                "jti": str(uuid4()),
+                "family_id": str(uuid4()),
+                "scope": " ".join(_ALL_SCOPES),
+                "aud": mcp_resource,
+                "iat": now_rotation,
+                "exp": now_rotation + 900,
+            }
+            stranger_key = generate_signing_key()
+            status, _ = await _mcp_status(
+                f"{rs_url}/mcp", _mint(stranger_key.private_pem, rotation_claims)
+            )
+            report.expect("轮换后陌生密钥签名的令牌仍被拒（401）", status == 401, f"实际 HTTP {status}")
+
         return report
     finally:
         for server in servers:
@@ -1128,7 +1313,7 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
             print("\n（--keep：保留写库的数据）")
         else:
             with contextlib.suppress(Exception):
-                await _cleanup(database_url, emails=[email], client_ids=created_client_ids)
+                await _cleanup(database_url, emails=[email, acme_email], client_ids=created_client_ids)
                 print("\n已清理本次运行写入的行")
 
 

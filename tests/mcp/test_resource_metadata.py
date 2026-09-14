@@ -213,6 +213,17 @@ def test_discovery_document_serves_both_variants_identically(client: TestClient)
     assert root.json() == with_path.json()
 
 
+def test_discovery_document_is_cacheable_for_a_bounded_time(client: TestClient) -> None:
+    """RS 元数据带 ``Cache-Control: public, max-age=60``，与 AS 侧同一个量级。
+
+    这是威胁模型 T-11 的收尾项：元数据只是"地址簿"，可缓存让发现面不成为每次授权
+    的固定往返；60 秒是"改配置后旧文档最坏还能活多久"的上界。
+    """
+    response = client.get("/.well-known/oauth-protected-resource")
+
+    assert response.headers["Cache-Control"] == "public, max-age=60"
+
+
 def test_mcp_without_credentials_returns_a_discoverable_challenge(client: TestClient) -> None:
     response = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": 1})
 

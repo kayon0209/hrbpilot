@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.scopes import Scope
 from app.config.settings import settings
-from app.data.models.oauth import REGISTRATION_SOURCES, OAuthClient
+from app.data.models.oauth import DEFAULT_TENANT, REGISTRATION_SOURCES, OAuthClient
 
 #: 首版支持的能力集合。刻意写死而不是做成配置：这三项共同定义了"public client + PKCE"
 #: 这一种形态，任何一项放开都等于引入第二种信任模型 —— 那需要它自己的威胁分析与测试，
@@ -58,6 +58,9 @@ class ClientMetadata:
     scopes: frozenset[str]
     registration_source: str
     metadata_document_url: str | None = None
+    #: 客户端归属租户。**不来自注册文档**（见 ``validate_client_metadata``）：它只能由
+    #: 预注册路径在构造时显式给出，自助注册一律是缺省租户。
+    tenant_id: str = DEFAULT_TENANT
 
 
 def allowed_custom_redirect_schemes() -> frozenset[str]:
@@ -196,14 +199,21 @@ def validate_client_metadata(
     client_id: str,
     registration_source: str,
     metadata_document_url: str | None = None,
+    tenant_id: str = DEFAULT_TENANT,
 ) -> ClientMetadata:
     """把一份客户端元数据文档校验成 ``ClientMetadata``。
 
     ``registration_source`` 必须是 ``REGISTRATION_SOURCES`` 之一 —— 它决定了这个
     客户端是"谁放进来的"，而审计必须能分辨这件事（尤其是 DCR 自助注册的那些）。
+
+    ``tenant_id`` 是**调用方**的属性而不是文档的属性：只有预注册路径会传非缺省值
+    （运维声明的信任关系）。文档里就算写了 ``tenant_id`` 也被无视 —— 让注册文档
+    自选租户等于把跨租户入口交给任何能发 HTTPS 请求的人。
     """
     if registration_source not in REGISTRATION_SOURCES:
         raise ValueError(f"unknown registration_source: {registration_source!r}")
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError("client tenant_id must be a non-empty string")
 
     raw_uris = document.get("redirect_uris")
     if not isinstance(raw_uris, list) or not raw_uris:
@@ -247,6 +257,7 @@ def validate_client_metadata(
         scopes=_coerce_scope(document.get("scope")),
         registration_source=registration_source,
         metadata_document_url=metadata_document_url,
+        tenant_id=tenant_id,
     )
 
 
@@ -261,6 +272,7 @@ def client_to_row(metadata: ClientMetadata) -> OAuthClient:
         token_endpoint_auth_method="none",
         registration_source=metadata.registration_source,
         metadata_document_url=metadata.metadata_document_url,
+        tenant_id=metadata.tenant_id,
     )
 
 
@@ -274,6 +286,7 @@ def row_to_client(row: OAuthClient) -> ClientMetadata:
         scopes=frozenset(part for part in (row.scope or "").split(" ") if part),
         registration_source=row.registration_source,
         metadata_document_url=row.metadata_document_url,
+        tenant_id=row.tenant_id or DEFAULT_TENANT,
     )
 
 
@@ -294,6 +307,9 @@ async def save_client(session: AsyncSession, metadata: ClientMetadata) -> None:
     row.scope = " ".join(sorted(metadata.scopes))
     row.registration_source = metadata.registration_source
     row.metadata_document_url = metadata.metadata_document_url
+    # ``tenant_id`` 刻意**不在**更新路径上：它决定登录去哪个用户目录找人，一旦建好
+    # 就不该被一次文档刷新悄悄搬走。CIMD 刷新拿到的文档根本没有租户概念，若在这里
+    # 覆盖，一个已归属 acme 租户的客户端会被静默搬回缺省租户 —— 而且没有任何日志。
 
 
 async def load_client(session: AsyncSession, client_id: str) -> ClientMetadata | None:

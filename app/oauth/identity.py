@@ -9,17 +9,19 @@ Agent（或反过来）。所以这里走的是与 ``app/access/routes/auth.py``
 
 from __future__ import annotations
 
+from app.data.models import oauth as models
 from app.oauth.sessions import AsSession
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: AS 登录**固定**使用默认租户。外部 Agent 接入走的是单租户部署：OAuth 令牌签发后由
-#: RS 按 ``tenant_id`` 定位数据，一旦 AS 会话租户与 RS 校验的租户不一致，令牌拿到的就是
-#: 另一个（或不存在的）租户的数据，表现成"登录成功却一直 401"。所以这里**不继承**
-#: ``user.tenant_id``，而是把会话租户**钉死**为 ``DEFAULT_TENANT``。多租户部署要接外部
-#: Agent 时，这一条必须先解（需要按请求/租户路由选择登录库，见 ADR-0002 §13.6）。
-DEFAULT_TENANT = "default"
+#: 缺省租户（与平台登录共用，定义在 ``app.data.models.oauth``）。AS 登录的租户**不
+#: 继承** ``user.tenant_id``：OAuth 令牌由 RS 按 ``tenant_id`` 定位数据，会话租户与
+#: RS 校验的租户不一致，令牌拿到的就是另一个（或不存在的）租户的数据，表现成"登录
+#: 成功却一直 401"。所以会话租户由**授权请求的客户端**决定（``authorize`` 传入
+#: ``client.tenant_id``），多租户部署据此把客户端接到各自的用户目录；单租户部署
+#: 什么都不用配，缺省值就是行为（见 ADR-0002 §13.6）。
+DEFAULT_TENANT = models.DEFAULT_TENANT
 
 #: 用户不存在时用来消耗等量 CPU 的占位哈希（与 ``app/access/routes/auth.py`` 同一取值）。
 #: 没有它，"用户不存在"会比"密码错误"快一个数量级，于是响应时间本身就成了一个
@@ -27,8 +29,12 @@ DEFAULT_TENANT = "default"
 _DUMMY_BCRYPT_HASH = "$2b$12$C6UzMDM.H6dfI/f/IKcEeOe0ZVg2Lz0V5A1E1L1o3d1Wv9C1mQx1W"
 
 
-async def authenticate(email: str, password: str) -> AsSession | None:
-    """按邮箱与密码认证。失败一律返回 ``None``。
+async def authenticate(email: str, password: str, *, tenant_id: str = DEFAULT_TENANT) -> AsSession | None:
+    """按邮箱与密码认证，并把会话租户**钉死**为调用方指定的租户。失败一律返回 ``None``。
+
+    租户由授权请求的客户端决定（见模块顶部说明），**不是**从查出来的用户记录继承：
+    即使 ``users`` 表里这条记录的 ``tenant_id`` 是别的值（数据异常），签出的会话与
+    后续令牌也只属于登录时选定的那个租户。
 
     失败原因（用户不存在 / 密码错误 / 数据库不可用）**不对外区分**：区分它们等于对外
     提供一个账号枚举接口，而区分的信息只对审计有价值 —— 那部分进日志。
@@ -36,7 +42,7 @@ async def authenticate(email: str, password: str) -> AsSession | None:
     import bcrypt
 
     supplied = (email or "").strip()
-    if not supplied or not password:
+    if not supplied or not password or not tenant_id:
         return None
 
     from app.data.database import get_db_session
@@ -44,10 +50,12 @@ async def authenticate(email: str, password: str) -> AsSession | None:
 
     user = None
     try:
-        # 显式以默认租户进入 RLS 上下文：AS 登录只可见 ``tenant_id == "default"`` 的用户。
-        async for db in get_db_session(DEFAULT_TENANT):
+        # 显式以客户端归属的租户进入 RLS 上下文，并让查询**自己**带租户过滤：
+        # RLS 是否真正生效取决于部署（角色是否表 owner、是否 FORCE），登录的正确性
+        # 不能依赖那个配置 —— 过滤必须发生在查询里（见 UserRepository.get_by_email）。
+        async for db in get_db_session(tenant_id):
             repo = UserRepository(db)
-            user = await repo.get_by_email(supplied)
+            user = await repo.get_by_email(supplied, tenant_id=tenant_id)
     except Exception as exc:
         logger.error("oauth_as_login_db_failed", error=str(exc))
         return None
@@ -68,8 +76,8 @@ async def authenticate(email: str, password: str) -> AsSession | None:
     logger.info("oauth_as_login_success", user_id=user.id, role=user.role)
     return AsSession(
         user_id=user.id,
-        # 钉死为默认租户：不继承 user.tenant_id，避免跨租户令牌（见模块顶部说明）。
-        tenant_id=DEFAULT_TENANT,
+        # 钉死为登录选定的租户：不继承 user.tenant_id，避免跨租户令牌（见模块顶部说明）。
+        tenant_id=tenant_id,
         role=user.role,
         email=user.email,
         name=user.name,

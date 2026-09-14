@@ -145,9 +145,9 @@ async def fetch_metadata_document(url: str) -> dict[str, Any]:
     # ``_tls_verification_setting`` 在配置了 CA bundle 时返回字符串路径；httpx 的
     # ``verify=<str>`` 已被弃用并会刷 DeprecationWarning，这里转成等价且受支持的
     # ``SSLContext``（加载默认信任库并额外信任该 bundle）。
-    verify = _tls_verification_setting()
-    if isinstance(verify, str):
-        verify = ssl.create_default_context(cafile=verify)
+    setting = _tls_verification_setting()
+    verify: bool | ssl.SSLContext
+    verify = ssl.create_default_context(cafile=setting) if isinstance(setting, str) else setting
 
     try:
         async with httpx.AsyncClient(

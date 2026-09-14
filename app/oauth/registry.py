@@ -15,7 +15,7 @@ import json
 from typing import Any
 
 from app.config.settings import settings
-from app.data.models.oauth import OAuthClient
+from app.data.models.oauth import DEFAULT_TENANT, OAuthClient
 from app.oauth.cimd import resolve_cimd_client
 from app.oauth.clients import (
     ClientMetadata,
@@ -33,6 +33,10 @@ logger = get_logger(__name__)
 #: ``dcr_...`` 就知道"这是自助注册进来的"，与 CIMD 的 URL 形式、预注册的具名形式
 #: 一眼可分。
 DCR_CLIENT_ID_PREFIX = "dcr_"
+
+#: "配置条目里没有这个键"的哨兵。不能用 ``None``：JSON 的 ``null`` 会与它混淆，
+#: 而"显式写了 null"是笔误，应当让启动失败而不是当成"没写"。
+_UNSET = object()
 
 
 def _now() -> datetime.datetime:
@@ -113,7 +117,23 @@ def preconfigured_clients() -> tuple[ClientMetadata, ...]:
         client_id = document.get("client_id")
         if not isinstance(client_id, str) or not client_id:
             raise ValueError("OAUTH_PRE_REGISTERED_CLIENTS entries must carry a non-empty string 'client_id'")
-        clients.append(validate_client_metadata(document, client_id=client_id, registration_source="pre_registered"))
+        # ``tenant_id`` 是预注册配置**独有**的键（注册文档没有这个概念）：它声明
+        # "授权这个客户端时，去哪个租户的用户目录里找人"。这是运维声明的信任关系，
+        # 与 redirect_uris 同一个信任级别；DCR / CIMD 路径永远拿不到传它的机会。
+        # 刻意区分"没写"与"写了空值"：前者落缺省租户，后者是运维笔误 —— 静默落回
+        # 缺省租户会把客户端接到错误的用户目录，而那里恰好还有一个同名邮箱。
+        raw_tenant = document.get("tenant_id", _UNSET)
+        if raw_tenant is _UNSET:
+            tenant_id = DEFAULT_TENANT
+        elif isinstance(raw_tenant, str) and raw_tenant.strip():
+            tenant_id = raw_tenant
+        else:
+            raise ValueError(f"OAUTH_PRE_REGISTERED_CLIENTS entry {client_id!r} has an invalid tenant_id")
+        clients.append(
+            validate_client_metadata(
+                document, client_id=client_id, registration_source="pre_registered", tenant_id=tenant_id
+            )
+        )
     return tuple(clients)
 
 

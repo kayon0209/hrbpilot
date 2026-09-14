@@ -13,9 +13,18 @@ class UserRepository(BaseRepository[User]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(User, session)
 
-    async def get_by_email(self, email: str) -> User | None:
-        """Find user by email (unique constraint)."""
-        result = await self.session.execute(select(User).where(User.email == email))
+    async def get_by_email(self, email: str, *, tenant_id: str | None = None) -> User | None:
+        """Find user by email (unique constraint), optionally scoped to one tenant.
+
+        ``tenant_id`` 是**显式**过滤，不是可省的优化：AS 登录（``app/oauth/identity.py``）
+        在租户上下文建立之前就要查 ``users``，而 RLS 的"owner 绕过"与"是否 FORCE"是
+        部署级配置 —— 多租户登录的正确性不能押在它们的取值上。e2e 曾在真实进程里
+        抓到这一点：同库同角色，仅 owner 不同，跨租户邮箱就能查出来。
+        """
+        stmt = select(User).where(User.email == email)
+        if tenant_id is not None:
+            stmt = stmt.where(User.tenant_id == tenant_id)
+        result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_tenant_and_role(self, tenant_id: str, role: str) -> list[User]:
