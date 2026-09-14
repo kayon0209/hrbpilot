@@ -31,7 +31,9 @@
    ``MCP_ACCEPTS_PLATFORM_TOKENS=false`` 下被**策略**拒绝；
 8. RFC 7662 内省：有效 → ``active:true``，撤销后 → ``active:false``，并且撤销后
    ``/mcp`` 的下一次调用立刻失败（协议验收第 7 条）；
-9. refresh 轮换与**重用检测**：重放旧 refresh token 会让整条 family 失效。
+9. refresh 轮换与**重用检测**：重放旧 refresh token 会让整条 family 失效；
+10. CIMD 客户端（``client_id`` 为 https URL）走 授权 → 同意 → 换令牌，且库里落
+    ``registration_source='cimd'``（**主**注册路径，过去只靠 ``tests/oauth`` 的单测覆盖）。
 
 用法
 ----
@@ -47,8 +49,9 @@
 
 未做的事（明确列出）
 --------------------
-- 不验 CIMD：它需要一个公网 HTTPS 文档服务器，本地起不出来。CIMD 的校验由
-  ``tests/oauth/`` 的单元测试覆盖。
+- CIMD 端到端：本脚本起一个本地自签 HTTPS 文档服务器（``scripts/cimd_document_server.py``），
+  并把 ``OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS_RAW=127.0.0.1`` 与 ``OAUTH_CIMD_CA_BUNDLE`` 注入
+  AS —— 两项仅在 development 下合法（production/staging 会因启动期校验直接失败）。见第 10 节。
 - 不起 Celery / Milvus 等外部依赖；RS 的启动期基础设施探测失败只记警告（见
   ``app/main.py`` 的 ``_ensure_infrastructure``），不影响本链路。
 """
@@ -567,6 +570,15 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
     # 留空会走"进程级临时密钥"，那样脚本拿不到私钥，就没法做这类负例。
     sys.path.insert(0, str(REPO_ROOT))
     from app.oauth.keys import generate_signing_key
+    from scripts.cimd_document_server import generate_self_signed_certificate, start_document_server
+
+    # CIMD 文档服务器（主注册路径的端到端验证需要）。仅 development 下允许抓取环回
+    # 地址并信任自签根；production/staging 会因 settings.validate_oauth_cimd_fetch_reach
+    # 在启动期直接失败。证书同时充当自己的根（BasicConstraints ca=True），可直接交给
+    # OAUTH_CIMD_CA_BUNDLE。
+    cimd_cert_path = log_dir / f"cimd-ca-{run_id}.pem"
+    cimd_key_path = log_dir / f"cimd-key-{run_id}.pem"
+    generate_self_signed_certificate(cimd_cert_path, cimd_key_path)
 
     signing_key = generate_signing_key()
     pre_registered = json.dumps(
@@ -591,6 +603,10 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
         "PUBLIC_BASE_URL": rs_url,
         "MCP_AUTHORIZATION_SERVERS": as_url,
         "MCP_ACCEPTS_PLATFORM_TOKENS": "false",
+        # CIMD 端到端：允许 AS 抓取环回地址、并信任本地自签文档服务器证书。
+        # 仅在 development 合法（production/staging 启动即失败）。
+        "OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS_RAW": "127.0.0.1",
+        "OAUTH_CIMD_CA_BUNDLE": str(cimd_cert_path),
     }
     as_env = {
         **common,
@@ -603,6 +619,9 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
         "OAUTH_PRE_REGISTERED_CLIENTS": pre_registered,
         "OAUTH_ENABLE_DYNAMIC_REGISTRATION": "true",
         "OAUTH_DYNAMIC_REGISTRATION_PER_HOUR": "500",
+        # CIMD 端到端（同 RS 的两项）。AS 是真正去 fetch 文档的那一方。
+        "OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS_RAW": "127.0.0.1",
+        "OAUTH_CIMD_CA_BUNDLE": str(cimd_cert_path),
     }
 
     authorization_server = _spawn(
@@ -610,6 +629,7 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
     )
     resource_server = _spawn("resource-server", "app.main:app", port=rs_port, env=rs_env, log_dir=log_dir)
     servers = [authorization_server, resource_server]
+    document_server = None
     print(f"  AS → {as_url}\n  RS → {rs_url}")
 
     try:
@@ -621,6 +641,9 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
         created_client_ids.append(pre_registered_id)
         await _seed_user(database_url, email=email, password=password, role="hrbp", tenant_id=LOGIN_TENANT)
         print(f"  已种入可登录用户 {email}（tenant={LOGIN_TENANT}，role=hrbp）")
+
+        document_server = start_document_server(cimd_cert_path, cimd_key_path)
+        print(f"  CIMD 文档服务器 → {document_server.base_url}")
 
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False) as client:
             # ------------------------------------------------------------ 发现面
@@ -1035,10 +1058,72 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                     f"WWW-Authenticate={header!r}",
                 )
 
+            # ------------------------------------------------------------ CIMD（主注册路径）
+            _section("10. CIMD（主注册路径）端到端")
+            # 先占个位拿 URL，再把文档里的 client_id 回填成这个 URL —— 这正是 CIMD
+            # "文档自证属于这个 URL" 的不变式。回填后文档与 URL 逐字节相同。
+            cimd_url = document_server.serve_json("meta.json", {})
+            document_server.serve_json(
+                "meta.json",
+                {
+                    "client_id": cimd_url,
+                    "client_name": "OAuth E2E CIMD 客户端",
+                    "redirect_uris": [redirect_uri],
+                    "scope": " ".join(_ALL_SCOPES),
+                },
+            )
+            cimd_tokens = await _full_flow(
+                client,
+                as_url=as_url,
+                client_id=cimd_url,
+                redirect_uri=redirect_uri,
+                resource=mcp_resource,
+                scope=" ".join(_ALL_SCOPES),
+                email=email,
+                password=password,
+                state=f"state-cimd-{run_id}",
+            )
+            report.expect(
+                "CIMD 客户端（client_id 为 https URL）能走完授权并换到令牌",
+                bool(cimd_tokens.get("access_token")),
+                f"client_id={cimd_url}",
+                fatal=True,
+            )
+            created_client_ids.append(cimd_url)
+            try:
+                cimd_call = await _call_mcp_with_token(f"{rs_url}/mcp", cimd_tokens["access_token"])
+                report.expect(
+                    "CIMD 客户端的令牌被 RS 接受（authenticated=true）",
+                    bool(cimd_call["payload"] and cimd_call["payload"].get("authenticated") is True),
+                    f"payload={cimd_call['payload']!r}",
+                )
+            except Exception as exc:
+                report.fail("CIMD 客户端的令牌被 RS 接受", f"{type(exc).__name__}: {exc}")
+
+            # 自证通过后，库里这条记录必须是 CIMD 来源 —— 这一点单测覆盖了单元行为，
+            # 这里确认真实进程跑下来也是这个结果。
+            import asyncpg
+
+            conn = await asyncpg.connect(_dsn_for_asyncpg(database_url))
+            try:
+                await conn.execute("SELECT set_config('app.tenant_id', $1, false)", LOGIN_TENANT)
+                row = await conn.fetchrow(
+                    "SELECT registration_source FROM oauth_clients WHERE client_id = $1", cimd_url
+                )
+            finally:
+                await conn.close()
+            report.expect(
+                "CIMD 客户端入库后 registration_source='cimd'",
+                row is not None and row["registration_source"] == "cimd",
+                f"{row}",
+            )
+
         return report
     finally:
         for server in servers:
             _stop(server)
+        if document_server is not None:
+            document_server.stop()
         if keep:
             print("\n（--keep：保留写库的数据）")
         else:

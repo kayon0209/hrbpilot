@@ -226,12 +226,12 @@ class Settings(BaseSettings):
     # 依据是一项对 119 个启用 OAuth 的 MCP 服务器的研究：119/119 至少一项授权缺陷，
     # 96.6% 存在 DCR 相关缺陷。默认关闭意味着"没有实测证据就不开启这条路"，
     # 而不是"为了保险两边都开" —— 后者会让 CIMD 的校验优势被绕过。
+    oauth_enable_dynamic_registration: bool = False
+
     # WorkBuddy 等客户端会优先用私有协议回调（workbuddy://...）。默认**空** ——
     # 自定义 scheme 在设备上可被抢注，放行是需要签字的决定，不是默认值。
     # 理由与缓解见 app/oauth/clients.py 的 allowed_custom_redirect_schemes。
     oauth_custom_redirect_schemes_raw: str = ""
-
-    oauth_enable_dynamic_registration: bool = False
     # DCR 的目标注册上限（单实例每小时的注册请求数）。开启 DCR 时它同时是限速依据：
     # DCR 是未认证端点，没有任何上限就等于给了攻击者一个无限量的客户端注册入口。
     oauth_dynamic_registration_per_hour: int = 20
@@ -241,6 +241,27 @@ class Settings(BaseSettings):
     # 一个未认证端点变成"可以反复让我去访问某个 URL"的放大器。也不做"永不重取"：
     # 客户端会演进它的 redirect_uris，永不更新会让库里停在一个谁都不再维护的旧值上。
     oauth_cimd_cache_ttl_seconds: int = 86400
+
+    # CIMD 抓取允许**解析到私网/环回地址**的主机名清单（逗号分隔，按主机名精确匹配）。
+    #
+    # 默认空，且**在 production / staging 下设置它会让进程启动失败**（见
+    # ``validate_oauth_cimd_fetch_reach``）。CIMD 的抓取目标完全由未认证的调用方决定
+    # （``client_id`` 就是这个 URL），所以这个开关打开就等于把 AS 变成一个"替我访问
+    # 内网"的工具 —— 它是**开发与本地验收专用**，不是部署选项。
+    #
+    # 为什么仍然要提供它而不是让测试去替换掉抓取函数：CIMD 最要紧的两条不变式
+    # （文档自证、缓存回退）只有在**真的发出一趟 HTTPS 请求**时才会被执行。替换掉抓取
+    # 函数等于把这两条一起测掉了 —— 而它们正是这个模块存在的理由。
+    #
+    # 匹配按**主机名**而不是解析结果：若按解析结果放宽，白名单里写一个 127.0.0.1
+    # 就等于放开了所有指向 127.0.0.1 的名字，而攻击者恰好可以注册这样一个名字。
+    oauth_cimd_allowed_private_hosts_raw: str = ""
+
+    # CIMD 抓取时的 CA bundle 路径（PEM）。留空走系统/默认信任库。
+    #
+    # 这一项**不是**测试专用：企业私有 PKI 签发的客户端文档服务器是真实场景，
+    # 而它的正确做法就是把根证书交给 AS，而不是关掉校验。
+    oauth_cimd_ca_bundle: str = ""
     # 预注册客户端（运维声明的企业内部固定客户端），JSON 数组。每个元素形如：
     #   {"client_id": "...", "client_name": "...",
     #    "redirect_uris": ["http://127.0.0.1/callback"], "scope": "hrb:policy:read"}
@@ -328,6 +349,13 @@ class Settings(BaseSettings):
             item.strip().lower() for item in self.oauth_custom_redirect_schemes_raw.split(",") if item.strip()
         )
 
+    @property
+    def oauth_cimd_allowed_private_hosts(self) -> frozenset[str]:
+        """CIMD 抓取允许命中私网地址的主机名，统一小写（主机名比较大小写无关）。"""
+        return frozenset(
+            item.strip().lower() for item in self.oauth_cimd_allowed_private_hosts_raw.split(",") if item.strip()
+        )
+
     @model_validator(mode="after")
     def validate_oauth_authorization_server(self) -> "Settings":
         """规范化 AS 的 issuer，并让"生产没配签名密钥"在启动期就失败。
@@ -341,6 +369,24 @@ class Settings(BaseSettings):
         self.oauth_issuer = _normalize_origin(self.oauth_issuer, production=self.is_production, name="OAUTH_ISSUER")
         if self.is_production and not self.oauth_signing_key_pem.strip():
             raise ValueError("OAUTH_SIGNING_KEY_PEM must be configured in staging or production")
+        return self
+
+    @model_validator(mode="after")
+    def validate_oauth_cimd_fetch_reach(self) -> "Settings":
+        """挡住"在生产环境把 SSRF 守卫关掉"。
+
+        这里选择**拒绝启动**而不是"忽略配置并记一条日志"。理由：设置了这个值的运维
+        确信自己已经打开了某项能力，而静默忽略会让他在事故之后才发现它从未生效 ——
+        那时"我们配了但没生效"与"我们根本没配"在日志里长得一样。启动失败没有这个歧义。
+
+        错误信息里带上该设什么，而不是只说"不允许"：这类开关的正常用途是本地验收，
+        而本地验收应该跑在 development 下。
+        """
+        if self.is_production and self.oauth_cimd_allowed_private_hosts:
+            raise ValueError(
+                "OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS must not be set in staging or production: it disables the "
+                "SSRF guard on an unauthenticated endpoint. Use APP_ENV=development for local acceptance runs."
+            )
         return self
 
     @property

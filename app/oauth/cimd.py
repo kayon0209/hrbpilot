@@ -14,6 +14,14 @@ CIMD 是现行 MCP 授权规范推荐的客户端注册方式（DCR 已被弃用
    （``169.254.169.254``）、``127.0.0.1`` 上的管理端口、Kubernetes 的 service 网段
    都能被探测。防护在 ``_assert_host_resolves_to_public_ips`` 里做，并且**禁用重定向**：
    一次 ``302`` 就能把"公开地址"换成"内网地址"，那等于前面所有检查都没有发生。
+
+可验证性
+--------
+上面第一条不变式（文档自证）只有在**真的发出一趟 HTTPS 请求**时才会被执行，所以
+本地验收需要一个允许命中环回地址的出口（``OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS``，生产
+不可用）与一份可信任的自签根（``OAUTH_CIMD_CA_BUNDLE``）。两者都不改变校验逻辑本身：
+放宽的只是"这个主机名允不允许解析到内网"，自证、大小上限、重定向禁用、TLS 校验
+一个都不少。
 """
 
 from __future__ import annotations
@@ -22,11 +30,13 @@ import asyncio
 import ipaddress
 import json
 import socket
+import ssl
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
+from app.config.settings import settings
 from app.oauth.clients import ClientMetadata, ClientMetadataError, validate_client_metadata
 from app.shared.logger import get_logger
 
@@ -83,7 +93,15 @@ async def _assert_host_resolves_to_public_ips(host: str, port: int) -> None:
 
     要求"全部"而不是"至少一个"：只检查第一个结果时，攻击者可以让 DNS 返回一个公网
     地址加一个内网地址，然后让 HTTP 客户端挑中后者。
+
+    白名单（``OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS``）**在生产/预发下不可用** —— 配置层
+    会让进程启动失败，所以这里的放宽只可能出现在开发环境。每次命中都记一条 warning：
+    一个本该只出现于本地验收的放宽，若在别处被打开，日志里要看得见。
     """
+    if host.strip().lower() in settings.oauth_cimd_allowed_private_hosts:
+        logger.warning("oauth_cimd_private_host_allowed", host=host, note="SSRF 守卫被显式放宽（仅限非生产）")
+        return
+
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
@@ -106,6 +124,17 @@ async def _assert_host_resolves_to_public_ips(host: str, port: int) -> None:
     # 校验全部解析结果"把窗口压到最小，并在威胁模型 T-6 里登记。
 
 
+def _tls_verification_setting() -> bool | str:
+    """CIMD 抓取时的 TLS 校验参数。
+
+    ``OAUTH_CIMD_CA_BUNDLE`` 指向一份 PEM 根证书（企业私有 PKI，或本地验收用的自签
+    根）。留空时返回 ``True``（走默认信任库）。**不会**返回 ``False`` —— 没有任何配置
+    能关掉 TLS 校验：证书不受信任这件事有正确的解法，而关掉校验不是它。
+    """
+    bundle = settings.oauth_cimd_ca_bundle.strip()
+    return bundle or True
+
+
 async def fetch_metadata_document(url: str) -> dict[str, Any]:
     """取回一份 CIMD 文档（未做自证性校验）。"""
     validate_metadata_document_url(url)
@@ -113,12 +142,20 @@ async def fetch_metadata_document(url: str) -> dict[str, Any]:
     host = parts.hostname or ""
     await _assert_host_resolves_to_public_ips(host, parts.port or 443)
 
+    # ``_tls_verification_setting`` 在配置了 CA bundle 时返回字符串路径；httpx 的
+    # ``verify=<str>`` 已被弃用并会刷 DeprecationWarning，这里转成等价且受支持的
+    # ``SSLContext``（加载默认信任库并额外信任该 bundle）。
+    verify = _tls_verification_setting()
+    if isinstance(verify, str):
+        verify = ssl.create_default_context(cafile=verify)
+
     try:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT_SECONDS,
             # 禁用重定向：一次 302 就能把已校验的公开地址换成内网地址，
             # 让前面所有检查形同虚设。
             follow_redirects=False,
+            verify=verify,
             headers={"Accept": "application/json"},
         ) as client:
             response = await client.get(url)

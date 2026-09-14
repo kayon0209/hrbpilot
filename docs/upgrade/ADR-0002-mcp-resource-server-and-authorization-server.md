@@ -1,7 +1,7 @@
 # ADR-0002：HRBPilot 作为 MCP Resource Server，及其授权服务器选型
 
 - 状态：**已接受**（决策部分）。WP0—WP5、WP7、WP8 **已实施**（§12—§14）；
-  **WP6（真实客户端认证）未做**（§14.7）—— 协议验收 10 条全过、端到端 58/58，
+  **WP6（真实客户端认证）未做**（§14.7）—— 协议验收 10 条全过、端到端 59/59（含 CIMD 主路径），
   但未用 WorkBuddy / Codex / Claude Code 的真实客户端验证过。
 - 日期：2026-09-13（§12 记录 WP2-a；§13 记录 WP2-b 及两处对 §5/§6 的偏差）
 - base SHA：`868c6aecb80d436f5faeb2858d46a0cda018329c`
@@ -337,7 +337,9 @@ helper，把"生产必需配置"收成一处，并补两个负例（环回、明
   `mcp_accepts_platform_tokens`（默认 `true`）控制。AS 上线后翻成 `false`，
   届时 ADR §4「内部会话令牌在 /mcp 上不被接受」由
   `test_platform_tokens_can_be_switched_off_for_the_mcp_surface` 强制。
-- **CIMD 文档获取与校验**未实现（T-6）。
+- **CIMD 文档获取与校验**已实现并验证（T-6 收敛）：`tests/oauth/test_cimd.py`（40 项）
+  覆盖自证、SSRF 守卫、TLS 校验不可关闭、缓存与回退；`scripts/verify_oauth_end_to_end.py`
+  第 10 节起本地自签 HTTPS 文档服务器走通主注册路径（见 §14.8）。
 - **元数据端点的 `Cache-Control` 与独立限流**未设置（T-11 缺口）。
 
 ### 12.5 门禁（改动前后实测，CI 口径）
@@ -464,7 +466,9 @@ Authlib** —— `pyproject.toml` 的依赖清单与基线逐行一致。这是�
   error="insufficient_scope", scope="…"`。它**不是**第二个判定点：调用的函数、输入与
   目录都是同一个 `authorize_tool_call`（纯函数），本模块只搬运结论，不产生结论。
   端到端因此由 55/56 变为 **58/58，退出码 0**。
-- **CIMD 未做端到端验证。** 逐条校验有单测，但 e2e 跑不了 —— 它需要一个公网 HTTPS 文档服务器。
+- ~~**CIMD 未做端到端验证**~~ —— **已补齐**（见 §14.8 与 e2e 第 10 节）：本地自签
+  HTTPS 文档服务器 + `OAUTH_CIMD_ALLOWED_PRIVATE_HOSTS_RAW`/`OAUTH_CIMD_CA_BUNDLE`
+  （仅 development 合法）即可跑通，无需公网。
 - **登录租户固定为 `"default"`。** `app/oauth/identity.py` 与平台登录共用 `get_db_session()`，
   其默认租户是 `"default"`，而 `users` 受 RLS 约束。这是**既有**行为（不是本次引入），但意味着
   AS 登录只能看到 `tenant_id == "default"` 的用户。多租户部署要接外部 Agent 时这条必须先解决。
@@ -572,8 +576,8 @@ OAuth 侧：`authorize` / `token` / `introspect` 按 IP 限流；`token` 额外�
 - 无独立指标端点（Prometheus / OpenTelemetry），告警完全依赖日志采集；
 - 无异常 DCR 的自动阻断（只有限速）；
 - 密钥轮换有实现与单测，但**未在真实进程演练**；
-- CIMD 无端到端验证（需公网 HTTPS 文档服务器）—— 而它是决策二指定的**主**注册路径，
-  验证程度低于兼容回退路径 `DCR`，这一点写进了兼容矩阵；
+- ~~CIMD 无端到端验证~~ —— **已验证**（单元/集成 + e2e 第 10 节），主注册路径的验证
+  程度现已与 `DCR` 持平，见兼容矩阵 `CIMD 客户端身份` 行；
 - 登录租户固定为 `"default"`（既有行为，多租户部署要先解决）。
 
 ## 15. 来源

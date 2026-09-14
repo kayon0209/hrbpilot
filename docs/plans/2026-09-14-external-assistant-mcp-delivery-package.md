@@ -73,7 +73,7 @@ CI 的既有流程（`.github/workflows/ci.yml` 先 `alembic upgrade head` 再 `
 $ .venv/bin/ruff check app tests evaluation      → All checks passed!  (exit 0)
 $ .venv/bin/ruff format --check app tests        → 393 files already formatted (exit 0)
 $ .venv/bin/mypy app                             → Success: no issues found in 270 source files (exit 0)
-$ .venv/bin/python -m pytest -q                  → 760 passed, 50 skipped (exit 0)
+$ .venv/bin/python -m pytest -q                  → 800 passed, 50 skipped (exit 0)
 ```
 
 **无失败、无跳过原因异常的用例。** 50 个 skip 是既有的（依赖外部服务或环境）。
@@ -82,7 +82,7 @@ $ .venv/bin/python -m pytest -q                  → 760 passed, 50 skipped (exi
 
 ```
 $ python scripts/verify_oauth_end_to_end.py --database-url postgresql+asyncpg://.../hrbp_oauth_e2e
-→ 58/58 项通过，退出码 0
+→ 59/59 项通过，退出码 0
 ```
 
 **与 WP2-b 收尾时的差异**：当时是 55/56（1 项已知缺口）。现在缺口已补齐，且新增了
@@ -159,8 +159,6 @@ JWKS            可读、非空、不含私钥分量 d、令牌头部的 kid 可
 - 无独立指标端点，告警完全依赖日志采集；
 - 无异常 DCR 的自动阻断（只有限速）；
 - 密钥轮换有实现与单测，**未在真实进程演练**；
-- CIMD 无端到端验证（需公网 HTTPS 文档服务器）—— 而它是**主**注册路径，验证程度
-  低于兼容回退路径；补它的优先级高于再测一遍 DCR；
 - 登录租户固定为 `"default"`（既有行为，多租户部署要先解决）；
 - 反向代理后 `request.client.host` 是代理地址，不做可信代理配置时限流形同虚设。
 
