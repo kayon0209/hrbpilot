@@ -1,0 +1,26 @@
+{
+  "name": "HRBPilot 人事助手",
+  "name_zh": "HRBPilot 人事助手",
+  "name_en": "HRBPilot HR Assistant",
+  "description": "查询公司制度原文、浏览你有权查看的人事案件，并为敏感操作提交审批。",
+  "description_zh": "查询公司制度原文、浏览你有权查看的人事案件，并为敏感操作提交审批。所有回答都带制度来源；涉及员工处分的动作只提交审批，不会直接执行。",
+  "description_en": "Search company policy documents with citations, browse the HR cases you are allowed to see, and submit approval requests for sensitive actions. Every answer cites its source; actions affecting employees are only submitted for approval, never executed directly.",
+  "source": "hrbpilot",
+  "type": "mcp",
+  "version": "1.0.0",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "公司的年假是怎么规定的？",
+    "帮我找一下关于加班费的政策原文",
+    "列一下我有权限查看的人事案件",
+    "我想给这个案件提交一条处理建议，需要谁审批？",
+    "刚才提交的那个审批现在是什么状态？"
+  ],
+  "examples_en": [
+    "What is our annual leave policy?",
+    "Find the original policy text about overtime pay",
+    "List the HR cases I have access to",
+    "Submit a proposed action for this case — who needs to approve it?",
+    "What is the status of the approval I just submitted?"
+  ]
+}

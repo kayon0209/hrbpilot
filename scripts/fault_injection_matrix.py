@@ -20,6 +20,7 @@
 
 安全：任何异常路径都会把停掉的容器重新拉起。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,9 +56,7 @@ MODEL_UNREACHABLE_URL = "http://127.0.0.1:9/v1"  # 必然 connection refused
 # --------------------------------------------------------------------------- #
 def _docker(*args: str) -> tuple[int, str]:
     try:
-        out = subprocess.run(
-            ["docker", *args], capture_output=True, text=True, timeout=120, shell=False
-        )
+        out = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=120, shell=False)
         return out.returncode, (out.stdout or "") + (out.stderr or "")
     except Exception as exc:  # pragma: no cover - 环境相关
         return -1, str(exc)
@@ -216,9 +215,7 @@ asyncio.run(main())
     if conclusive:
         # 只留结论行：从头部截断会把答案切掉（首版就踩了这个坑，
         # 输出里只剩半句 `llm_call_failed error='Connectio`）。
-        text = "\n".join(
-            ln for ln in text.splitlines() if ("RAISED" in ln or "NO_RAISE" in ln or "ELAPSED" in ln)
-        )
+        text = "\n".join(ln for ln in text.splitlines() if ("RAISED" in ln or "NO_RAISE" in ln or "ELAPSED" in ln))
     return {
         "base_url": MODEL_UNREACHABLE_URL,
         "conclusive": conclusive,
@@ -369,7 +366,9 @@ def main() -> int:
     parser.add_argument("--json", dest="json_path", default=None, help="额外输出 JSON 报告")
     parser.add_argument("--skip-model", action="store_true", help="跳过模型不可达探测（较慢）")
     parser.add_argument("--only-model", action="store_true", help="只跑模型不可达探测")
-    parser.add_argument("--from-json", dest="from_json", default=None, help="用上次跑出的 JSON 重新渲染 Markdown（不动容器）")
+    parser.add_argument(
+        "--from-json", dest="from_json", default=None, help="用上次跑出的 JSON 重新渲染 Markdown（不动容器）"
+    )
     args = parser.parse_args()
 
     if args.from_json:

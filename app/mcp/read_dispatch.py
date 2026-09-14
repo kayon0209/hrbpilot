@@ -31,8 +31,16 @@ from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: 信封固定字段，工具自身 payload 不得覆盖。
-_RESERVED_KEYS = frozenset({"ok", "tool", "outcome", "user_message", "error_code"})
+#: 信封**独占**的字段，工具 payload 不得使用。
+#
+# ``tenant_id`` 与 ``validated_params`` 必须在这里：``run_read_tool`` 会把它们
+# 作为关键字传给 ``envelope``，工具若也返回同名键，Python 直接抛
+# "got multiple values for keyword argument" —— 一次读调用变成 500，而错误信息
+# 指向 ``envelope`` 而不是那个多返回了一个字段的工具。
+#
+# ``user_message`` **刻意不在**这个集合里：它是工具被允许提供的东西（信封把它
+# 作为具名参数，就是为了让工具给出比通用文案更贴切的一句）。它单独转发，见下。
+_RESERVED_KEYS = frozenset({"ok", "tool", "outcome", "error_code", "tenant_id", "validated_params"})
 
 
 async def run_read_tool(
@@ -73,11 +81,14 @@ async def run_read_tool(
             reset_read_principal(principal_token)
         reset_read_tenant(token)
 
-    extras = {k: v for k, v in payload.items() if k not in _RESERVED_KEYS}
+    extras = {k: v for k, v in payload.items() if k not in _RESERVED_KEYS and k != "user_message"}
     return budgets.enforce(
         envelope(
             tool_name,
             read_outcome(tool_name, payload),
+            # 工具可以自带一句更贴切的面向用户文案；没有就用 outcome 的通用文案。
+            # 它必须**具名**转发：留在 extras 里会与 envelope 的同名参数冲突。
+            user_message=payload.get("user_message") or None,
             validated_params=validated,
             tenant_id=tenant_id,
             **extras,

@@ -43,7 +43,9 @@ def access_profile(principal: McpPrincipal | None, catalog: ToolCatalog) -> dict
     visible, hidden = visible_tools(principal, catalog)
     return {
         "authenticated": True,
-        "tenant_id": principal.tenant_id,
+        # 刻意**不**返回 tenant_id：信封本体已经带着它，重复返回会让
+        # ``envelope()`` 收到重复关键字而整条调用崩掉（真实发生过）。工具 payload
+        # 与信封固定字段的重名是一条静默的故障路径 —— 见 read_dispatch._RESERVED_KEYS。
         "user_id": principal.user_id,
         "role": principal.role,
         "auth_method": principal.auth_method.value,

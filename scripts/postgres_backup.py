@@ -138,11 +138,16 @@ def backup(url: str, out_dir: Path = BACKUP_DIR) -> Path:
         "--format=custom",
         "--no-owner",
         "--no-privileges",
-        "--host", conn["host"],
-        "--port", conn["port"],
-        "--username", conn["user"],
-        "--dbname", conn["dbname"],
-        "--file", str(dump_path),
+        "--host",
+        conn["host"],
+        "--port",
+        conn["port"],
+        "--username",
+        conn["user"],
+        "--dbname",
+        conn["dbname"],
+        "--file",
+        str(dump_path),
     ]
     _run(cmd, build_pg_env(conn["password"]))
 
@@ -207,7 +212,12 @@ def restore_drill(url: str, dump_path: Path | None = None) -> None:
         # Verify the restore actually produced tables, not just a silent no-op.
         result = subprocess.run(
             [
-                "psql", *base, "--dbname", target, "--tuples-only", "--no-align",
+                "psql",
+                *base,
+                "--dbname",
+                target,
+                "--tuples-only",
+                "--no-align",
                 "--command",
                 "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';",
             ],

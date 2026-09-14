@@ -81,6 +81,24 @@ def test_the_user_facing_message_has_no_internal_terms() -> None:
     assert "capability" not in message.lower()
 
 
+def test_the_profile_does_not_return_envelope_owned_keys() -> None:
+    """工具 payload 不得返回信封自有的字段。
+
+    端到端抓到的真事故：``access_profile`` 原本返回 ``tenant_id``，而
+    ``run_read_tool`` 也把 ``tenant_id`` 作为关键字传给 ``envelope`` ——
+    Python 直接抛 "got multiple values for keyword argument"，整条读调用变成 500，
+    而错误信息指向 ``envelope`` 而不是那个多返回了一个字段的工具。单测测不到，因为
+    单测直接调 ``access_profile``，不经过 ``envelope``。
+
+    这里把不变式写成断言：只要新增字段撞上信封的固定字段集合，这条就会红。
+    """
+    from app.mcp.read_dispatch import _RESERVED_KEYS
+
+    profile = access_profile(_principal(), TOOL_CATALOG)
+    collisions = set(profile) & _RESERVED_KEYS
+    assert not collisions, f"profile 返回了信封自有字段：{sorted(collisions)}"
+
+
 def test_role_capability_names_is_the_internal_view() -> None:
     """它存在，但**只**给审计用 —— 这份测试同时说明它不该被塞进工具响应。"""
     names = role_capability_names(_principal())

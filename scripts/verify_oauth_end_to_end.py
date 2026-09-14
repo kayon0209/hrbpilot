@@ -458,12 +458,12 @@ async def _call_mcp_with_token(
     url: str,
     token: str | None,
     *,
-    tool_name: str = "hrbpilot_ping",
+    tool_name: str = "get_my_access_profile",
     arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """用**官方 MCP SDK 客户端**完成 initialize → list_tools → call_tool。
 
-    ``hrbpilot_ping`` 不回显任何 tenant 数据，但它会回 ``auth: true|false`` —— 这就足以
+    ``get_my_access_profile`` 只回当前凭据自己的身份摘要，不含任何 tenant 业务数据 —— 这就足以
     证明"令牌被传输层接受、主体被成功构造"，而不会把员工数据带进验证输出。
 
     返回 ``tools``（工具名列表）、``payload``（工具返回的 JSON，能解析时）、``text``
@@ -757,9 +757,11 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
             else:
                 report.ok("MCP 客户端完成 initialize + list_tools + call_tool", f"工具 {len(call['tools'])} 个")
                 report.expect(
-                    "hrbpilot_ping 确认请求已通过认证（auth=true）",
-                    bool(call["payload"] and call["payload"].get("auth") is True),
-                    f"payload={call['payload']!r}",
+                    "get_my_access_profile 确认请求已通过认证（authenticated=true）",
+                    bool(call["payload"] and call["payload"].get("authenticated") is True),
+                    # 诊断信息要带正文与 isError：只回一个 payload=None 的话，
+                    # 下一步只能靠猜是"没解析出 JSON"还是"工具真的报错了"。
+                    f"payload={call['payload']!r} is_error={call['is_error']} text={call['text'][:300]!r}",
                     fatal=True,
                 )
                 for tool_name in ("search_policy", "get_policy_source"):
@@ -962,7 +964,7 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                 dcr_call = await _call_mcp_with_token(f"{rs_url}/mcp", dcr_tokens["access_token"])
                 report.expect(
                     "DCR 客户端的令牌被 RS 接受（auth=true）",
-                    bool(dcr_call["payload"] and dcr_call["payload"].get("auth") is True),
+                    bool(dcr_call["payload"] and dcr_call["payload"].get("authenticated") is True),
                     f"payload={dcr_call['payload']!r}",
                 )
             except Exception as exc:

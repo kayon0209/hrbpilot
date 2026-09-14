@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "hrbpilot": {
+      "type": "streamableHttp",
+      "url": "https://hrbpilot.example.com/mcp",
+      "timeout": 30000
+    }
+  }
+}

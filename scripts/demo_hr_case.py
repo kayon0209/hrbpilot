@@ -39,8 +39,14 @@ async def make_tables() -> async_sessionmaker:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
                 c,
-                tables=[H.HRCase.__table__, H.CasePlan.__table__, H.ApprovalRequest.__table__,
-                        H.ToolExecution.__table__, H.CaseEvent.__table__, H.AgentRun.__table__],
+                tables=[
+                    H.HRCase.__table__,
+                    H.CasePlan.__table__,
+                    H.ApprovalRequest.__table__,
+                    H.ToolExecution.__table__,
+                    H.CaseEvent.__table__,
+                    H.AgentRun.__table__,
+                ],
             )
         )
     return async_sessionmaker(engine, expire_on_commit=False)
@@ -74,11 +80,15 @@ async def journey_success(backend: FakeHRBackend) -> None:
     session_factory = await make_tables()
     async with session_factory() as session:
         service = HRCaseService(session, "demo-tenant", actor="agent")
-        agent_loop.register_tool_executor("search_policy", lambda p: _async({"summary": "命中《薪酬福利管理制度》第三章：加班费 1.5/2/3 倍标准"}))
+        agent_loop.register_tool_executor(
+            "search_policy", lambda p: _async({"summary": "命中《薪酬福利管理制度》第三章：加班费 1.5/2/3 倍标准"})
+        )
         agent_loop.register_tool_executor("create_hr_case", backend.create_case)
         agent_loop.register_tool_executor("assign_case_owner", backend.assign_owner)
 
-        case = await service.create_case("hr-001", "EMP-SYN-101", "overtime", "员工反馈 3 个月加班未足额支付加班费", risk_level="MEDIUM")
+        case = await service.create_case(
+            "hr-001", "EMP-SYN-101", "overtime", "员工反馈 3 个月加班未足额支付加班费", risk_level="MEDIUM"
+        )
         await service.transition_case(case.id, "TRIAGED")
         run = await service.start_agent_run(case.id, "处理加班费投诉并建单跟进")
 
@@ -88,12 +98,18 @@ async def journey_success(backend: FakeHRBackend) -> None:
             '{"tool": "create_hr_case", "params": {"title": "加班费支付争议", "subject_ref": "EMP-SYN-101", "category": "overtime"}, "reason": "为该员工建立跟进工单"}'
             '], "rationale": "先取证后建单"}'
         )
-        await service.save_plan(case.id, steps=[{"tool": s.tool, "params": s.params, "reason": s.reason} for s in draft.steps], agent_run_id=run.id)
+        await service.save_plan(
+            case.id,
+            steps=[{"tool": s.tool, "params": s.params, "reason": s.reason} for s in draft.steps],
+            agent_run_id=run.id,
+        )
         outcome = await agent_loop.run_plan(service, case.id, draft, agent_run_id=run.id)
         await session.commit()
         print(f"agent run → {outcome.status}, approval_id={outcome.approval_id}")
 
-        approved = await service.decide_approval(case.id, outcome.approval_id, "hr-manager-9", "approve", "情况属实，同意建单", role="hr_manager")
+        approved = await service.decide_approval(
+            case.id, outcome.approval_id, "hr-manager-9", "approve", "情况属实，同意建单", role="hr_manager"
+        )
         await session.commit()
         print(f"HR 批准 → {approved.status}")
 
@@ -101,8 +117,14 @@ async def journey_success(backend: FakeHRBackend) -> None:
 
         from app.data.models.hr_case import ApprovalRequest
 
-        approval = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == outcome.approval_id))).scalars().first()
-        executed = await agent_loop.execute_approved_write(service, case.id, approval.id, "demo-req-1", backend.create_case)
+        approval = (
+            (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == outcome.approval_id)))
+            .scalars()
+            .first()
+        )
+        executed = await agent_loop.execute_approved_write(
+            service, case.id, approval.id, "demo-req-1", backend.create_case
+        )
         # execute_approved_write already moved the case to RESOLVED
         await session.commit()
         print(f"执行写工具 → {executed['status']}：{executed.get('summary', '')}")
@@ -156,7 +178,9 @@ async def journey_recovery(backend: FakeHRBackend) -> None:
         await session.commit()
         print(f"agent run → {outcome.status}（写工具在审批门停下）")
 
-        approved = await service.decide_approval(case.id, outcome.approval_id, "hr-manager-9", "approve", "同意发送", role="hr_manager")
+        approved = await service.decide_approval(
+            case.id, outcome.approval_id, "hr-manager-9", "approve", "同意发送", role="hr_manager"
+        )
         await session.commit()
         print(f"HR 批准 → {approved.status}")
 
@@ -164,14 +188,23 @@ async def journey_recovery(backend: FakeHRBackend) -> None:
 
         from app.data.models.hr_case import ApprovalRequest
 
-        approval = (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == outcome.approval_id))).scalars().first()
-        first = await agent_loop.execute_approved_write(service, case.id, approval.id, "notify-req-1", backend.send_notification)
+        approval = (
+            (await session.execute(select(ApprovalRequest).where(ApprovalRequest.id == outcome.approval_id)))
+            .scalars()
+            .first()
+        )
+        first = await agent_loop.execute_approved_write(
+            service, case.id, approval.id, "notify-req-1", backend.send_notification
+        )
         await session.commit()
         print(f"第一次执行 → {first['status']}（通知服务超时 → 案件进入 FAILED，可安全重试）")
 
         from app.scenarios.hr_case_agent.service import ApprovalError
+
         try:
-            await agent_loop.execute_approved_write(service, case.id, approval.id, "notify-req-1", backend.send_notification)
+            await agent_loop.execute_approved_write(
+                service, case.id, approval.id, "notify-req-1", backend.send_notification
+            )
             await session.commit()
             print("❌ 不应到达：失败的执行在已消费审批下被重跑")
         except ApprovalError:
@@ -180,10 +213,16 @@ async def journey_recovery(backend: FakeHRBackend) -> None:
         print("审批已消费（CONSUMED）—— 重新执行需要新的审批，防止旧审批被复用")
         case_row = await service.get_case(case.id)
         print(f"当前状态: {case_row.status}")
-        approval2 = await service.request_approval(case.id, "send_case_notification", {"channel": "in_app", "recipient_ref": "dept-hr", "template": "policy_update"})
+        approval2 = await service.request_approval(
+            case.id,
+            "send_case_notification",
+            {"channel": "in_app", "recipient_ref": "dept-hr", "template": "policy_update"},
+        )
         await service.decide_approval(case.id, approval2.id, "hr-manager-9", "approve", "重试发送", role="hr_manager")
         await session.commit()
-        second = await agent_loop.execute_approved_write(service, case.id, approval2.id, "notify-req-2", backend.send_notification)
+        second = await agent_loop.execute_approved_write(
+            service, case.id, approval2.id, "notify-req-2", backend.send_notification
+        )
         await session.commit()
         print(f"新审批后重试 → {second['status']}：{second.get('summary', '')}")
         print(f"通知实际发送次数: {len(backend.notifications_sent)}（应为 1 —— 失败不重复）")

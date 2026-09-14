@@ -9,6 +9,7 @@
     python scripts/render_capability_matrix.py            # 写到 docs/operations/role-capability-matrix.md
     python scripts/render_capability_matrix.py --stdout   # 只打印
 """
+
 from __future__ import annotations
 
 import argparse

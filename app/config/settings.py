@@ -216,6 +216,11 @@ class Settings(BaseSettings):
     # 依据是一项对 119 个启用 OAuth 的 MCP 服务器的研究：119/119 至少一项授权缺陷，
     # 96.6% 存在 DCR 相关缺陷。默认关闭意味着"没有实测证据就不开启这条路"，
     # 而不是"为了保险两边都开" —— 后者会让 CIMD 的校验优势被绕过。
+    # WorkBuddy 等客户端会优先用私有协议回调（workbuddy://...）。默认**空** ——
+    # 自定义 scheme 在设备上可被抢注，放行是需要签字的决定，不是默认值。
+    # 理由与缓解见 app/oauth/clients.py 的 allowed_custom_redirect_schemes。
+    oauth_custom_redirect_schemes_raw: str = ""
+
     oauth_enable_dynamic_registration: bool = False
     # DCR 的目标注册上限（单实例每小时的注册请求数）。开启 DCR 时它同时是限速依据：
     # DCR 是未认证端点，没有任何上限就等于给了攻击者一个无限量的客户端注册入口。
@@ -305,6 +310,13 @@ class Settings(BaseSettings):
         self.public_base_url = _normalize_public_base_url(self.public_base_url, production=self.is_production)
         _ = _parse_authorization_servers(self.mcp_authorization_servers, production=self.is_production)
         return self
+
+    @property
+    def oauth_custom_redirect_schemes(self) -> frozenset[str]:
+        """逗号分隔的自定义 scheme 清单，统一小写（scheme 比较大小写无关）。"""
+        return frozenset(
+            item.strip().lower() for item in self.oauth_custom_redirect_schemes_raw.split(",") if item.strip()
+        )
 
     @model_validator(mode="after")
     def validate_oauth_authorization_server(self) -> "Settings":

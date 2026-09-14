@@ -249,23 +249,6 @@ async def get_my_access_profile(ctx: Context | None = None) -> dict[str, Any]:
     return await _run_read("get_my_access_profile", {}, ctx)
 
 
-@mcp_server.tool(
-    name="hrbpilot_ping",
-    description="Health/debug tool for the HRBPilot MCP server. Carries no tenant business data, so it is the one tool callable without credentials.",
-)
-async def hrbpilot_ping(ctx: Context | None = None) -> dict[str, Any]:
-    principal = await _principal_from_ctx(ctx)
-    return {
-        "ok": True,
-        "server": "hrbpilot-mcp",
-        "scope": "L",
-        "read_tools": sorted(_READ_TOOL_NAMES),
-        "write_tools": sorted(_WRITE_TOOL_NAMES),
-        "write_mode": "create-approval-request",
-        "auth": principal is not None,
-    }
-
-
 async def _create_approval_via_mcp(
     tool_name: str,
     params: dict[str, Any],

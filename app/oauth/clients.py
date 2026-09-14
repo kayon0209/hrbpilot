@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.scopes import Scope
+from app.config.settings import settings
 from app.data.models.oauth import REGISTRATION_SOURCES, OAuthClient
 
 #: 首版支持的能力集合。刻意写死而不是做成配置：这三项共同定义了"public client + PKCE"
@@ -59,6 +60,34 @@ class ClientMetadata:
     metadata_document_url: str | None = None
 
 
+def allowed_custom_redirect_schemes() -> frozenset[str]:
+    """被显式允许的自定义 redirect scheme，默认**空**。
+
+    为什么不默认支持
+    ----------------
+    RFC 8252 §7.1 的自定义 scheme（``com.example.app:/callback``）在设备上可被任何
+    声称拥有同一 scheme 的应用接管。本服务承载员工数据，所以默认姿态是拒绝。
+
+    为什么仍然要提供这个开关
+    ------------------------
+    WorkBuddy 内置的 OAuth 管理器**优先**使用
+    ``workbuddy://workbuddy/mcp/connector%3A<source>/oauth/callback``，只有在私有
+    协议被拒时才回退到 loopback（见官方连接器文档）。而 WorkBuddy 是本项目的 P0
+    客户端 —— 一律拒绝等于让首选接入方式走不通。
+
+    为什么这个取舍可以接受
+    ----------------------
+    关键缓解在于**本 AS 对所有客户端强制 PKCE S256**（``authorization.py``）：即使
+    另一个应用抢注了同一 scheme 并截获授权码，它没有 ``code_verifier``，换不到令牌。
+    再加上 redirect_uri 是**逐字节精确匹配**的，攻击者无法把地址换成自己的。
+    也就是说，"抢注 scheme" 在这套参数下从"直接拿到令牌"退化成"拿到一个用不了的码"。
+
+    仍然要求运维显式配置（``OAUTH_CUSTOM_REDIRECT_SCHEMES``）而不是默认放开：多一个
+    自定义 scheme 就多一分设备侧的不确定性，这个决定应该有人签过字。
+    """
+    return settings.oauth_custom_redirect_schemes
+
+
 def is_loopback_host(host: str | None) -> bool:
     return host is not None and host.lower() in _LOOPBACK_HOSTS
 
@@ -73,6 +102,16 @@ def _validate_redirect_uri(uri: str) -> str:
     """
     parts = urlsplit(uri)
     if parts.scheme and parts.scheme not in {"http", "https"}:
+        if parts.scheme in allowed_custom_redirect_schemes():
+            # 显式放行清单（默认空）。见 ``allowed_custom_redirect_schemes`` 的说明：
+            # 这是一项经过权衡的决定，不是"顺手支持一下"。
+            if not parts.netloc:
+                raise ClientMetadataError(
+                    "invalid_redirect_uri", f"custom-scheme redirect_uri must include a host: {uri!r}"
+                )
+            if parts.fragment:
+                raise ClientMetadataError("invalid_redirect_uri", f"redirect_uri must not contain a fragment: {uri!r}")
+            return uri
         # 单独一条分支，只为了报错能指向**真实原因**。落进下面"必须是绝对 URI"那条
         # 会让人以为是自己少写了 host，而实际上我们是不接受这种 scheme。
         raise ClientMetadataError(
