@@ -75,7 +75,7 @@ SCOPE_DESCRIPTIONS: dict[str, str] = {
     Scope.CASE_READ.value: "查看你有权访问的 HR 案件上下文",
     Scope.CASE_PROPOSE.value: "起草 HR 案件的处置建议（需人工审批后才会生效）",
     Scope.APPROVAL_READ.value: "查看审批请求的状态",
-    Scope.PROFILE_READ.value: "读取你自己的账户基本信息（姓名、角色）",
+    Scope.PROFILE_READ.value: "查看当前连接的身份与可用权限范围（不会读取他人数据）",
 }
 
 

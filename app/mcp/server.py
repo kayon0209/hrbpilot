@@ -152,7 +152,11 @@ async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None)
 
 @mcp_server.tool(
     name="search_policy",
-    description="Read-only: hybrid RAG search (dense + PostgreSQL FTS + RRF) over the caller's tenant policy KB. Requires Authorization; anonymous calls return the validated parameters only, never policy content.",
+    description=(
+        "查询公司制度。输入一个自然语言问题，返回相关的制度条文与出处"
+        "（制度名称、条款位置、原文片段）。回答制度问题时应当引用这些出处，"
+        "不要凭常识补充。需要登录。找不到内容时会明确说明没有检索到。"
+    ),
 )
 async def search_policy(
     query: str,
@@ -168,7 +172,7 @@ async def search_policy(
 
 @mcp_server.tool(
     name="get_policy_source",
-    description="Read-only: hydrate one policy document (optionally a single section) so the caller can cite the real text. Requires Authorization.",
+    description="读取某份制度的原文（可以只取指定的一节），用于引用具体条款。需要登录。",
 )
 async def get_policy_source(
     document_name: str,
@@ -184,9 +188,8 @@ async def get_policy_source(
 @mcp_server.tool(
     name="search_cases",
     description=(
-        "Read-only: list the HR cases THIS caller is allowed to see, with a minimal field set "
-        "(no free-text descriptions, no employee identity). Use it to find a case before acting on it. "
-        "Requires Authorization."
+        "列出你有权查看的人事案件，用于先找到案件、再对它提交动作。"
+        "只返回案件编号、标题、类别、风险等级与状态，不含案件描述正文与员工身份信息。需要登录。"
     ),
 )
 async def search_cases(
@@ -206,8 +209,8 @@ async def search_cases(
 @mcp_server.tool(
     name="get_case_summary",
     description=(
-        "Read-only: read one case you have access to, including its approval history. "
-        "A case you cannot see is reported exactly like a case that does not exist. Requires Authorization."
+        "读取某一个你有权查看的人事案件，包含它的审批记录。"
+        "看不见的案件会与「不存在」返回同样的结果 —— 这是刻意的，不是故障。需要登录。"
     ),
 )
 async def get_case_summary(case_id: str, ctx: Context | None = None) -> dict[str, Any]:
@@ -217,8 +220,8 @@ async def get_case_summary(case_id: str, ctx: Context | None = None) -> dict[str
 @mcp_server.tool(
     name="get_approval_status",
     description=(
-        "Read-only: check the status of approval requests on a case you have access to. "
-        "Always scoped by case_id — approval ids are never a standalone lookup key. Requires Authorization."
+        "查询某个案件的审批状态。必须提供案件编号 —— 审批编号本身不能单独作为查询依据。"
+        "当用户问「刚才提交的动作办好了吗」时应使用本工具，不要凭印象回答。需要登录。"
     ),
 )
 async def get_approval_status(
@@ -235,9 +238,8 @@ async def get_approval_status(
 @mcp_server.tool(
     name="get_my_access_profile",
     description=(
-        "Read-only: summarize what THIS credential can do — your identity, the scopes in effect, "
-        "and which tools are available. Returns no internal permission structure and no other user's data. "
-        "Requires Authorization."
+        "查看当前连接的身份与可用的能力范围，包括哪些工具可以用。"
+        "当某个工具不可用、或需要向用户说明当前权限时使用。只返回你自己的信息，不包含其他用户的数据。"
     ),
 )
 async def get_my_access_profile(ctx: Context | None = None) -> dict[str, Any]:
@@ -332,7 +334,7 @@ async def _create_approval_via_mcp(
 
 @mcp_server.tool(
     name="create_hr_case",
-    description="Write (M): create an ApprovalRequest for create_hr_case on an existing case container. Requires Authorization + case_id. Never auto-executes.",
+    description="为一个已存在的人事案件提交「新建案件记录」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
 )
 async def mcp_create_hr_case(
     case_id: str,
@@ -356,7 +358,7 @@ async def mcp_create_hr_case(
 
 @mcp_server.tool(
     name="assign_case_owner",
-    description="Write (M): create an ApprovalRequest for assign_case_owner. Requires Authorization + case_id.",
+    description="为某个案件提交「变更负责人」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
 )
 async def mcp_assign_case_owner(case_id: str, owner_id: str, ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("assign_case_owner", {"owner_id": owner_id}, case_id, ctx)
@@ -364,7 +366,7 @@ async def mcp_assign_case_owner(case_id: str, owner_id: str, ctx: Context | None
 
 @mcp_server.tool(
     name="send_case_notification",
-    description="Write (M): create an ApprovalRequest for send_case_notification (in_app only). Requires Authorization + case_id.",
+    description="为某个案件提交「通知相关人员」的审批请求（仅站内通知）。只创建待审批记录，不会直接发送。需要登录并提供案件编号。",
 )
 async def mcp_send_case_notification(
     case_id: str, recipient_ref: str, template: str, ctx: Context | None = None
@@ -379,7 +381,7 @@ async def mcp_send_case_notification(
 
 @mcp_server.tool(
     name="update_case_status",
-    description="Write (M): create an ApprovalRequest for update_case_status (only RESOLVED). Requires Authorization + case_id.",
+    description="为某个案件提交「标记为已解决」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
 )
 async def mcp_update_case_status(case_id: str, status: str = "RESOLVED", ctx: Context | None = None) -> dict[str, Any]:
     return await _create_approval_via_mcp("update_case_status", {"status": status}, case_id, ctx)
@@ -387,7 +389,7 @@ async def mcp_update_case_status(case_id: str, status: str = "RESOLVED", ctx: Co
 
 @mcp_server.tool(
     name="create_work_task",
-    description="Write (M): create an ApprovalRequest for create_work_task. Requires Authorization + case_id.",
+    description="为某个案件提交「创建跟进任务」的审批请求。只创建待审批记录，不会直接执行。需要登录并提供案件编号。",
 )
 async def mcp_create_work_task(
     case_id: str,

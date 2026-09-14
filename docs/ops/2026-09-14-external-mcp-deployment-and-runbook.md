@@ -137,11 +137,28 @@ alembic downgrade -1     # 回退一步
 | 401 且记 `mcp_platform_token_refused_by_policy` | `MCP_ACCEPTS_PLATFORM_TOKENS=false`，客户端在用平台令牌 | `mcp_platform_token_refused_by_policy` |
 | 403 + `insufficient_scope` | 凭据的有效 scope 不含所需范围 | `mcp_tool_denied`（`reason` 为 `missing_scope` / `client_ceiling`） |
 | 429 | 限流 | `mcp_rate_limited`、`oauth_rate_limited`、`oauth_token_rate_limited` |
+| **全部** 429，日志里没有 `*_rate_limited` | **Redis 不可达**。`RATE_LIMIT_FAIL_OPEN` 默认 `false`，生产环境取「拒绝」而不是「放行」—— 见 §6.3 | `rate_limit_passthrough`（仅非生产会出现） |
 | 用户登录后仍 401 | 登录租户与令牌租户不一致（当前登录固定为 `default`） | `oauth_as_login_*` |
 | 审批通过后动作未执行 | 发起方的授权已被撤销 | `approval_blocked_installation_revoked` |
 | 审计表没有新行 | 审计写入失败（不影响调用本身） | `mcp_audit_persist_failed` |
 
-### 6.3 令牌被拒的原因分类
+### 6.3 Redis 不可达时外部接入会整体不可用
+
+这是**有意的**，不是故障：`RATE_LIMIT_FAIL_OPEN` 默认为 `false`，因此 Redis 不可达时
+限流层选择「拒绝」而不是「放行」。理由是限流在这里不只是防滥用 —— 它同时是
+「这个客户端是不是失控了」的唯一闸门；放行意味着一个失控的 Agent 可以在 Redis 掉线
+期间无限制地调用。
+
+两侧行为一致（RS 的 `/mcp` 与 AS 的匿名端点共用同一个 `RateLimiter`）。
+
+**但要知道它的代价**：Redis 是外部接入的**单点依赖**。如果业务上不能接受「Redis 抖动
+= 所有外部 Agent 掉线」，请显式评估 `RATE_LIMIT_FAIL_OPEN=true` —— 那是一个明确的
+可用性优先取舍，需要有人签字，不要为了「让它先跑起来」随手打开。
+
+**降级手段**：Redis 故障期间可以临时收紧到 `MCP_EXTERNAL_ENABLED=false`（第 5 节），
+至少让客户端拿到 503 与 `Retry-After`，而不是一堆 429。
+
+### 6.4 令牌被拒的原因分类
 
 `mcp_token_rejected` 的 `reason` 字段是稳定枚举：
 

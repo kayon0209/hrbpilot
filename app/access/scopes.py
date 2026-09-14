@@ -36,9 +36,10 @@ class Scope(StrEnum):
 
 #: 角色能力 → scope。左侧取值必须真实存在于 ``ROLE_CAPABILITIES``（有测试守着）。
 #:
-#: ``hrb:case:read`` / ``hrb:approval:read`` 目前**还没有工具消费**（案件上下文与
-#: 审批状态工具属于后续工作包）。它们先登记在这里，是为了让 WP7 新增工具时不再
-#: 需要改一次 scope 词表和一次角色投影 —— 词表是外部契约，越晚改代价越大。
+#: 五个 scope 现在都有工具消费：``POLICY_READ`` → 制度检索，``CASE_READ`` /
+#: ``APPROVAL_READ`` → 案件上下文与审批状态（WP7），``CASE_PROPOSE`` → 写工具，
+#: ``PROFILE_READ`` → 权限摘要（WP4）。词表是**对外契约**，改名等于破坏已有客户端
+#: 的授权；这份注释同时是对照表，新增 scope 时必须一并更新。
 CAPABILITY_SCOPES: dict[str, frozenset[Scope]] = {
     "policy_qa": frozenset({Scope.POLICY_READ}),
     "hr_case": frozenset({Scope.CASE_READ, Scope.CASE_PROPOSE, Scope.APPROVAL_READ}),
