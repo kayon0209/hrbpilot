@@ -218,9 +218,9 @@ def test_every_tool_capability_exists_in_the_rbac_matrix() -> None:
 
 
 def test_roles_see_exactly_what_they_can_invoke() -> None:
-    """发现侧收窄后，HR 角色仍看到全部 7 个工具；平台管理员看到 0 个。
+    """发现侧收窄后，HR 角色仍看到全部工具；平台管理员只看到自我描述工具。
 
-    管理员看到 0 个不是 bug，是 RBAC 的既定设计：平台管理员不继承 HR 业务
+    管理员看不到业务工具不是 bug，是 RBAC 的既定设计：平台管理员不继承 HR 业务
     内容权限（app/access/middleware/rbac.py 的 ROLE_CAPABILITIES 里 admin
     没有 hr_case / work_summary / policy_qa）。
     """
@@ -229,9 +229,13 @@ def test_roles_see_exactly_what_they_can_invoke() -> None:
         assert {t.name for t in visible} == set(READ_TOOL_NAMES) | set(WRITE_TOOL_NAMES)
         assert hidden == []
 
+    # 管理员看不到任何 **HR 业务内容**。这不是"看到 0 个工具"—— 自我描述工具
+    # (get_my_access_profile) 不是业务内容，管理员有权问自己这份凭据能做什么。
+    # 断言写成"可见集合 ⊆ 非业务工具"，比写死个数更能表达这条规则的意图。
     visible, hidden = partition_tools(TOOL_CATALOG, "admin")
-    assert visible == []
-    assert len(hidden) == len(TOOL_CATALOG.tools)
+    assert {t.name for t in visible} == {"get_my_access_profile"}
+    assert all(t.kind.value == "read" for t in visible)
+    assert len(hidden) == len(TOOL_CATALOG.tools) - len(visible)
 
 
 def test_employee_only_sees_read_tools() -> None:
@@ -251,8 +255,11 @@ def test_unknown_role_is_fail_closed() -> None:
 
 def test_tool_allowed_matches_partition() -> None:
     for tool in TOOL_CATALOG.tools:
+        # hrbp 持有全部业务能力；admin 只持有 self_profile（自我描述不是 HR 业务内容，
+        # 平台管理员当然可以问"我这份凭据能做什么"）。
+        expected_admin = tool.required_capability == "self_profile"
         assert tool_allowed(tool, "hrbp") is True
-        assert tool_allowed(tool, "admin") is False
+        assert tool_allowed(tool, "admin") is expected_admin
     assert MISSING_CAPABILITY_REASON  # 前端空状态要用它解释原因
 
 

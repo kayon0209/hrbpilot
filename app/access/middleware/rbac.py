@@ -27,6 +27,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "policy_qa",  # own-visibility scope enforced by service layer
         "employee_request",
         "notifications",  # own recipient records only
+        "self_profile",  # 读自己的权限摘要
     },
     "hrbp": {
         "policy_qa",
@@ -38,6 +39,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "hr_request_triage",
         "work_summary",
         "notifications",
+        "self_profile",
     },
     "hr_manager": {
         "policy_qa",
@@ -50,6 +52,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "hr_request_triage",
         "work_summary",
         "notifications",
+        "self_profile",
     },
     "admin": {
         # Platform capabilities only — no HR business content by default.
@@ -64,6 +67,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         # 所有外部 Agent 的访问，反之亦然 —— 共用一把钥匙，等于把一次误操作的
         # 影响面扩大到两者之和。
         "mcp_admin",
+        "self_profile",
         # §4.1 reconciliation + dead-letter console (mutations are audited)
         "ops_reconciliation",
     },

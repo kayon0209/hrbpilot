@@ -113,7 +113,7 @@ async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None)
     decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
 
     if principal is not None and decision.allowed:
-        result = await run_read_tool(tool_name, params, principal.tenant_id)
+        result = await run_read_tool(tool_name, params, principal.tenant_id, principal=principal)
         await record_mcp_call(
             principal,
             tool=tool_name,
@@ -179,6 +179,23 @@ async def get_policy_source(
     if section is not None:
         params["section"] = section
     return await _run_read("get_policy_source", params, ctx)
+
+
+@mcp_server.tool(
+    name="get_my_access_profile",
+    description=(
+        "Read-only: summarize what THIS credential can do — your identity, the scopes in effect, "
+        "and which tools are available. Returns no internal permission structure and no other user's data. "
+        "Requires Authorization."
+    ),
+)
+async def get_my_access_profile(ctx: Context | None = None) -> dict[str, Any]:
+    """当前凭据的身份摘要与可用范围。
+
+    走 ``_run_read`` 而不是自己拼返回：这条工具也需要参与「角色能力 ∩ scope ∩
+    客户端上限」的判定（它的 scope 是 ``hrb:profile:read``），而判定只有一处。
+    """
+    return await _run_read("get_my_access_profile", {}, ctx)
 
 
 @mcp_server.tool(

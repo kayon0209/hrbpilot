@@ -24,7 +24,7 @@ from sqlalchemy import select
 from app.data.database import make_tenant_session
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.scenarios.hr_case_agent.agent_loop import register_tool_executor
-from app.scenarios.hr_case_agent.read_context import current_read_tenant
+from app.scenarios.hr_case_agent.read_context import current_read_principal, current_read_tenant
 from app.scenarios.hr_case_agent.tools import ToolError
 from app.shared.logger import get_logger
 
@@ -160,9 +160,35 @@ async def execute_get_policy_source(params: dict) -> dict:
     }
 
 
+async def execute_get_my_access_profile(params: dict) -> dict:
+    """当前凭据的身份摘要与可用范围。
+
+    它不需要查库 —— 数据全在**已绑定的主体**里。但仍然走读执行器这条路，理由与
+    其它读工具一样：新增出口分支正是同一个工具长出两套实现的方式。
+
+    ``params`` 只用于满足签名；真正的输入是绑定在上下文里的主体，**不接受**由调用
+    方传入身份（那会把"你是谁"重新变成可以伪造的参数）。
+
+    legacy agent loop 也会注册这个执行器，但那条路径不绑定主体 —— 那时这里会抛
+    ``ToolError``，这是正确的：循环里的读步骤没有"外部 Agent 凭据"这个概念。
+    """
+    from app.mcp.profile import access_profile
+    from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
+
+    _ = params
+    principal = current_read_principal()
+    if principal is None:
+        raise ToolError(
+            "PRINCIPAL_CONTEXT_MISSING",
+            "access profile requires a bound principal (MCP transports bind it)",
+        )
+    return access_profile(principal, TOOL_CATALOG)  # type: ignore[arg-type]
+
+
 READ_TOOL_EXECUTORS = {
     "search_policy": execute_search_policy,
     "get_policy_source": execute_get_policy_source,
+    "get_my_access_profile": execute_get_my_access_profile,
 }
 
 

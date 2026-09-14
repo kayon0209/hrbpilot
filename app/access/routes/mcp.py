@@ -169,7 +169,7 @@ async def call_tool(tool_name: str, body: ToolCallBody, request: Request) -> dic
 
     tool = next(candidate for candidate in TOOL_CATALOG.tools if candidate.name == tool_name)
     if tool.kind.value != "write":
-        return await run_read_tool(tool_name, body.arguments, principal.tenant_id)
+        return await run_read_tool(tool_name, body.arguments, principal.tenant_id, principal=principal)
 
     case_id = body.arguments.get("case_id")
     if not isinstance(case_id, str) or not case_id.strip():

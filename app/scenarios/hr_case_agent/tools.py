@@ -36,6 +36,10 @@ class GetPolicySourceInput(BaseModel):
     section: str | None = None
 
 
+class GetMyAccessProfileInput(BaseModel):
+    """无参数：要读的是"我自己"，任何入参都只会变成可伪造的输入。"""
+
+
 class CreateHRCaseInput(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     subject_ref: str = Field(..., min_length=1, max_length=120)
@@ -75,6 +79,7 @@ class ToolOutput(BaseModel):
 TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "search_policy": SearchPolicyInput,
     "get_policy_source": GetPolicySourceInput,
+    "get_my_access_profile": GetMyAccessProfileInput,
     "create_hr_case": CreateHRCaseInput,
     "assign_case_owner": AssignCaseOwnerInput,
     "send_case_notification": SendCaseNotificationInput,
@@ -95,6 +100,9 @@ _TOOL_METADATA = {
     # app/mcp/auth/authorization.py。
     "search_policy": (ToolKind.READ, "policy_qa", Scope.POLICY_READ, "low"),
     "get_policy_source": (ToolKind.READ, "policy_qa", Scope.POLICY_READ, "low"),
+    # 读取"这份凭据能做什么"。所有角色都应该能问这个问题 —— 否则用户无法自查
+    # "为什么某个工具在我这里不见了"，只能去猜。
+    "get_my_access_profile": (ToolKind.READ, "self_profile", Scope.PROFILE_READ, "low"),
     "create_hr_case": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
     "assign_case_owner": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),
     "send_case_notification": (ToolKind.WRITE, "hr_case", Scope.CASE_PROPOSE, "medium"),

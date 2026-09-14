@@ -16,8 +16,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.mcp import budgets
+from app.mcp.auth.principal import McpPrincipal
 from app.mcp.contract import ToolOutcome, envelope, failure_envelope, read_outcome
-from app.scenarios.hr_case_agent.read_context import bind_read_tenant, reset_read_tenant
+from app.scenarios.hr_case_agent.read_context import (
+    bind_read_principal,
+    bind_read_tenant,
+    reset_read_principal,
+    reset_read_tenant,
+)
 from app.scenarios.hr_case_agent.read_executors import READ_TOOL_EXECUTORS
 from app.scenarios.hr_case_agent.tools import ToolError, validate_tool_call
 from app.shared.logger import get_logger
@@ -28,8 +35,19 @@ logger = get_logger(__name__)
 _RESERVED_KEYS = frozenset({"ok", "tool", "outcome", "user_message", "error_code"})
 
 
-async def run_read_tool(tool_name: str, params: dict[str, Any], tenant_id: str) -> dict[str, Any]:
-    """校验 → 执行 → 统一信封。读工具只有这一条路径。"""
+async def run_read_tool(
+    tool_name: str,
+    params: dict[str, Any],
+    tenant_id: str,
+    *,
+    principal: McpPrincipal | None = None,
+) -> dict[str, Any]:
+    """校验 → 执行 → 统一信封。读工具只有这一条路径。
+
+    ``principal`` 是可选的，但**只有**不需要知道"我是谁"的工具才可以不传。
+    ``get_my_access_profile`` 需要它 —— 与其为它在两个出口各加一个分支（那正是
+    当初同一个工具长出两套实现的成因），不如让主体沿着既有的上下文载体走。
+    """
     try:
         validated = validate_tool_call(tool_name, params)
     except ToolError as e:
@@ -40,6 +58,7 @@ async def run_read_tool(tool_name: str, params: dict[str, Any], tenant_id: str) 
         return failure_envelope(tool_name, "UNKNOWN_TOOL")
 
     token = bind_read_tenant(tenant_id)
+    principal_token = bind_read_principal(principal) if principal is not None else None
     try:
         payload = await executor(validated)
     except ToolError as e:
@@ -50,15 +69,19 @@ async def run_read_tool(tool_name: str, params: dict[str, Any], tenant_id: str) 
         logger.exception("mcp_read_tool_crashed", tool=tool_name, tenant_id=tenant_id)
         return failure_envelope(tool_name, "INTERNAL_ERROR", validated_params=validated)
     finally:
+        if principal_token is not None:
+            reset_read_principal(principal_token)
         reset_read_tenant(token)
 
     extras = {k: v for k, v in payload.items() if k not in _RESERVED_KEYS}
-    return envelope(
-        tool_name,
-        read_outcome(tool_name, payload),
-        validated_params=validated,
-        tenant_id=tenant_id,
-        **extras,
+    return budgets.enforce(
+        envelope(
+            tool_name,
+            read_outcome(tool_name, payload),
+            validated_params=validated,
+            tenant_id=tenant_id,
+            **extras,
+        )
     )
 
 

@@ -43,6 +43,7 @@ CAPABILITY_SCOPES: dict[str, frozenset[Scope]] = {
     "policy_qa": frozenset({Scope.POLICY_READ}),
     "hr_case": frozenset({Scope.CASE_READ, Scope.CASE_PROPOSE, Scope.APPROVAL_READ}),
     "work_summary": frozenset({Scope.CASE_PROPOSE, Scope.APPROVAL_READ}),
+    "self_profile": frozenset({Scope.PROFILE_READ}),
 }
 
 #: 任何已认证主体都持有的 scope。读取"我是谁、我有什么权限"不构成业务数据访问。

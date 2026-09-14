@@ -143,9 +143,15 @@ async def test_every_denied_role_tool_pair_matches_across_surfaces(monkeypatch) 
             assert from_protocol == from_rest, (role, tool.name, from_protocol, from_rest)
 
     # 精确断言而不是"至少若干条"：策略变了就该显式改这条，而不是被阈值掩盖。
-    expected = {("employee", name) for name in WRITE_TOOLS} | {
-        (role, tool.name) for role in ("admin", "nobody") for tool in TOOL_CATALOG.tools
-    }
+    expected = (
+        # employee 有 policy_qa，读得到制度；所有写工具都要 hr_case / work_summary。
+        {("employee", name) for name in WRITE_TOOLS}
+        # admin 不持有任何 HR 业务能力 —— 但持有 self_profile，所以它**能**读自己的
+        # 权限摘要。自我描述不是业务内容，把这一条写进策略变更清单里。
+        | {("admin", tool.name) for tool in TOOL_CATALOG.tools if tool.required_capability != "self_profile"}
+        # 未知角色 fail-closed：一个都不放行，包括自我描述。
+        | {("nobody", tool.name) for tool in TOOL_CATALOG.tools}
+    )
     assert denied == expected
 
 
@@ -153,7 +159,10 @@ async def test_authorized_read_reaches_the_same_dispatch_from_both_surfaces(monk
     """允许路径也必须同一条实现：两条出口都要走进同一个读派发。"""
     calls: list[tuple[str, dict[str, Any], str]] = []
 
-    async def _record(tool_name: str, params: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+    async def _record(tool_name: str, params: dict[str, Any], tenant_id: str, **_kwargs: Any) -> dict[str, Any]:
+        # ``**_kwargs``：``run_read_tool`` 新增了 ``principal=``（get_my_access_profile
+        # 需要它）。测试替身只要记录三个位置参数，但签名必须容忍这个新参数 —— 否则
+        # 测的是替身的签名而不是被测行为。
         calls.append((tool_name, params, tenant_id))
         return {"ok": True, "tool": tool_name, "outcome": ToolOutcome.FOUND.value}
 
@@ -220,8 +229,9 @@ def test_tool_hidden_from_discovery_is_still_denied_at_execution() -> None:
     """把工具从清单里拿掉只是体验，执行期必须重新判定。"""
     admin = _internal("admin")
     visible, hidden = visible_tools(admin, TOOL_CATALOG)
-    assert visible == []
-    assert len(hidden) == len(TOOL_CATALOG.tools)
+    # admin 只看得见自我描述工具；业务工具一个都看不见。
+    assert {t.name for t in visible} == {"get_my_access_profile"}
+    assert len(hidden) == len(TOOL_CATALOG.tools) - len(visible)
 
     for tool in hidden:
         decision = authorize_tool_call(admin, tool.name, catalog=TOOL_CATALOG)

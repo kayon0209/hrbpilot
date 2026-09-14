@@ -66,7 +66,7 @@ def test_admin_cannot_access_hr_business_content():
 def test_capability_matrix_shape():
     from app.access.middleware.rbac import ROLE_CAPABILITIES
 
-    assert ROLE_CAPABILITIES["employee"] == {"policy_qa", "employee_request", "notifications"}
+    assert ROLE_CAPABILITIES["employee"] == {"policy_qa", "employee_request", "notifications", "self_profile"}
     assert "hr_case" in ROLE_CAPABILITIES["hrbp"]
     assert "work_summary" in ROLE_CAPABILITIES["hrbp"]
     assert "notifications" in ROLE_CAPABILITIES["hrbp"]
@@ -77,6 +77,12 @@ def test_capability_matrix_shape():
     assert "evaluation" in ROLE_CAPABILITIES["admin"]
     assert "settings" in ROLE_CAPABILITIES["admin"]
     assert "user_admin" in ROLE_CAPABILITIES["admin"]
+    assert "mcp_admin" in ROLE_CAPABILITIES["admin"]
+
+    # 读自己的权限摘要必须是**每个**角色都有的能力。缺一个角色，那个角色的用户
+    # 就无法自查"为什么某个工具在我这里不见了"，只能去猜。
+    for role, caps in ROLE_CAPABILITIES.items():
+        assert "self_profile" in caps, f"{role} 无法读取自己的权限摘要"
 
 
 def test_admin_forbidden_on_business_scene_routes(client):
