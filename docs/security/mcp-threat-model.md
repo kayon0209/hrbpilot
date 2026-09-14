@@ -77,6 +77,9 @@ scheme 不合规），或抢先兑换一次性 authorization code。
 - 注册阶段只接受 https，或 loopback 上的 http（`_validate_redirect_uri`）；带 fragment 一律拒绝。
 - `redirect_uri` 不认识、`client_id` 不认识这两种情况**渲染错误页而不是重定向** —— 一边拒绝
   一边按它给的地址重定向，等于把检查本身变成开放重定向（`app/oauth/routes/authorize.py` 头部）。
+- 授权页 CSP 的 `form-action` 默认仍只有 `'self'`；仅在客户端和 `redirect_uri` 已通过
+  精确匹配后，才从该地址归约并附加**一个**回调 origin（loopback 的随机端口也逐字固定）。
+  这既避免 Chrome/Safari 把 POST 后 302 静默拦住，也不把未校验地址或任意 CSP 指令拼进响应头。
 - 授权码：一次性、60 秒、绑 `client_id` + `redirect_uri` + PKCE challenge；占用走
   `UPDATE … WHERE consumed_at IS NULL` 的**原子**条件更新，因此并发的两次兑换只有一次能改到行。
 - PKCE 只接受 `S256`；`code_challenge` **必填**（本 AS 只发 public client，PKCE 是唯一的
@@ -143,8 +146,12 @@ scheme 不合规），或抢先兑换一次性 authorization code。
   —— 令牌是被校验的对象，不能同时充当自己的上限依据。AS 侧在授权阶段就已把 scope 裁剪到
   注册范围（超出即 `invalid_scope` 拒绝），RS 再查一次是纵深防御：**AS 有 bug 或配置漂移时
   RS 不会跟着放宽**。
-- 对 RS **不认识**的客户端（例如配置了第三方 AS），上限取令牌自身 scope 即"不额外收紧"，
-  并记一条警告以便发现"有 AS 在用而客户端没预注册"。这**不构成放开**：第一道判定仍是角色能力。
+- 对 RS **不认识**、已禁用或被租户拉黑的客户端一律失败关闭；即使令牌签名正确，也不能
+  以令牌自述 scope 充当实时客户端上限。第三方 AS 接入必须先通过受控同步把客户端状态与
+  scope 写入本地注册表。
+- DCR / CIMD 省略 `scope` 时，AS 将客户端**注册上限**初始化为本服务的完整 scope 词表，
+  以兼容会在资源挑战后才协商 scope 的通用客户端；这不是直接授予用户全权：实际调用仍是
+  角色能力 ∩ 用户同意的令牌 scope ∩ 该注册上限，且 RS 每次调用都重新核对客户端状态。
 
 **缺口**：
 
@@ -202,6 +209,9 @@ scheme 不合规），或抢先兑换一次性 authorization code。
   也不声明** `registration_endpoint`，客户端不会尝试走这条路。
 - 开启后仍受限：滑动窗口限速（按实例计数，默认 20/小时）、请求体上限 32 KiB、元数据走同一套
   校验（redirect scheme 仍然只有 https 与 loopback）、`client_id` 带 `dcr_` 前缀便于审计分辨。
+- DCR / CIMD 未声明 `scope` 时才使用完整的**客户端上限**，明确声明时仍严格按声明值注册；
+  这个兼容取舍与 RS 对未知/禁用客户端的 fail-closed 是互补而非矛盾：前者让已注册客户端
+  能在后续挑战中协商范围，后者保证每次令牌使用都依赖实时、受控的注册表状态。
 - CIMD 抓取失败时**回退到库里已有的那份**（客户端自己的文档服务器短暂不可用，不该让已经授权过
   的用户突然无法重新授权）；库里也没有才判为未知客户端。
 

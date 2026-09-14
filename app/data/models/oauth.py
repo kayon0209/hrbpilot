@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import JSON, DateTime, Index, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TimestampMixin
@@ -52,6 +52,7 @@ REVOCATION_KIND_FAMILY = "family"
 #: 自助注册路径（DCR / CIMD）一律落回这个缺省值 —— 让 self-service 注册自选租户
 #: 等于把跨租户入口交给匿名请求。
 DEFAULT_TENANT = "default"
+UNBOUND_TENANT = "__unbound__"
 
 
 class OAuthClient(Base, TimestampMixin):
@@ -81,6 +82,7 @@ class OAuthClient(Base, TimestampMixin):
     tenant_id: Mapped[str] = mapped_column(
         String(64), nullable=False, default=DEFAULT_TENANT, server_default=DEFAULT_TENANT
     )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
 
     __table_args__ = (Index("ix_oauth_clients_source", "registration_source"),)
 
@@ -103,6 +105,7 @@ class OAuthAuthorizationCode(Base, TimestampMixin):
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     #: 换令牌时必须**逐字节相同**的 redirect_uri（RFC 6749 §4.1.3）。
     redirect_uri: Mapped[str] = mapped_column(Text, nullable=False)
@@ -137,6 +140,7 @@ class OAuthToken(Base, TimestampMixin):
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     scope: Mapped[str] = mapped_column(Text, nullable=False, default="")
     resource: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -153,6 +157,24 @@ class OAuthToken(Base, TimestampMixin):
         Index("ix_oauth_tokens_client", "client_id"),
         Index("ix_oauth_tokens_expires_at", "expires_at"),
     )
+
+
+class OAuthClientBlock(Base, TimestampMixin):
+    """Tenant-local deny state for an OAuth client.
+
+    A shared client identifier may be used by more than one tenant, therefore a
+    tenant administrator must never disable the client globally.
+    """
+
+    __tablename__ = "oauth_client_blocks"
+
+    tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    reason: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    blocked_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    __table_args__ = (Index("ix_oauth_client_blocks_client", "client_id"),)
 
 
 class OAuthRevokedToken(Base, TimestampMixin):

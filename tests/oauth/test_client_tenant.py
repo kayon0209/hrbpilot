@@ -17,9 +17,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from app.config.settings import settings
-from app.data.models.oauth import DEFAULT_TENANT, OAuthClient
+from app.data.models.oauth import DEFAULT_TENANT, UNBOUND_TENANT, OAuthClient
 from app.oauth.clients import client_to_row, row_to_client, save_client, validate_client_metadata
-from app.oauth.registry import preconfigured_clients
+from app.oauth.registry import bind_dynamic_client_tenant, preconfigured_clients, register_dynamic_client
 
 _DOCUMENT: dict[str, Any] = {
     "client_id": "dcr_tenant-test",
@@ -114,3 +114,24 @@ async def test_refreshing_a_client_never_moves_it_to_another_tenant(
     assert row is not None
     assert row.tenant_id == "acme"
     assert row.client_name == "改名了"
+
+
+async def test_dcr_client_is_unbound_until_the_first_authenticated_tenant_claims_it(
+    client_factory: async_sessionmaker[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DCR 是匿名协议：只能在成功登录后用 CAS 绑定租户。"""
+    import app.oauth.storage as storage
+
+    monkeypatch.setattr(storage, "get_session_factory", lambda: client_factory)
+    registered = await register_dynamic_client(_DOCUMENT, "dcr_first-login")
+    assert registered.tenant_id == UNBOUND_TENANT
+
+    claimed = await bind_dynamic_client_tenant("dcr_first-login", "acme")
+    assert claimed is not None
+    assert claimed.tenant_id == "acme"
+
+    assert await bind_dynamic_client_tenant("dcr_first-login", "other-tenant") is None
+    async with client_factory() as session:
+        row = await session.get(OAuthClient, "dcr_first-login")
+    assert row is not None
+    assert row.tenant_id == "acme"

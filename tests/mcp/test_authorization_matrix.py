@@ -287,6 +287,12 @@ async def test_allowed_write_only_creates_an_approval_request(monkeypatch) -> No
     class _FakeSession:
         committed = False
 
+        def add(self, _row: object) -> None:
+            return None
+
+        async def flush(self) -> None:
+            return None
+
         async def commit(self) -> None:
             self.committed = True
 

@@ -77,6 +77,11 @@ services:
       target: runtime
     user: "10001:10001"
     env_file: env.docker
+    environment:
+      PUBLIC_BASE_URL: http://localhost:8001
+      MCP_AUTHORIZATION_SERVERS: http://localhost:8002
+      OAUTH_ISSUER: http://localhost:8002
+      OAUTH_INTERNAL_BASE_URL: http://oauth-as:8000
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +100,32 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  oauth-as:
+    build:
+      context: .
+      target: runtime
+    user: "10001:10001"
+    env_file: env.docker
+    environment:
+      PUBLIC_BASE_URL: http://localhost:8001
+      MCP_AUTHORIZATION_SERVERS: http://localhost:8002
+      OAUTH_ISSUER: http://localhost:8002
+      OAUTH_ENABLE_DYNAMIC_REGISTRATION: "true"
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8002:8000"
+    command: ["uvicorn", "app.oauth.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   worker:
     build:

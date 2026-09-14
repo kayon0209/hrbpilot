@@ -9,8 +9,10 @@
     body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
            background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
            align-items: center; justify-content: center; }
-    main { width: 100%; max-width: 440px; background: #fff; border: 1px solid #d8dee4;
-           border-radius: 10px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    main { width: calc(100% - 32px); max-width: 500px; background: #fff; border: 1px solid #d8dee4;
+           border-radius: 14px; padding: 30px; box-shadow: 0 14px 42px rgba(31,35,40,.10); box-sizing: border-box; }
+    .brand { display:flex; align-items:center; gap:10px; margin-bottom:20px; color:#174c3c; font-weight:700; }
+    .mark { display:grid; place-items:center; width:34px; height:34px; color:#fff; background:#174c3c; border-radius:10px; }
     h1 { font-size: 18px; margin: 0 0 6px; }
     .muted { color: #59636e; font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
     ul.scopes { list-style: none; padding: 0; margin: 0 0 18px; }
@@ -20,6 +22,9 @@
     .scope-id { color: #59636e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 font-size: 12px; white-space: nowrap; }
     .account { font-size: 12px; color: #59636e; margin: 0 0 18px; }
+    .badges { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 16px; }
+    .badge { padding:5px 9px; border-radius:999px; font-size:12px; background:#eaf5ef; color:#175c41; }
+    .badge.unverified { background:#fff4df; color:#805500; }
     .actions { display: flex; gap: 10px; }
     button { flex: 1; padding: 10px; font-size: 14px; font-weight: 600; border-radius: 6px;
              cursor: pointer; border: 1px solid transparent; }
@@ -29,16 +34,28 @@
     button.deny:hover { background: #eef1f4; }
     .warn { background: #fff8e5; border: 1px solid #f2d894; color: #7a5b00;
             border-radius: 6px; padding: 9px 11px; font-size: 12.5px; line-height: 1.6; margin: 0 0 16px; }
+    .manage { margin:16px 0 0; color:#59636e; font-size:12px; line-height:1.6; }
+    .switch { margin:8px 0 18px; }
+    .switch button { padding:0; color:#0969da; background:transparent; border:0; font-size:12px; }
   </style>
 </head>
 <body>
   <main>
+    <div class="brand"><span class="mark">HR</span><span>HRBPilot 安全授权</span></div>
     <h1>授权请求</h1>
     <p class="muted">
       应用 <strong>{{ client_name }}</strong> 请求以你的身份访问以下 HR 数据。
       授权后它会持续持有访问权，直到你撤销。
     </p>
     <p class="account">当前账户：{{ session.email }}（{{ session.role }}）</p>
+    <form class="switch" method="post" action="/oauth/authorize/logout">
+      {% for name, value in params.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+      <button type="submit">不是这个账户？切换账户</button>
+    </form>
+    <div class="badges">
+      <span class="badge {{ trust_tone }}">{{ trust_label }}</span>
+      <span class="badge">{{ risk_label }}</span>
+    </div>
 
     <ul class="scopes">
       {% for scope in scopes %}
@@ -65,6 +82,7 @@
         <button class="allow" type="submit" name="decision" value="allow">授权</button>
       </div>
     </form>
+    <p class="manage">授权后可随时在 HRBPilot「MCP 外部工具 → AI 助手连接管理」中查看或撤销。撤销后旧令牌和未执行审批都会失效。</p>
   </main>
 </body>
 </html>

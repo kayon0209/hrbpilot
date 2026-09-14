@@ -68,23 +68,33 @@ def oauth_error(error: str, description: str, *, status_code: int) -> JSONRespon
 
 
 async def _authorization_code_grant(form: Mapping[str, object], client_id: str):
+    # 先验证不依赖授权码记录的必填项：协议格式错误不应消耗一次性授权码，
+    # 否则客户端只是漏传 resource 也必须让用户重新登录授权。
+    requested_resource = str(form.get("resource") or "")
+    if not requested_resource:
+        raise AuthorizationCodeError("invalid_request", "resource is required")
     record = await redeem_authorization_code(
         code=str(form.get("code") or ""),
         client_id=client_id,
         redirect_uri=str(form.get("redirect_uri") or ""),
         code_verifier=str(form.get("code_verifier") or ""),
     )
-    requested_resource = form.get("resource")
-    if requested_resource and str(requested_resource) != record.resource:
+    if requested_resource != record.resource:
         # RFC 8707 §2.2：令牌请求可以带上 resource，但必须与授权时请求的一致。
         # 不一致意味着客户端想把它拿到的授权"转卖"给另一个资源，直接拒绝。
         raise AuthorizationCodeError("invalid_target", "resource does not match the authorization request")
+    from app.oauth.identity import current_identity
+
+    identity = await current_identity(record.user_id, record.tenant_id)
+    if identity is None or identity.auth_version != record.auth_version or identity.role != record.role:
+        raise AuthorizationCodeError("invalid_grant", "the resource owner's authorization is no longer valid")
     return await issue_tokens_for_authorization(
         client_id=record.client_id,
         tenant_id=record.tenant_id,
         user_id=record.user_id,
-        role=record.role,
-        email=record.email,
+        role=identity.role,
+        auth_version=identity.auth_version,
+        email=identity.email,
         scope=record.scope,
         resource=record.resource,
     )
@@ -112,9 +122,13 @@ async def token(request: Request) -> JSONResponse:
         if grant_type == "authorization_code":
             issued = await _authorization_code_grant(form, client.client_id)
         elif grant_type == "refresh_token":
+            requested_resource = str(form.get("resource") or "")
+            if not requested_resource:
+                raise TokenError("invalid_request", "resource is required")
             issued = await rotate_refresh_token(
                 refresh_token=str(form.get("refresh_token") or ""),
                 client_id=client.client_id,
+                resource=requested_resource,
             )
         else:
             raise TokenError("unsupported_grant_type", f"unsupported grant_type: {grant_type or '(missing)'}")

@@ -235,6 +235,78 @@ async def test_a_live_installation_can_still_be_decided(session_factory) -> None
     assert decided.status == "APPROVED"
 
 
+async def test_revocation_after_approval_still_blocks_execution(session_factory) -> None:
+    """撤销与执行之间的窗口不能让已 APPROVED 的写操作漏过。"""
+    case_id = await _seed_case(session_factory, created_by="u1", ready=True)
+    params = {"title": "加班费争议", "subject_ref": "S1", "category": "overtime"}
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1", actor="user:u1|role:hrbp")
+        approval = await service.request_approval(
+            case_id,
+            tool_name="create_hr_case",
+            params=params,
+            requester_user_id="u1",
+            client_id="workbuddy",
+            installation_id="family-race",
+        )
+        await service.decide_approval(
+            case_id, approval.id, approver_id="boss", decision="approve", reason=None, role="hr_manager"
+        )
+        session.add(
+            OAuthRevokedToken(
+                kind=REVOCATION_KIND_FAMILY,
+                value="family-race",
+                expires_at=approval.expires_at,
+                reason="user_revoked",
+                tenant_id="t1",
+            )
+        )
+        await session.commit()
+        approval_id = approval.id
+
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1", actor="user:u1|role:hrbp")
+        with pytest.raises(CasePermissionDeniedError, match="revoked"):
+            await service.begin_tool_execution(
+                case_id,
+                "create_hr_case",
+                params,
+                request_id="req-after-revoke",
+                approval_id=approval_id,
+            )
+
+
+async def test_identical_request_from_another_principal_does_not_reuse_approval(session_factory) -> None:
+    """参数相同不等于授权主体相同；用户、客户端和安装实例都必须绑定。"""
+    case_id = await _seed_case(session_factory, created_by="u1", ready=True)
+    params = {"title": "加班费争议", "subject_ref": "S1", "category": "overtime"}
+    async with session_factory() as session:
+        service = HRCaseService(session, "t1", actor="user:u1|role:hrbp")
+        first = await service.request_approval(
+            case_id,
+            "create_hr_case",
+            params,
+            requester_user_id="u1",
+            client_id="workbuddy",
+            installation_id="family-1",
+        )
+        await session.commit()
+        await service.transition_case(case_id, "PLAN_READY")
+        second = await service.request_approval(
+            case_id,
+            "create_hr_case",
+            params,
+            requester_user_id="u2",
+            client_id="workbuddy",
+            installation_id="family-2",
+        )
+        await session.commit()
+
+    assert second.id != first.id
+    assert second.requester_user_id == "u2"
+    assert second.installation_id == "family-2"
+
+
 async def test_an_approval_from_another_case_is_not_reachable(session_factory) -> None:
     """按 (case_id, approval_id) 双条件查 —— 单凭 approval_id 就能读到，等于 id 即凭据。"""
     case_a = await _seed_case(session_factory, created_by="u1", ready=True)

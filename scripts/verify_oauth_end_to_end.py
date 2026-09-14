@@ -231,6 +231,22 @@ async def _seed_user(database_url: str, *, email: str, password: str, role: str,
     return user_id
 
 
+async def _change_user_role(database_url: str, *, user_id: str, tenant_id: str, role: str) -> None:
+    """触发真实的用户身份版本失效逻辑，而不是直接篡改令牌记录。"""
+    import asyncpg
+
+    connection = await asyncpg.connect(_dsn_for_asyncpg(database_url))
+    try:
+        await connection.execute("SELECT set_config('app.tenant_id', $1, false)", tenant_id)
+        updated = await connection.execute(
+            "UPDATE users SET role = $1 WHERE id = $2 AND tenant_id = $3", role, user_id, tenant_id
+        )
+    finally:
+        await connection.close()
+    if updated != "UPDATE 1":
+        raise ChainBrokenError(f"未找到本次 E2E 种入的用户 {user_id}，无法验证身份版本失效")
+
+
 async def _cleanup(database_url: str, *, emails: list[str], client_ids: list[str]) -> None:
     """删除本次运行写入的行。**只按本次运行生成的 id/email 删**，不做范围删除。"""
     import asyncpg
@@ -377,6 +393,7 @@ async def _obtain_authorization_code(
     params: dict[str, str],
     email: str,
     password: str,
+    tenant_id: str = LOGIN_TENANT,
     expect_consent: bool = True,
 ) -> str:
     """走完 授权端点 → 登录表单 → 同意表单，返回 authorization code。"""
@@ -390,7 +407,7 @@ async def _obtain_authorization_code(
         )
 
     form = dict(public)
-    form.update({"email": email, "password": password})
+    form.update({"email": email, "password": password, "tenant_id": tenant_id})
     signed_in = await client.post(f"{as_url}/oauth/authorize/login", data=form)
     if signed_in.status_code != 200 or (expect_consent and "consent" not in signed_in.text.lower()):
         raise ChainBrokenError(f"登录后未进入同意页：HTTP {signed_in.status_code}，正文片段={signed_in.text[:200]!r}")
@@ -446,11 +463,14 @@ async def _full_flow(
     email: str,
     password: str,
     state: str,
+    tenant_id: str = LOGIN_TENANT,
 ) -> dict[str, Any]:
     params = _authorize_params(
         client_id=client_id, redirect_uri=redirect_uri, scope=scope, resource=resource, state=state
     )
-    code = await _obtain_authorization_code(client, as_url=as_url, params=params, email=email, password=password)
+    code = await _obtain_authorization_code(
+        client, as_url=as_url, params=params, email=email, password=password, tenant_id=tenant_id
+    )
     return await _exchange_code(
         client,
         as_url=as_url,
@@ -658,7 +678,9 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
 
         created_client_ids.append(pre_registered_id)
         created_client_ids.append(pre_registered_acme_id)
-        await _seed_user(database_url, email=email, password=password, role="hrbp", tenant_id=LOGIN_TENANT)
+        login_user_id = await _seed_user(
+            database_url, email=email, password=password, role="hrbp", tenant_id=LOGIN_TENANT
+        )
         print(f"  已种入可登录用户 {email}（tenant={LOGIN_TENANT}，role=hrbp）")
         await _seed_user(database_url, email=acme_email, password=password, role="hrbp", tenant_id=tenant_acme)
         print(f"  已种入多租户用户 {acme_email}（tenant={tenant_acme}，role=hrbp）")
@@ -953,6 +975,7 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                     "grant_type": "refresh_token",
                     "refresh_token": second["refresh_token"],
                     "client_id": pre_registered_id,
+                    "resource": mcp_resource,
                 },
             )
             report.expect(
@@ -973,6 +996,7 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                         "grant_type": "refresh_token",
                         "refresh_token": second["refresh_token"],
                         "client_id": pre_registered_id,
+                        "resource": mcp_resource,
                     },
                 )
                 report.expect(
@@ -1298,10 +1322,42 @@ async def run(database_url: str, *, keep: bool, log_dir: Path) -> Report:
                 "exp": now_rotation + 900,
             }
             stranger_key = generate_signing_key()
-            status, _ = await _mcp_status(
-                f"{rs_url}/mcp", _mint(stranger_key.private_pem, rotation_claims)
-            )
+            status, _ = await _mcp_status(f"{rs_url}/mcp", _mint(stranger_key.private_pem, rotation_claims))
             report.expect("轮换后陌生密钥签名的令牌仍被拒（401）", status == 401, f"实际 HTTP {status}")
+
+            # ------------------------------------------------------------ 用户身份变更失效
+            _section("13. 用户角色变更使已有 OAuth 会话立即失效")
+            await _change_user_role(
+                database_url,
+                user_id=login_user_id,
+                tenant_id=LOGIN_TENANT,
+                role="employee",
+            )
+            status, _ = await _mcp_status(f"{rs_url}/mcp", post_rotation["access_token"])
+            report.expect("角色变更后旧 access token 被 RS 拒绝（401）", status == 401, f"实际 HTTP {status}")
+            stale_refresh = await client.post(
+                f"{as_url}/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": post_rotation["refresh_token"],
+                    "client_id": pre_registered_id,
+                    "resource": mcp_resource,
+                },
+            )
+            report.expect(
+                "角色变更后旧 refresh token 被 AS 拒绝（invalid_grant）",
+                stale_refresh.status_code == 400 and stale_refresh.json().get("error") == "invalid_grant",
+                f"HTTP {stale_refresh.status_code} {stale_refresh.text[:200]}",
+            )
+            stale_introspection = await client.post(
+                f"{as_url}/oauth/introspect",
+                data={"token": post_rotation["access_token"], "client_id": pre_registered_id},
+            )
+            report.expect(
+                "角色变更后旧 access token 内省为 inactive",
+                stale_introspection.status_code == 200 and stale_introspection.json().get("active") is False,
+                f"HTTP {stale_introspection.status_code} {stale_introspection.text[:200]}",
+            )
 
         return report
     finally:

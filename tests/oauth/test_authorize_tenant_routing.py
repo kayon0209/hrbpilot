@@ -110,9 +110,14 @@ def test_a_matching_tenant_session_can_consent(client: TestClient, monkeypatch: 
 
     monkeypatch.setattr(authorize_module, "resolve_client", _fake_resolve)
     monkeypatch.setattr(authorize_module, "read_session_cookie", _fake_read_session)
+    monkeypatch.setattr(authorize_module, "revalidate_session", lambda session: _async_value(session))
     monkeypatch.setattr(authorize_module, "issue_authorization_code", _fake_issue)
 
     # 不跟随重定向：302 的 Location 是客户端回调地址，跟过去只会是 404。
     response = client.post("/oauth/authorize/consent", data={**_FORM, "decision": "allow"}, follow_redirects=False)
     assert response.status_code == 302
     assert issued["tenant_id"] == "acme"
+
+
+async def _async_value(value: Any) -> Any:
+    return value

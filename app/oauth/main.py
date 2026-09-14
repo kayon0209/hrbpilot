@@ -14,6 +14,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.config.settings import settings
 from app.oauth.keys import active_signing_key
@@ -65,6 +67,24 @@ def create_oauth_app() -> FastAPI:
     # 加在最后：Starlette 的中间件是"后加的先执行"，因此这一层最先看到请求 ——
     # 被限流的调用不该再走一次签名密钥加载或数据库查询。
     app.add_middleware(OAuthRateLimitMiddleware)
+
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok", "service": "hrbpilot-authorization-server"}
+
+    @app.get("/ready", include_in_schema=False)
+    async def ready() -> JSONResponse:
+        try:
+            from app.data.database import get_session_factory
+
+            async with get_session_factory()() as session:
+                await session.execute(text("SELECT 1"))
+            key = active_signing_key()
+        except Exception as exc:
+            logger.error("oauth_as_not_ready", error=type(exc).__name__)
+            return JSONResponse({"status": "not_ready"}, status_code=503)
+        return JSONResponse({"status": "ready", "signing_kid": key.kid})
+
     return app
 
 

@@ -28,6 +28,7 @@ from app.data.models.notification import InAppNotification
 from app.data.models.oauth import (
     OAuthAuthorizationCode,
     OAuthClient,
+    OAuthClientBlock,
     OAuthRevokedToken,
     OAuthToken,
 )
@@ -79,6 +80,7 @@ __all__ = [
     "McpCallAudit",
     "OAuthAuthorizationCode",
     "OAuthClient",
+    "OAuthClientBlock",
     "OAuthNonce",
     "OAuthRevokedToken",
     "OAuthToken",

@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -32,12 +32,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.access.scopes import Scope
 from app.config.settings import settings
+from app.data.models.oauth import UNBOUND_TENANT
 from app.oauth.authorization import SUPPORTED_CODE_CHALLENGE_METHODS, issue_authorization_code
 from app.oauth.clients import ClientMetadata, redirect_uri_matches
 from app.oauth.html import render_page
-from app.oauth.identity import authenticate
+from app.oauth.identity import authenticate, revalidate_session
 from app.oauth.metadata import AUTHORIZATION_PATH
-from app.oauth.registry import resolve_client
+from app.oauth.registry import bind_dynamic_client_tenant, resolve_client
 from app.oauth.sessions import (
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
@@ -53,6 +54,7 @@ router = APIRouter(tags=["oauth-authorize"])
 
 LOGIN_PATH = "/oauth/authorize/login"
 CONSENT_PATH = "/oauth/authorize/consent"
+LOGOUT_PATH = "/oauth/authorize/logout"
 
 #: 会被回显进表单、并因此会在 POST 时被重新校验的授权参数白名单。
 #: 用白名单而不是"回显全部"：保证页面里只出现我们知道含义的字段。
@@ -122,6 +124,33 @@ def _collect_params(source: Mapping[str, object]) -> dict[str, str]:
     return {name: str(source[name]) for name in _AUTHORIZATION_PARAMS if source.get(name) is not None}
 
 
+def _callback_form_action_origin(redirect_uri: str) -> str | None:
+    """把**已通过校验**的 ``redirect_uri`` 归约成 CSP ``form-action`` 的一个源。
+
+    为什么非要它：同意页的表单 POST 之后，服务端 302 回客户端回调；**Chrome 与
+    Safari 会把 ``form-action`` 也施加到这次重定向**（Firefox 不会）。``'self'``
+    于是把"跳回回调"整体拦掉 —— 症状是点了"授权"页面毫无反应、也不跳转，而服务端
+    日志里授权码已经签发。loopback 客户端（RFC 8252）每次都用**随机端口**，回调对
+    授权页必然是另一个源，所以必须显式列出这一个。
+
+    只从**已经过 ``redirect_uri_matches`` 校验**的值派生，且只放行这一个源：
+    不做通配、不信任请求里的原始字符串（未校验前一律返回 ``None``，见调用方）。
+    自定义协议（如 ``workbuddy://``）在 CSP 里写成 scheme 源 ``workbuddy:``。
+    """
+    parts = urlsplit(redirect_uri)
+    if parts.scheme in {"http", "https"} and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
+    if parts.scheme:
+        return f"{parts.scheme}:"
+    return None
+
+
+def _form_action_origins(authorization: AuthorizationRequest) -> list[str]:
+    """该授权请求的表单页面需要放行的回调源（最多一个）。"""
+    origin = _callback_form_action_origin(authorization.redirect_uri)
+    return [origin] if origin else []
+
+
 def _error_redirect(redirect_uri: str, *, error: str, description: str, state: str) -> str:
     extra = {"error": error, "error_description": description}
     if state:
@@ -182,7 +211,9 @@ def _validate_authorization_request(
         # 然后在调用工具时收到一个与授权阶段对不上的错误。
         raise RedirectError("invalid_scope", f"scope not registered for this client: {', '.join(over_reach)}")
 
-    resource = params.get("resource") or settings.mcp_resource_url
+    resource = params.get("resource")
+    if not resource:
+        raise RedirectError("invalid_request", "resource is required")
     if resource != settings.mcp_resource_url:
         # RFC 8707 §2：resource 与令牌 audience 逐字节绑定。本服务只有一个受保护资源，
         # 为别的资源签发的令牌在这里没有任何用处，所以直接拒绝而不是忽略。
@@ -199,9 +230,11 @@ def _validate_authorization_request(
     )
 
 
-def _sign_in_response(session: AsSession, context: Mapping[str, Any]) -> HTMLResponse:
+def _sign_in_response(
+    session: AsSession, context: Mapping[str, Any], *, form_action_origins: Sequence[str] = ()
+) -> HTMLResponse:
     """渲染同意页并附上会话 cookie。"""
-    response = render_page("consent.html", **context)
+    response = render_page("consent.html", form_action_origins=form_action_origins, **context)
     response.set_cookie(
         SESSION_COOKIE_NAME,
         issue_session_cookie_value(session),
@@ -219,6 +252,12 @@ def _sign_in_response(session: AsSession, context: Mapping[str, Any]) -> HTMLRes
 
 def _consent_context(request: AuthorizationRequest, session: AsSession) -> dict[str, Any]:
     requested = [item for item in request.scope.split(" ") if item]
+    trust = {
+        "pre_registered": ("组织管理员已验证", "verified"),
+        "cimd": ("客户端身份文档已验证", "verified"),
+        "dcr": ("用户自助添加，请确认名称与来源", "unverified"),
+    }.get(request.client.registration_source, ("来源未验证", "unverified"))
+    can_propose = Scope.CASE_PROPOSE.value in requested
     return {
         "client_name": request.client.client_name,
         "session": session,
@@ -227,6 +266,9 @@ def _consent_context(request: AuthorizationRequest, session: AsSession) -> dict[
             for value in requested
         ],
         "unregistered_scopes": [value for value in requested if value not in SCOPE_DESCRIPTIONS],
+        "trust_label": trust[0],
+        "trust_tone": trust[1],
+        "risk_label": "可发起办理建议（仍需人工审批）" if can_propose else "仅查询与查看",
         "params": request.params,
     }
 
@@ -249,12 +291,24 @@ async def authorize(request: Request) -> Response:
         )
 
     session = read_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
+    if session is not None:
+        session = await revalidate_session(session)
     if session is None or session.tenant_id != client.tenant_id:
         # 会话要么不存在，要么属于**另一个租户**（用户先授权了别的客户端）。租户是
         # 会话的边界：acme 租户的登录态不能给缺省租户的客户端签授权码 —— 同意的
         # 必须是"这个租户里的这个人"。回登录页，登录会按当前客户端的租户重新认证。
-        return render_page("login.html", client_name=client.client_name, params=authorization.params)
-    return render_page("consent.html", **_consent_context(authorization, session))
+        return render_page(
+            "login.html",
+            client_name=client.client_name,
+            params=authorization.params,
+            tenant_required=client.tenant_id == UNBOUND_TENANT,
+            form_action_origins=_form_action_origins(authorization),
+        )
+    return render_page(
+        "consent.html",
+        **_consent_context(authorization, session),
+        form_action_origins=_form_action_origins(authorization),
+    )
 
 
 async def _revalidate_form(form: Mapping[str, object]) -> tuple[AuthorizationRequest | None, Response | None]:
@@ -290,9 +344,20 @@ async def authorize_login(request: Request) -> Response:
     # 会话租户必须与客户端归属租户一致：登录是按**那个客户端**的租户进行的（见
     # ``identity.authenticate``）。不设这道闸，一个在缺省租户登录的会话就能给
     # acme 租户的客户端签授权码 —— 令牌上的租户成了表单可改的字段。
-    session = await authenticate(
-        str(form.get("email") or ""), str(form.get("password") or ""), tenant_id=authorization.client.tenant_id
-    )
+    tenant_id = authorization.client.tenant_id
+    if tenant_id == UNBOUND_TENANT:
+        tenant_id = str(form.get("tenant_id") or "").strip()
+        if not tenant_id:
+            return render_page(
+                "login.html",
+                status_code=400,
+                client_name=authorization.client.client_name,
+                params=authorization.params,
+                tenant_required=True,
+                error="请填写组织标识。",
+                form_action_origins=_form_action_origins(authorization),
+            )
+    session = await authenticate(str(form.get("email") or ""), str(form.get("password") or ""), tenant_id=tenant_id)
     if session is None:
         # 不区分"邮箱不存在"与"密码错误"（见 identity.authenticate）。
         return render_page(
@@ -300,9 +365,31 @@ async def authorize_login(request: Request) -> Response:
             status_code=401,
             client_name=authorization.client.client_name,
             params=authorization.params,
+            tenant_required=authorization.client.tenant_id == UNBOUND_TENANT,
             error="邮箱或密码不正确。",
+            form_action_origins=_form_action_origins(authorization),
         )
-    return _sign_in_response(session, _consent_context(authorization, session))
+    if authorization.client.tenant_id == UNBOUND_TENANT:
+        bound = await bind_dynamic_client_tenant(authorization.client.client_id, tenant_id)
+        if bound is None:
+            return render_page(
+                "error.html",
+                status_code=409,
+                message="这个客户端已经绑定到另一个组织。",
+                detail="请在 AI 助手中删除连接后重新添加。",
+            )
+        authorization = AuthorizationRequest(
+            client=bound,
+            redirect_uri=authorization.redirect_uri,
+            scope=authorization.scope,
+            state=authorization.state,
+            code_challenge=authorization.code_challenge,
+            resource=authorization.resource,
+            params=authorization.params,
+        )
+    return _sign_in_response(
+        session, _consent_context(authorization, session), form_action_origins=_form_action_origins(authorization)
+    )
 
 
 @router.post(CONSENT_PATH, include_in_schema=False)
@@ -315,6 +402,8 @@ async def authorize_consent(request: Request) -> Response:
         return failure
 
     session = read_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
+    if session is not None:
+        session = await revalidate_session(session)
     if session is None or session.tenant_id != authorization.client.tenant_id:
         # 会话过期，或它属于另一个租户（见 ``authorize`` 里同一道闸）。回登录页，
         # 而不是默默用"另一个租户的人"的身份签发授权码。
@@ -324,6 +413,7 @@ async def authorize_consent(request: Request) -> Response:
             client_name=authorization.client.client_name,
             params=authorization.params,
             error="登录状态已过期，请重新登录。",
+            form_action_origins=_form_action_origins(authorization),
         )
 
     if str(form.get("decision") or "") != "allow":
@@ -343,6 +433,7 @@ async def authorize_consent(request: Request) -> Response:
         tenant_id=session.tenant_id,
         user_id=session.user_id,
         role=session.role,
+        auth_version=session.auth_version,
         email=session.email,
         redirect_uri=authorization.redirect_uri,
         scope=authorization.scope,
@@ -354,3 +445,22 @@ async def authorize_consent(request: Request) -> Response:
     if authorization.state:
         extra["state"] = authorization.state
     return RedirectResponse(_append_query(authorization.redirect_uri, extra), status_code=302)
+
+
+@router.post(LOGOUT_PATH, include_in_schema=False)
+async def authorize_logout(request: Request) -> Response:
+    """Switch account without turning the authorization page into a GET logout CSRF."""
+    form = await request.form()
+    authorization, failure = await _revalidate_form(form)
+    if failure is not None or authorization is None:
+        assert failure is not None
+        return failure
+    response = render_page(
+        "login.html",
+        client_name=authorization.client.client_name,
+        params=authorization.params,
+        tenant_required=authorization.client.tenant_id == UNBOUND_TENANT,
+        form_action_origins=_form_action_origins(authorization),
+    )
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/", secure=settings.is_production, httponly=True)
+    return response

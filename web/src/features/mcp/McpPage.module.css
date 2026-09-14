@@ -458,6 +458,80 @@
   font-size: var(--text-meta);
 }
 
+.managerHead {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.managerHead h2,
+.managerGrid h3 {
+  margin: 4px 0 0;
+}
+
+.dangerButton {
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--danger);
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+
+.managerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.connectionList {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connectionList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+}
+
+.connectionList div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.connectionList strong,
+.connectionList span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connectionList span {
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+
+.connectionList button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  color: var(--action);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+
 .result {
   margin-top: 18px;
 }
@@ -504,5 +578,8 @@
 @media (max-width: 860px) {
   .tryLayout {
     grid-template-columns: 1fr;
+  }
+  .managerHead {
+    flex-direction: column;
   }
 }

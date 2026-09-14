@@ -60,7 +60,7 @@ async def authenticate(email: str, password: str, *, tenant_id: str = DEFAULT_TE
         logger.error("oauth_as_login_db_failed", error=str(exc))
         return None
 
-    if user is None:
+    if user is None or not user.is_active:
         bcrypt.checkpw(password.encode("utf-8"), _DUMMY_BCRYPT_HASH.encode("utf-8"))
         logger.warning("oauth_as_login_unknown_user")
         return None
@@ -81,4 +81,45 @@ async def authenticate(email: str, password: str, *, tenant_id: str = DEFAULT_TE
         role=user.role,
         email=user.email,
         name=user.name,
+        auth_version=user.auth_version,
     )
+
+
+async def current_identity(user_id: str, tenant_id: str) -> AsSession | None:
+    """Return the current active identity for a previously authenticated user.
+
+    Every OAuth continuation calls this instead of trusting role/status copied
+    into a cookie, code, or refresh token.
+    """
+    if not user_id or not tenant_id:
+        return None
+    from sqlalchemy import select
+
+    from app.data.database import get_db_session
+    from app.data.models.user import User
+
+    try:
+        user = None
+        async for db in get_db_session(tenant_id):
+            user = await db.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+    except Exception as exc:
+        logger.error("oauth_identity_revalidation_failed", user_id=user_id, tenant_id=tenant_id, error=str(exc))
+        return None
+    if user is None or not user.is_active:
+        return None
+    return AsSession(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        role=user.role,
+        email=user.email,
+        name=user.name,
+        auth_version=user.auth_version,
+    )
+
+
+async def revalidate_session(session: AsSession) -> AsSession | None:
+    """Reject stale browser sessions after role, password, or status changes."""
+    current = await current_identity(session.user_id, session.tenant_id)
+    if current is None or current.auth_version != session.auth_version or current.role != session.role:
+        return None
+    return current

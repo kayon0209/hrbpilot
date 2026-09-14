@@ -32,11 +32,17 @@ class _RecordingLimiter:
     async def check_bucket(self, bucket: str, key: str, limit: int) -> None:
         self.calls.append((bucket, key))
 
+    async def check_buckets(self, checks: list[tuple[str, str, int]]) -> None:
+        self.calls.extend((bucket, key) for bucket, key, _limit in checks)
+
 
 class _AlwaysOverLimiter:
     """任何维度都判超阈值 —— 用来观测 429 的形状。"""
 
     async def check_bucket(self, bucket: str, key: str, limit: int) -> None:
+        raise RateLimitError("请求过于频繁，请稍后再试")
+
+    async def check_buckets(self, checks: list[tuple[str, str, int]]) -> None:
         raise RateLimitError("请求过于频繁，请稍后再试")
 
 

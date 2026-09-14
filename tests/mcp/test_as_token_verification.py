@@ -237,23 +237,14 @@ async def test_ceiling_wider_than_the_grant_does_not_widen_anything(as_server: F
     assert principal.effective_scopes == {Scope.POLICY_READ}
 
 
-async def test_unknown_client_falls_back_to_the_token_scope(as_server: FakeAuthorizationServer) -> None:
-    """客户端不在本库（例如接了一个第三方 AS）时，上限取令牌自身 —— 不额外收紧。
-
-    断言的是"不额外收紧"，而不是"放宽"：同一个令牌在已知客户端那里会因为上限而
-    少一个 scope，在这里不会。真正的天花板始终是**角色能力**（见下一条测试）。
-    """
+async def test_unknown_client_is_rejected_fail_closed(as_server: FakeAuthorizationServer) -> None:
+    """A registry miss cannot turn the token's self-declared scope into its ceiling."""
     as_server.ceiling = None
     as_server.scope = "hrb:policy:read"
 
     principal = await principal_from_bearer_token(as_server.token())
 
-    assert principal is not None
-    assert principal.client_ceiling == {Scope.POLICY_READ}
-    assert principal.effective_scopes == {Scope.POLICY_READ}
-    # hrbp 持有 policy_qa 能力且 scope 齐全，因此这里应当放行 —— 回退不能变成拒绝，
-    # 否则"接一个第三方 AS"会表现为"所有工具都调不动"，而原因看不出来。
-    assert authorize_tool_call(principal, "search_policy", catalog=TOOL_CATALOG).allowed is True
+    assert principal is None
 
 
 async def test_a_role_without_the_capability_still_cannot_reach_the_tool(

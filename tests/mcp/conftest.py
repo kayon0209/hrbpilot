@@ -36,6 +36,19 @@ def _clean_as_document_cache() -> Iterator[None]:
     as_tokens.reset_document_cache()
 
 
+@pytest.fixture(autouse=True)
+def _disable_real_mcp_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """传输层单测不应共享 Redis 或本机回退状态。
+
+    这些用例覆盖认证、scope 挑战和审计；限流维度与 429 形状由
+    ``test_rate_limit.py`` 注入假限流器单独覆盖。保留默认限流会让一个
+    用例的回退计数污染下一条，最终把预期的 403 伪装成 429。
+    """
+    monkeypatch.setattr(settings, "mcp_rate_limit_user_per_minute", 0)
+    monkeypatch.setattr(settings, "mcp_rate_limit_client_per_minute", 0)
+    monkeypatch.setattr(settings, "mcp_rate_limit_installation_per_minute", 0)
+
+
 class FakeAuthorizationServer:
     """一份由测试完全控制的 AS：自己的 ES256 密钥、自己的元数据与 JWKS。"""
 
@@ -88,7 +101,7 @@ class FakeAuthorizationServer:
     # ---- 假数据库面 ------------------------------------------------------- #
 
     async def load_registry_state(
-        self, *, jti: str, family_id: str, client_id: str
+        self, *, jti: str, family_id: str, client_id: str, **_identity: object
     ) -> tuple[bool, frozenset[Scope] | None]:
         self.lookup_log.append((jti, family_id, client_id))
         return self.revoked, self.ceiling
@@ -109,6 +122,7 @@ class FakeAuthorizationServer:
             "family_id": self.family_id,
             "tenant_id": self.tenant_id,
             "role": self.role,
+            "auth_version": 1,
             "email": "user-1@example.test",
         }
         base.update(overrides)

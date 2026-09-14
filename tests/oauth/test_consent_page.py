@@ -18,7 +18,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.access.scopes import Scope
-from app.oauth.routes.authorize import SCOPE_DESCRIPTIONS
+from app.config.settings import settings
+from app.oauth.clients import validate_client_metadata
+from app.oauth.routes.authorize import SCOPE_DESCRIPTIONS, RedirectError, _validate_authorization_request
 
 
 def test_every_scope_has_a_chinese_description() -> None:
@@ -98,3 +100,32 @@ def test_the_page_says_the_grant_lasts_until_revoked() -> None:
     ).body.decode("utf-8")
 
     assert "撤销" in html, "同意页没有告诉用户授权可以被撤销"
+
+
+def test_authorization_requires_an_explicit_resource() -> None:
+    """RFC 8707 resource 不得由服务端默认补齐。"""
+    redirect_uri = "http://127.0.0.1:9000/callback"
+    client = validate_client_metadata(
+        {
+            "redirect_uris": [redirect_uri],
+            "scope": Scope.PROFILE_READ.value,
+        },
+        client_id="explicit-resource-test",
+        registration_source="pre_registered",
+        tenant_id="default",
+    )
+    params = {
+        "response_type": "code",
+        "client_id": client.client_id,
+        "redirect_uri": redirect_uri,
+        "scope": Scope.PROFILE_READ.value,
+        "code_challenge": "challenge",
+        "code_challenge_method": "S256",
+    }
+
+    with pytest.raises(RedirectError, match="resource is required") as error:
+        _validate_authorization_request(params, client, redirect_uri)
+    assert error.value.error == "invalid_request"
+
+    accepted = _validate_authorization_request({**params, "resource": settings.mcp_resource_url}, client, redirect_uri)
+    assert accepted.resource == settings.mcp_resource_url

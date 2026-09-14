@@ -216,8 +216,7 @@ async def _rate_limit_response(scope: AsgiScope) -> JSONResponse | None:
         checks.append(("mcp-installation", str(installation_id), settings.mcp_rate_limit_installation_per_minute))
 
     try:
-        for bucket, key, limit in checks:
-            await limiter.check_bucket(bucket, key, limit)
+        await limiter.check_buckets(checks)
     except RateLimitError as exc:
         logger.warning(
             "mcp_rate_limited",

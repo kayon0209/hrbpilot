@@ -32,8 +32,12 @@ WP1 修掉的那类缺陷（两条出口结论相反）。入口只有一个：
    手段就是 RS 在验签后多查一次撤销表（``app/data/models/oauth.py`` 的
    ``oauth_revoked_tokens``），按 ``jti``（单把令牌）与 ``family_id``（整条授权会话）
    两个粒度比对。
-3. **客户端授权上限**：从 ``oauth_clients.scope`` 读该客户端**注册**的范围，与令牌自述
-   的 scope 取交集才是有效权限（``McpPrincipal.effective_scopes``）。
+3. **实时授权状态**：客户端必须已注册、未禁用且未被租户拉黑；用户必须仍然
+   启用，而且当前角色和 ``auth_version`` 必须与令牌一致。这使禁用账号、角色变更
+   和客户端撤销对已签发的访问令牌立即生效。
+4. **客户端授权上限**：从 ``oauth_clients.scope`` 读该客户端**注册**的范围，与令牌自述
+   的 scope 取交集才是有效权限（``McpPrincipal.effective_scopes``）。不认识的客户端或缺失的
+   授权上限都按拒绝处理，不再回退到令牌自述范围。
 
 第 3 条是纵深防御，不是唯一防线
 -------------------------------
@@ -41,11 +45,9 @@ WP1 修掉的那类缺陷（两条出口结论相反）。入口只有一个：
 ``app/oauth/routes/authorize.py`` 的 ``invalid_scope`` 分支），所以正常情况下交集等于
 令牌自身。RS 再查一次的意义是：**AS 有 bug 或配置漂移时，RS 不会跟着一起放宽**。
 
-对 RS 不认识的客户端（例如配置了一个第三方 AS，它的客户端不在本库里），上限取令牌
-自身的 scope —— 也就是"不额外收紧"，因为 RS 手里没有任何比令牌更权威的取值。
-这不构成放开：工具调用的第一道判定是**角色能力**
-（``app/oauth`` 之外的 ``authorize_tool_call``），一个被过度授权的令牌仍然越不过用户
-自己的角色上限。该情形会记一条警告，以便发现"有 AS 在用而客户端没预注册"。
+对 RS 不认识的客端不做宽松兼容：即使令牌签名正确，也无法证明该客户端在当前
+租户的实时授权上限，因此必须失败关闭。第三方 AS 要接入时，需先通过受控同步
+将客户端状态和范围写入本地注册表。
 """
 
 from __future__ import annotations
@@ -168,12 +170,31 @@ def _metadata_url(issuer: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, _WELL_KNOWN_METADATA_PATH + parts.path.rstrip("/"), "", ""))
 
 
+#: 明文 http 放行的环回主机（本地联调：AS 与 RS 同机时没有证书）。
+_LOOPBACK_HTTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _configured_internal_host() -> str:
+    """``OAUTH_INTERNAL_BASE_URL`` 的主机名（未配置时为空串）。
+
+    它和 issuer 一样是**运维配置**，不是外部文档里的值。容器/服务网格里 AS 走的是
+    明文 http（没有证书），所以这条白名单必须容纳它 —— 否则容器部署下 RS 永远取不到
+    元数据与 JWKS，**所有**外部令牌都会被判 ``malformed``，症状是"外部 Agent 全部
+    401"，而日志里真正的线索是旁边那条 ``as_document_url_rejected``。
+    """
+    base = settings.oauth_internal_base_url.strip()
+    if not base:
+        return ""
+    return (urlsplit(base).hostname or "").lower()
+
+
 def _is_fetchable_document_url(url: str) -> bool:
     """文档 URL 的形式检查：绝对 http(s)、无 userinfo、非环回必须 https。
 
-    JWKS 与元数据的地址来自**配置的 issuer**（可信输入），因此不需要 CIMD 那套
-    SSRF 防护；但"环回必须是 http、其余必须 https"这条仍然要有：一个明文
-    ``jwks_uri`` 意味着任何能在链路上改写响应的人都能塞进自己的公钥。
+    取地址来自**配置的 issuer** 或**配置的容器内地址**（都是可信输入），因此不需要
+    CIMD 那套 SSRF 防护；但"明文 http 只对环回与显式配置的容器内主机放行"这条仍然
+    要有：一个任意的明文 ``jwks_uri`` 意味着任何能在链路上改写响应的人都能塞进自己
+    的公钥。放行名单只有两个来源，且都是运维写死在配置里的。
     """
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
@@ -184,7 +205,8 @@ def _is_fetchable_document_url(url: str) -> bool:
     if not host:
         return False
     if parts.scheme == "http":
-        return host in {"localhost", "127.0.0.1", "::1"}
+        internal = _configured_internal_host()
+        return host in _LOOPBACK_HTTP_HOSTS or (bool(internal) and host == internal)
     return True
 
 
@@ -231,7 +253,9 @@ def _lock_for(issuer: str) -> asyncio.Lock:
 
 async def _fetch_signing_keys(issuer: str) -> dict[str, dict[str, Any]] | None:
     """按 RFC 8414 元数据找到 ``jwks_uri``，取回 JWKS 并建成 ``kid → JWK`` 映射。"""
-    metadata = await _fetch_json(_metadata_url(issuer))
+    internal_base = settings.oauth_internal_base_url.rstrip("/")
+    fetch_base = internal_base if internal_base and _normalized_issuer_match(issuer, settings.oauth_issuer) else issuer
+    metadata = await _fetch_json(_metadata_url(fetch_base))
     if not isinstance(metadata, dict):
         return None
     declared_issuer = metadata.get("issuer")
@@ -244,7 +268,10 @@ async def _fetch_signing_keys(issuer: str) -> dict[str, dict[str, Any]] | None:
     if not isinstance(jwks_uri, str) or not jwks_uri:
         logger.warning("as_metadata_without_jwks_uri", issuer=issuer)
         return None
-    document = await _fetch_json(jwks_uri)
+    fetch_jwks_uri = jwks_uri
+    if internal_base and _normalized_issuer_match(issuer, settings.oauth_issuer) and jwks_uri.startswith(issuer):
+        fetch_jwks_uri = f"{internal_base}{jwks_uri[len(issuer) :]}"
+    document = await _fetch_json(fetch_jwks_uri)
     if not isinstance(document, dict):
         return None
     raw_keys = document.get("keys")
@@ -292,20 +319,41 @@ async def _signing_keys_for(issuer: str, *, refresh: bool = False) -> dict[str, 
         return fresh
 
 
-async def _load_registry_state(*, jti: str, family_id: str, client_id: str) -> tuple[bool, frozenset[Scope] | None]:
-    """一次数据库往返回答两个问题：这把令牌被撤销了吗？这个客户端注册了哪些 scope？
+async def _load_registry_state(
+    *,
+    jti: str,
+    family_id: str,
+    client_id: str,
+    tenant_id: str,
+    user_id: str,
+    role: str,
+    auth_version: int,
+) -> tuple[bool, frozenset[Scope] | None]:
+    """Atomically re-check revocation, client ceiling, and current identity.
 
     返回 ``(revoked, ceiling)``；``ceiling`` 为 ``None`` 表示客户端不在本库（见模块头部）。
 
-    这两张表都没有 RLS（理由见 ``app/data/models/oauth.py``），因此**不需要**租户上下文 ——
-    校验发生的时刻正是还不知道租户是谁的时刻。
+    The signed claims have already supplied a verified tenant and user at this
+    point, so the session is tenant-bound before querying the RLS user table.
     """
+    from app.data.models.oauth import OAuthClientBlock
+    from app.data.models.user import User
+
     session = get_session_factory()()
+    session.info["tenant_id"] = tenant_id
     try:
         if await is_revoked(session, jti=jti, family_id=family_id):
             return True, None
-        registered = await session.execute(select(OAuthClient.scope).where(OAuthClient.client_id == client_id))
-        scope_value = registered.scalar_one_or_none()
+        client = await session.get(OAuthClient, client_id)
+        if client is None or client.status != "active":
+            return True, None
+        block = await session.get(OAuthClientBlock, (tenant_id, client_id))
+        if block is not None and block.blocked:
+            return True, None
+        user = await session.scalar(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+        if user is None or not user.is_active or user.role != role or user.auth_version != auth_version:
+            return True, None
+        scope_value = client.scope
     finally:
         await session.close()
     if scope_value is None:
@@ -401,7 +449,15 @@ async def verify_as_access_token(token: str) -> AsAccessClaims | TokenRejection:
     scopes = parse_scopes(str(claims.get("scope") or ""))
 
     try:
-        revoked, ceiling = await _load_registry_state(jti=token_id, family_id=family_id, client_id=client_id)
+        revoked, ceiling = await _load_registry_state(
+            jti=token_id,
+            family_id=family_id,
+            client_id=client_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role=role,
+            auth_version=int(claims.get("auth_version") or 0),
+        )
     except Exception:
         # 校验失败必须 fail-closed。数据库不可用时 /mcp 本来就不可用，但"因为查不到
         # 撤销状态所以放行"是绝不能出现的降级 —— 那正好是撤销功能失效的时刻。
@@ -413,7 +469,7 @@ async def verify_as_access_token(token: str) -> AsAccessClaims | TokenRejection:
 
     if ceiling is None:
         logger.warning("as_client_not_registered_locally", client_id=client_id, issuer=issuer)
-        ceiling = scopes
+        return TokenRejection.REVOKED
 
     return AsAccessClaims(
         issuer=issuer,

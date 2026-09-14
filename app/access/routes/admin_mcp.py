@@ -44,8 +44,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access.middleware.decorators import require_auth, require_capability
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_session_factory
-from app.data.models.oauth import OAuthClient, OAuthToken
-from app.oauth.tokens import REVOKED_REASON_USER_REVOKED, revoke_family_in_own_session
+from app.data.models.oauth import OAuthClient, OAuthClientBlock, OAuthToken
+from app.data.models.user import User
+from app.oauth.tokens import REVOKED_REASON_USER_REVOKED, revoke_family
 from app.shared.audit import append_security_audit_event
 from app.shared.errors import NotFoundError
 
@@ -58,6 +59,8 @@ class InstallationOut(BaseModel):
     family_id: str
     client_id: str
     user_id: str
+    #: 租户内用户的显示名。用户记录已被清理时为 ``None``，管理端仍保留不可歧义的 id。
+    user_name: str | None = None
     role: str
     #: 未撤销的 refresh token 条数。为 0 表示已经没有可续期的凭据 ——
     #: 现有 access token 到期后这个实例即彻底失效。
@@ -80,6 +83,7 @@ class ClientOut(BaseModel):
     #: 未撤销的实例数。管理者真正关心的是这个 —— 它回答"断开它会影响多少人"。
     active_installations: int
     last_seen_at: datetime | None = None
+    blocked: bool = False
 
 
 class RevokeOut(BaseModel):
@@ -115,24 +119,6 @@ def _clients_query(client_ids: list[str]) -> Select[tuple[OAuthClient]]:
     return statement
 
 
-async def _family_exists(tenant_id: str, family_id: str) -> bool:
-    """本租户是否存在这条轮换链。**带租户条件** —— 跨租户的 id 一律当作不存在。
-
-    不是"查到了再判断租户"：那是先取数据再决定要不要用，泄漏与否取决于调用点有
-    没有记得判断。条件直接进 WHERE，让 RLS 与查询条件一起生效。
-    """
-    async with db_session(tenant_id) as session:
-        found = (
-            await session.execute(
-                select(OAuthToken.jti).where(
-                    OAuthToken.tenant_id == tenant_id,
-                    OAuthToken.family_id == family_id,
-                )
-            )
-        ).first()
-    return found is not None
-
-
 @router.get("/installations")
 @require_auth
 @require_capability("mcp_admin")
@@ -146,16 +132,22 @@ async def list_installations(request: Request) -> list[InstallationOut]:
                     OAuthToken.family_id,
                     OAuthToken.client_id,
                     OAuthToken.user_id,
+                    User.name.label("user_name"),
                     OAuthToken.role,
                     OAuthToken.resource,
                     func.min(OAuthToken.created_at),
                     func.max(OAuthToken.created_at),
+                )
+                .outerjoin(
+                    User,
+                    (User.id == OAuthToken.user_id) & (User.tenant_id == OAuthToken.tenant_id),
                 )
                 .where(OAuthToken.tenant_id == tenant_id)
                 .group_by(
                     OAuthToken.family_id,
                     OAuthToken.client_id,
                     OAuthToken.user_id,
+                    User.name,
                     OAuthToken.role,
                     OAuthToken.resource,
                 )
@@ -190,6 +182,7 @@ async def list_installations(request: Request) -> list[InstallationOut]:
             family_id=str(family_id),
             client_id=str(client_id),
             user_id=str(user_id),
+            user_name=str(user_name) if user_name else None,
             role=str(role),
             active_refresh_tokens=active_counts.get(str(family_id), 0),
             created_at=created_at,
@@ -197,7 +190,7 @@ async def list_installations(request: Request) -> list[InstallationOut]:
             resource=str(resource or ""),
             revoked_at=revoked_at_by_family.get(str(family_id)),
         )
-        for family_id, client_id, user_id, role, resource, created_at, last_rotated_at in grouped
+        for family_id, client_id, user_id, user_name, role, resource, created_at, last_rotated_at in grouped
     ]
 
 
@@ -212,12 +205,25 @@ async def revoke_installation(request: Request, family_id: str) -> RevokeOut:
     都没发生。这是最糟的一类反馈：错的不是结果，是结论。
     """
     tenant_id = require_tenant_id(request)
-    if not await _family_exists(tenant_id, family_id):
-        raise NotFoundError("oauth_family", family_id)
-
-    await revoke_family_in_own_session(family_id, reason=REVOKED_REASON_USER_REVOKED, tenant_id=tenant_id)
-
     async with db_session(tenant_id) as session:
+        found = (
+            await session.execute(
+                select(OAuthToken.jti).where(
+                    OAuthToken.tenant_id == tenant_id,
+                    OAuthToken.family_id == family_id,
+                )
+            )
+        ).first()
+        if found is None:
+            raise NotFoundError("oauth_family", family_id)
+        now = datetime.now(UTC)
+        await revoke_family(
+            session,
+            family_id,
+            reason=REVOKED_REASON_USER_REVOKED,
+            tenant_id=tenant_id,
+            now=now,
+        )
         await append_security_audit_event(
             session,
             tenant_id=tenant_id,
@@ -225,7 +231,7 @@ async def revoke_installation(request: Request, family_id: str) -> RevokeOut:
             action="mcp_installation_revoked",
             object_type="oauth_family",
             object_id=family_id,
-            details={"revoked_at": datetime.now(UTC).isoformat()},
+            details={"revoked_at": now.isoformat()},
         )
         await session.commit()
 
@@ -273,6 +279,18 @@ async def list_clients(request: Request) -> list[ClientOut]:
         # OAuthClient 是 AS 的部署级对象（无租户列），所以按 client_id 过滤而不是
         # 按租户 —— 这里只是取展示用的名称，取不到就退回用 id 当名字。
         known = {row.client_id: row for row in (await session.execute(_clients_query(list(totals)))).scalars().all()}
+        blocked_ids = set(
+            (
+                await session.execute(
+                    select(OAuthClientBlock.client_id).where(
+                        OAuthClientBlock.tenant_id == tenant_id,
+                        OAuthClientBlock.blocked.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     return [
         ClientOut(
@@ -282,6 +300,7 @@ async def list_clients(request: Request) -> list[ClientOut]:
             installations=totals[client_id],
             active_installations=actives.get(client_id, 0),
             last_seen_at=last_seen.get(client_id),
+            blocked=client_id in blocked_ids,
         )
         for client_id in sorted(totals)
     ]
@@ -315,10 +334,15 @@ async def revoke_all(request: Request) -> RevokeOut:
             .all()
         ]
 
-    for family_id in families:
-        await revoke_family_in_own_session(family_id, reason=REVOKED_REASON_USER_REVOKED, tenant_id=tenant_id)
-
-    async with db_session(tenant_id) as session:
+        now = datetime.now(UTC)
+        for family_id in families:
+            await revoke_family(
+                session,
+                family_id,
+                reason=REVOKED_REASON_USER_REVOKED,
+                tenant_id=tenant_id,
+                now=now,
+            )
         await append_security_audit_event(
             session,
             tenant_id=tenant_id,
@@ -326,7 +350,7 @@ async def revoke_all(request: Request) -> RevokeOut:
             action="mcp_all_installations_revoked",
             object_type="oauth_tenant",
             object_id=tenant_id,
-            details={"revoked_families": len(families), "revoked_at": datetime.now(UTC).isoformat()},
+            details={"revoked_families": len(families), "revoked_at": now.isoformat()},
         )
         await session.commit()
 
@@ -364,13 +388,34 @@ async def revoke_client(request: Request, client_id: str) -> RevokeOut:
             .all()
         ]
 
-    if not families:
-        raise NotFoundError("oauth_client_installations", client_id)
-
-    for family_id in families:
-        await revoke_family_in_own_session(family_id, reason=REVOKED_REASON_USER_REVOKED, tenant_id=tenant_id)
-
-    async with db_session(tenant_id) as session:
+        known_client = await session.get(OAuthClient, client_id)
+        belongs_to_tenant = known_client is not None and known_client.tenant_id == tenant_id
+        if not families and not belongs_to_tenant:
+            raise NotFoundError("oauth_client_installations", client_id)
+        block = await session.get(OAuthClientBlock, (tenant_id, client_id))
+        if block is None:
+            session.add(
+                OAuthClientBlock(
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    blocked=True,
+                    reason="tenant administrator revoked client",
+                    blocked_by=str(getattr(request.state, "user_id", "") or ""),
+                )
+            )
+        else:
+            block.blocked = True
+            block.reason = "tenant administrator revoked client"
+            block.blocked_by = str(getattr(request.state, "user_id", "") or "")
+        now = datetime.now(UTC)
+        for family_id in families:
+            await revoke_family(
+                session,
+                family_id,
+                reason=REVOKED_REASON_USER_REVOKED,
+                tenant_id=tenant_id,
+                now=now,
+            )
         await append_security_audit_event(
             session,
             tenant_id=tenant_id,
@@ -378,7 +423,7 @@ async def revoke_client(request: Request, client_id: str) -> RevokeOut:
             action="mcp_client_revoked",
             object_type="oauth_client",
             object_id=client_id,
-            details={"revoked_families": len(families), "revoked_at": datetime.now(UTC).isoformat()},
+            details={"revoked_families": len(families), "revoked_at": now.isoformat()},
         )
         await session.commit()
 
@@ -387,3 +432,29 @@ async def revoke_client(request: Request, client_id: str) -> RevokeOut:
         revoked_families=len(families),
         message=f"已撤销该客户端在本租户下的 {len(families)} 个安装实例",
     )
+
+
+@router.post("/clients/{client_id:path}/enable")
+@require_auth
+@require_capability("mcp_admin")
+async def enable_client(request: Request, client_id: str) -> RevokeOut:
+    """Remove the tenant-local deny state; existing token families stay revoked."""
+    tenant_id = require_tenant_id(request)
+    async with db_session(tenant_id) as session:
+        block = await session.get(OAuthClientBlock, (tenant_id, client_id))
+        if block is None or not block.blocked:
+            raise NotFoundError("blocked_oauth_client", client_id)
+        block.blocked = False
+        block.reason = ""
+        block.blocked_by = str(getattr(request.state, "user_id", "") or "")
+        await append_security_audit_event(
+            session,
+            tenant_id=tenant_id,
+            actor_id=str(getattr(request.state, "user_id", "") or ""),
+            action="mcp_client_enabled",
+            object_type="oauth_client",
+            object_id=client_id,
+            details={"enabled_at": datetime.now(UTC).isoformat()},
+        )
+        await session.commit()
+    return RevokeOut(client_id=client_id, message="该客户端已允许重新授权；旧令牌仍然失效")

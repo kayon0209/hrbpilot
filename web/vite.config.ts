@@ -3,6 +3,18 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Keep application code cacheable independently from dependencies.
+          // Splitting individual React ecosystem packages creates circular
+          // chunks because router/query dependencies also import React.
+          return id.includes("node_modules") ? "vendor" : undefined;
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

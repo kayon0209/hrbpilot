@@ -5,7 +5,7 @@ RLS enabled via tenant_id.  org_unit_id is a composite (tenant_id, org_unit_id)
 FK (020) so a user can never be bound to another tenant's organisation.
 """
 
-from sqlalchemy import ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
@@ -26,6 +26,10 @@ class User(Base, UUIDPrimaryKey, TimestampMixin, TenantMixin):
     email: Mapped[str] = mapped_column(nullable=False, unique=True)
     hashed_password: Mapped[str] = mapped_column(nullable=False)
     role: Mapped[str] = mapped_column(nullable=False, default="employee")  # employee | hrbp | hr_manager | admin
+    # External OAuth sessions and refresh-token families bind to this version.
+    # Increment it whenever credentials or security-sensitive identity state changes.
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     org_unit_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     def __repr__(self) -> str:

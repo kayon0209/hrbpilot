@@ -234,16 +234,24 @@ def _approval_view(approval: ApprovalRequest) -> dict[str, Any]:
     }
 
 
+async def _visible_user_ids(principal: McpPrincipal) -> set[str]:
+    """Use the same object-scope resolver as the REST HR Case surface."""
+    from app.access.object_scope import resolve_visible_user_ids
+
+    return await resolve_visible_user_ids(principal.tenant_id, principal.user_id, principal.role)
+
+
 async def execute_search_cases(params: dict) -> dict:
     """按 ACL 搜索案件。跨租户与越权案件在这里就不可见 —— 不是"返回空摘要"。"""
     from app.scenarios.hr_case_agent.service import HRCaseService
 
     tenant_id = _require_tenant()
     principal = _require_principal()
+    visible_user_ids = await _visible_user_ids(principal)
 
     session = await make_tenant_session(tenant_id)
     try:
-        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal), visible_user_ids=visible_user_ids)
         cases = await service.search_cases(
             limit=int(params.get("limit") or 20),
             status=params.get("status"),
@@ -268,11 +276,12 @@ async def execute_get_case_summary(params: dict) -> dict:
 
     tenant_id = _require_tenant()
     principal = _require_principal()
+    visible_user_ids = await _visible_user_ids(principal)
     case_id = str(params["case_id"])
 
     session = await make_tenant_session(tenant_id)
     try:
-        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal), visible_user_ids=visible_user_ids)
         try:
             case = await service.get_case(case_id)
         except NotFoundError:
@@ -296,11 +305,12 @@ async def execute_get_approval_status(params: dict) -> dict:
 
     tenant_id = _require_tenant()
     principal = _require_principal()
+    visible_user_ids = await _visible_user_ids(principal)
     case_id = str(params["case_id"])
 
     session = await make_tenant_session(tenant_id)
     try:
-        service = HRCaseService(session, tenant_id, actor=_actor_label(principal))
+        service = HRCaseService(session, tenant_id, actor=_actor_label(principal), visible_user_ids=visible_user_ids)
         try:
             approval_id = params.get("approval_id")
             if approval_id:

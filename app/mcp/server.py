@@ -301,9 +301,9 @@ async def _create_approval_via_mcp(
                 client_id=principal.client_id,
                 installation_id=str(principal.installation_id) if principal.installation_id else None,
             )
-            await session.commit()
             # 审计要能把"这次调用"与"它产生的审批"串起来 —— 事后追责时问的正是
-            # "这条审批是哪个客户端、哪一次调用发起的"。
+            # "这条审批是哪个客户端、哪一次调用发起的"。写操作的审计与审批共享
+            # 一个事务：审计落不下就不能向外宣称已受理。
             await record_mcp_call(
                 principal,
                 tool=tool_name,
@@ -312,7 +312,10 @@ async def _create_approval_via_mcp(
                 params=params,
                 object_ref=case_id,
                 approval_id=approval.id,
+                session=session,
+                required=True,
             )
+            await session.commit()
             return envelope(
                 tool_name,
                 ToolOutcome.AWAITING_APPROVAL,

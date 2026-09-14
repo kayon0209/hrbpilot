@@ -26,6 +26,8 @@ class _FakeUser:
         self.email = "a@example.com"
         self.name = "A"
         self.hashed_password = ""
+        self.is_active = True
+        self.auth_version = 1
 
 
 class _FakeRepo:

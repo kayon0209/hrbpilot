@@ -208,6 +208,10 @@ class Settings(BaseSettings):
     # issuer 是 AS 的对外身份，与 resource 是 RS 的对外身份，两者是**不同的东西**，
     # 各自显式配置比用一个拼接触发的不一致假设更稳。
     oauth_issuer: str = "http://localhost:8001"
+    # Optional container/service-mesh address used only to fetch this trusted
+    # issuer's metadata and JWKS. Token `iss` and public discovery always keep
+    # using oauth_issuer; this is transport routing, not another trusted issuer.
+    oauth_internal_base_url: str = ""
     # ES256（ECDSA P-256）签名私钥。接受 PEM 原文，或 base64 编码的 PEM
     # （编排层常常破坏多行值，两种都收）。生产/预发必须配置；
     # 开发环境留空会生成**进程级临时密钥**（重启即失效，只影响本地联调）。

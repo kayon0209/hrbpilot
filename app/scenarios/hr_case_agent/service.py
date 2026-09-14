@@ -363,7 +363,14 @@ class HRCaseService:
             raise ApprovalError(f"Invalid params for {tool_name}: {e}") from e
         input_hash = _hash_params(tool_name, normalized)
 
-        reusable = await self._find_reusable_approval(case_id, tool_name, input_hash)
+        reusable = await self._find_reusable_approval(
+            case_id,
+            tool_name,
+            input_hash,
+            requester_user_id=requester_user_id,
+            client_id=client_id,
+            installation_id=installation_id,
+        )
         if reusable is not None:
             # Same case + same tool + same params + still-unexpired PENDING:
             # reuse that record instead of creating another. Without this the
@@ -400,12 +407,21 @@ class HRCaseService:
         )
         return approval
 
-    async def _find_reusable_approval(self, case_id: str, tool_name: str, input_hash: str) -> ApprovalRequest | None:
+    async def _find_reusable_approval(
+        self,
+        case_id: str,
+        tool_name: str,
+        input_hash: str,
+        *,
+        requester_user_id: str | None,
+        client_id: str | None,
+        installation_id: str | None,
+    ) -> ApprovalRequest | None:
         """本案件上仍未过期、参数完全相同的待审批记录。
 
-        只按 `input_hash` 判定：它已经是「工具 + 规范化参数」的 sha256，且与
-        执行侧（`app/tools/gateway.py`、`app/outbox/dispatcher.py`）用的是同一个
-        值 —— 复用的记录必然也是执行侧会认可的记录，不存在"复用了却执行不了"。
+        按 `input_hash` 以及发起用户、客户端、安装实例共同判定。哈希是「工具 +
+        规范化参数」的 sha256，与执行侧用同一定义；主体绑定则防止另一个
+        Agent 或用户借用参数恰好相同的待审批记录。
         过期判定放在 Python 侧做，避免不同方言对带时区时间的比较差异。
         """
         candidates = (
@@ -418,6 +434,9 @@ class HRCaseService:
                         ApprovalRequest.tool_name == tool_name,
                         ApprovalRequest.input_hash == input_hash,
                         ApprovalRequest.status == "PENDING",
+                        ApprovalRequest.requester_user_id == requester_user_id,
+                        ApprovalRequest.client_id == client_id,
+                        ApprovalRequest.installation_id == installation_id,
                     )
                     .order_by(ApprovalRequest.created_at.desc())
                 )
@@ -651,6 +670,10 @@ class HRCaseService:
                 raise ApprovalError(f"Approval {approval_id} expired")
             if approval.status != "APPROVED":
                 raise ApprovalError(f"Tool {tool_name} requires APPROVED status, got {approval.status}")
+            if approval.installation_id and await self._grant_is_revoked(approval.installation_id):
+                raise CasePermissionDeniedError(
+                    "The external Agent installation that requested this approval has been revoked"
+                )
             # Byte-for-byte params identity: the approval's stored params and
             # the executed params must hash to the same input_hash.
             if approval.input_hash is not None and approval.input_hash != input_hash:

@@ -42,6 +42,28 @@ export interface McpToolResult {
   [key: string]: unknown
 }
 
+export interface McpInstallation {
+  family_id: string
+  client_id: string
+  user_id: string
+  user_name: string | null
+  role: string
+  active_refresh_tokens: number
+  created_at: string | null
+  last_rotated_at: string | null
+  revoked_at: string | null
+}
+
+export interface McpClientConnection {
+  client_id: string
+  client_name: string
+  registration_source: string
+  installations: number
+  active_installations: number
+  last_seen_at: string | null
+  blocked: boolean
+}
+
 export function getMcpCapabilities() {
   return apiClient.request<McpCapabilities>('/api/mcp/capabilities')
 }
@@ -56,3 +78,14 @@ export function callMcpTool(toolName: string, args: Record<string, unknown>) {
     body: JSON.stringify({ arguments: args }),
   })
 }
+
+export const listMcpInstallations = () => apiClient.request<McpInstallation[]>('/api/admin/mcp/installations')
+export const listMcpClients = () => apiClient.request<McpClientConnection[]>('/api/admin/mcp/clients')
+export const revokeMcpInstallation = (familyId: string) =>
+  apiClient.request(`/api/admin/mcp/installations/${encodeURIComponent(familyId)}/revoke`, { method: 'POST' })
+export const revokeMcpClient = (clientId: string) =>
+  apiClient.request(`/api/admin/mcp/clients/${encodeURIComponent(clientId)}/revoke`, { method: 'POST' })
+export const enableMcpClient = (clientId: string) =>
+  apiClient.request(`/api/admin/mcp/clients/${encodeURIComponent(clientId)}/enable`, { method: 'POST' })
+export const revokeAllMcpInstallations = () =>
+  apiClient.request('/api/admin/mcp/revoke-all', { method: 'POST' })

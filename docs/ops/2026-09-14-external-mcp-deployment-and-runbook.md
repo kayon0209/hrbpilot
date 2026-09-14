@@ -14,7 +14,7 @@
 | 进程 | 启动命令 | 默认端口 | 职责 |
 | --- | --- | --- | --- |
 | 资源服务器（RS） | 主应用（既有方式） | 8000 | `/mcp` 工具出口、工作台、`/api/*` |
-| 授权服务器（AS） | `uvicorn app.oauth.main:app --port 8001` | 8001 | 发放与撤销令牌 |
+| 授权服务器（AS） | `uvicorn app.oauth.main:app --port 8000` | 8000（Compose 主机映射为 8002） | 发放与撤销令牌 |
 
 **AS 只持有私钥，RS 只持有公钥。** RS 被完全攻破也签不出任何令牌 —— 这是 v1.0 就定下的边界，
 不要在 RS 进程里加载 `OAUTH_SIGNING_KEY_PEM`。
@@ -28,6 +28,7 @@
 | `PUBLIC_BASE_URL` | RS 对外基址（origin，不带路径）。派生 `resource`、401 挑战里的 `resource_metadata`、令牌 audience。 |
 | `MCP_RESOURCE_URL` | 未显式配置时由 `PUBLIC_BASE_URL` 派生为 `<base>/mcp`；**必须与 AS 侧算出的 canonical resource 逐字节一致**。 |
 | `MCP_AUTHORIZATION_SERVERS` | **信任列表**：逗号分隔的 AS issuer。留空的 RS 不会接受任何 AS 令牌，但也不会报错 —— 症状是"外部 Agent 全部 401"。生产要求公网 https。 |
+| `OAUTH_INTERNAL_BASE_URL` | 可选的容器内 AS 地址，仅用于 RS 拉取**已信任 issuer** 的 metadata/JWKS；不会改变令牌 `iss` 或公开发现地址。Compose 用 `http://oauth-as:8000`，避免容器内回环地址误指向 RS 自身。 |
 | `MCP_ACCEPTS_PLATFORM_TOKENS` | 过渡开关。AS 上线并验证后置 `false`，`/mcp` 就只接受 audience 绑定到 MCP resource 的令牌。 |
 | `MCP_EXTERNAL_ENABLED` | **回滚总开关**。置 `false` 后 `/mcp` 返回 503（不是 401），工作台与 `/api/*` 不受影响。 |
 
@@ -38,12 +39,28 @@
 | `OAUTH_ISSUER` | AS 的对外身份。生产必须是公网 https。 |
 | `OAUTH_SIGNING_KEY_PEM` | ES256（P-256）私钥。**生产环境未配置会启动失败** —— 宁可起不来，也不要"能启动但签不出令牌"。 |
 | `OAUTH_ROTATED_PUBLIC_KEYS_PEM` | 轮换窗口内仍有效的旧公钥（只放公钥）。 |
-| `OAUTH_ENABLE_DYNAMIC_REGISTRATION` | 默认 `false`。**WorkBuddy 的内置 OAuth 管理器只走动态注册**，接入它时必须打开。 |
+| `OAUTH_ENABLE_DYNAMIC_REGISTRATION` | 默认 `false`。需要 DCR 的客户端才打开；新 DCR 客户端初始为未绑定状态，首次**成功**用户登录时以 CAS 原子绑定其租户，不能由注册请求自报租户。 |
 | `OAUTH_CUSTOM_REDIRECT_SCHEMES` | 默认空。接入 WorkBuddy 时可设为 `workbuddy`（理由与缓解见 `app/oauth/clients.py`）。 |
 | `OAUTH_ACCESS_TOKEN_TTL_SECONDS` | 默认 900。WorkBuddy 建议 3600，但更短只会更安全（refresh 会兜住），不用改。 |
 | `OAUTH_REFRESH_TOKEN_TTL_DAYS` | 默认 30。WorkBuddy 要求 ≥ 30 天。 |
 
-### 2.3 反向代理与可信代理
+### 2.3 本地 Compose 的持久化要求
+
+本地热补丁只能用于排障，不能替代镜像构建。修改 `app/oauth/html.py` /
+`app/oauth/routes/authorize.py` /
+`app/access/as_tokens.py` 后，必须执行：
+
+```bash
+docker compose build oauth-as app
+docker compose up -d oauth-as app
+```
+
+否则下一次容器重建会回到镜像里的旧逻辑。开发环境若 `env.docker` 没有
+`OAUTH_SIGNING_KEY_PEM`，AS 会使用进程级临时签名密钥；**每次 AS 重启都会让旧令牌失效，
+客户端必须重新授权**。生产环境必须通过安全的密钥管理渠道配置稳定的
+`OAUTH_SIGNING_KEY_PEM`，不得依赖临时密钥。
+
+### 2.4 反向代理与可信代理
 
 **这一步不做，限流会形同虚设。** `request.client.host` 在反向代理后面取到的是**代理的
 地址**，于是所有用户共用一个桶。
@@ -75,16 +92,20 @@
 ## 4. 数据库迁移
 
 ```bash
-alembic upgrade head     # 038 → 039 → 040
+alembic upgrade head     # 038 → 039 → 040 → 041 → 042
 alembic downgrade -1     # 回退一步
 ```
 
-三张新表与四列：
+外部接入相关的表与安全字段：
 
-- `oauth_clients` / `oauth_authorization_codes` / `oauth_tokens` / `oauth_revoked_tokens`
+- `oauth_clients` / `oauth_authorization_codes` / `oauth_tokens` / `oauth_revoked_tokens` /
+  `oauth_client_blocks`
   —— **刻意不上 RLS**（每次查询都发生在还不知道租户是谁的时刻，见 `app/data/models/oauth.py`）；
 - `mcp_call_audits` —— **启用并强制 RLS**（写入时租户已确定）；
-- `approval_requests` 新增 `requester_user_id` / `client_id` / `installation_id`。
+- `approval_requests` 新增 `requester_user_id` / `client_id` / `installation_id`；
+- `users.auth_version` / `users.is_active` 与授权码、refresh token 的 `auth_version`：
+  `trg_users_bump_auth_version` 会在密码、角色或启用状态变更时递增版本，令旧会话、令牌和
+  内省立即失效。
 
 **回滚演练**：`alembic downgrade 037_chunk_page_number` 会删掉上面全部内容。演练请在
 副本库上做，并确认回退后工作台的登录与审批数据不受影响（它们不在这些表里）。
@@ -134,14 +155,16 @@ alembic downgrade -1     # 回退一步
 | --- | --- | --- |
 | 全部 401，日志里没有 `mcp_token_rejected` | `MCP_AUTHORIZATION_SERVERS` 没配 | —— |
 | 401 且记 `mcp_token_rejected` | 令牌被拒（详见 `reason` 字段） | `mcp_token_rejected` |
+| 授权页点“授权”后停在原页，但 AS 已记 `oauth_authorization_granted` | CSP 的 `form-action` 没有放行已校验的 loopback / 自定义协议回调 origin | 检查授权页响应头；应为 `form-action 'self' <精确回调源>`，而非只含 `'self'` |
+| 全部外部令牌 `malformed`，前一条是 `as_document_url_rejected` | `OAUTH_INTERNAL_BASE_URL` 的容器内主机没有被 JWKS 获取白名单认可，RS 无法取 AS metadata/JWKS | `as_document_url_rejected`、`mcp_token_rejected`；确认 Compose 的 `http://oauth-as:8000` 与当前镜像代码 |
 | 401 且记 `mcp_platform_token_refused_by_policy` | `MCP_ACCEPTS_PLATFORM_TOKENS=false`，客户端在用平台令牌 | `mcp_platform_token_refused_by_policy` |
 | 403 + `insufficient_scope` | 凭据的有效 scope 不含所需范围 | `mcp_tool_denied`（`reason` 为 `missing_scope` / `client_ceiling`） |
 | 429 | 限流 | `mcp_rate_limited`、`oauth_rate_limited`、`oauth_token_rate_limited` |
 | **全部** 429，日志里没有 `*_rate_limited` | **Redis 不可达**。`RATE_LIMIT_FAIL_OPEN` 默认 `false`，生产环境取「拒绝」而不是「放行」—— 见 §6.3 | `rate_limit_passthrough`（仅非生产会出现） |
-| 用户登录后仍 401 | 登录租户与客户端租户不一致。登录按 `oauth_clients.tenant_id` 路由（只有 `OAUTH_PRE_REGISTERED_CLIENTS` 条目能声明），用户必须在**该租户**的用户目录里存在 | `oauth_as_login_*` |
-| 客户端应在的租户不对 | 预注册条目漏写 `tenant_id`（缺省落 `default`）；写空/null 会让 AS **启动失败**而不是静默回退 | `oauth_preconfigured_clients_synced` |
+| 用户登录后仍 401 | 登录租户与客户端租户不一致，或用户已禁用/角色已变。预注册客户端按配置租户路由；DCR 客户端首次成功登录才绑定租户 | `oauth_as_login_*` / `mcp_token_rejected` |
+| 客户端应在的租户不对 | 预注册条目漏写 `tenant_id`（缺省落 `default`）；DCR 客户端已被首次登录绑定到另一租户。不要直接改库，需在管理端撤销后重新授权 | `oauth_preconfigured_clients_synced` |
 | 审批通过后动作未执行 | 发起方的授权已被撤销 | `approval_blocked_installation_revoked` |
-| 审计表没有新行 | 审计写入失败（不影响调用本身） | `mcp_audit_persist_failed` |
+| 审计表没有新行 | 审计写入失败。读调用/拒绝会保留原结果；创建审批与管理员撤销/启用会同事务失败，不会假装处置成功 | `mcp_audit_persist_failed` |
 
 ### 6.3 Redis 不可达时外部接入会整体不可用
 
@@ -176,7 +199,7 @@ alembic downgrade -1     # 回退一步
 
 | 优先级 | 事件 | 为什么 |
 | --- | --- | --- |
-| P0 | `mcp_audit_persist_failed` | 审计断了。调用仍在继续，但证据没了 —— 这是最容易被忽略的静默故障。 |
+| P0 | `mcp_audit_persist_failed` | 审计断了。读调用/拒绝可能缺证据；审批创建与管理处置则会失败闭合，不能忽略。 |
 | P0 | `oauth_refresh_reuse_detected` | refresh token 重放。意味着凭据可能已泄漏。 |
 | P0 | `approval_blocked_installation_revoked` | 已撤销的 Agent 仍在尝试操作 —— 说明撤销没有按预期生效，或有人在重放。 |
 | P1 | `mcp_rate_limited` / `oauth_rate_limited` 突增 | 可能是失控客户端，也可能是探测。按 `client_id` 维度看是哪一个。 |
@@ -191,7 +214,7 @@ alembic downgrade -1     # 回退一步
 ### 尚未实现（明确列出）
 
 - **没有独立的指标端点**（Prometheus / OpenTelemetry）。上面的告警完全依赖日志采集。
-- **没有异常 DCR 的自动阻断**：只有限速，没有"这个客户端看起来不对劲就自动禁用"。
+- **没有异常 DCR 的自动阻断策略**：管理员可按租户禁用客户端，但没有基于异常信号的自动封禁。
 - **内省端点与 403 拒绝本身没有单独的计量**，只能从日志计数。
 
 ## 8. 密钥轮换
@@ -201,8 +224,9 @@ alembic downgrade -1     # 回退一步
 3. 等待 **≥ JWKS 缓存时长（300 秒）+ 最长令牌有效期（900 秒）**；
 4. 从 `OAUTH_ROTATED_PUBLIC_KEYS_PEM` 移除旧公钥并重启。
 
-**轮换过程尚未在真实进程里演练过**（只有实现与单测）。首次执行请安排在低峰期，并按
-第 6.1 节逐步验证。应急撤销一把泄漏的私钥就是上面的第 1—2 步，加上第 5 节的凭据撤销。
+本仓库的端到端验收已在真实 AS/RS 进程中覆盖新旧 JWKS 共存、旧令牌继续可用以及新 `kid`
+强制刷新。生产首次轮换仍应安排在低峰期，并按第 6.1 节逐步验证；应急撤销一把泄漏的私钥
+就是上面的第 1—2 步，加上第 5 节的凭据撤销。
 
 ## 9. 月度检查
 

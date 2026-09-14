@@ -55,15 +55,37 @@ class RateLimiter:
         这里**不做**本地内存兜底计数 —— 多实例下每个实例各自计数，实际额度会变成
         "单实例上限 × 实例数"，那是一个看起来生效、实际没生效的限流。
         """
-        if limit <= 0:
+        await self.check_buckets([(bucket, key, limit)])
+
+    async def check_buckets(self, checks: list[tuple[str, str, int]]) -> None:
+        """Check several dimensions in one Redis pipeline round trip."""
+        checks = [item for item in checks if item[2] > 0]
+        if not checks:
             return
         redis = self.redis or await get_redis()
         if redis is None:
             if settings.rate_limit_fail_open and not settings.is_production:
-                logger.info("rate_limit_passthrough", bucket=bucket, reason="redis_unavailable")
+                logger.info("rate_limit_passthrough", buckets=[item[0] for item in checks], reason="redis_unavailable")
                 return
             raise RateLimitError("请求过于频繁，请稍后再试")
-        if not await self._within(redis, f"ratelimit:{bucket}:{key}", limit):
+        now_ms = int(time.time() * 1000)
+        window_start = now_ms - _WINDOW_SECONDS * 1000
+        pipeline = redis.pipeline(transaction=True)
+        for bucket, key, _limit in checks:
+            redis_key = f"ratelimit:{bucket}:{key}"
+            member = f"{time.time_ns()}:{uuid4().hex}"
+            pipeline.zremrangebyscore(redis_key, 0, window_start)
+            pipeline.zadd(redis_key, {member: now_ms})
+            pipeline.expire(redis_key, _WINDOW_SECONDS + 5)
+            pipeline.zcard(redis_key)
+        results = await pipeline.execute()
+        exceeded = [
+            (bucket, key, limit)
+            for index, (bucket, key, limit) in enumerate(checks)
+            if int(results[index * 4 + 3]) > limit
+        ]
+        if exceeded:
+            bucket, key, limit = exceeded[0]
             logger.warning("rate_limit_exceeded", bucket=bucket, exceeded_key=key, limit=limit)
             raise RateLimitError("请求过于频繁，请稍后再试")
 
@@ -73,7 +95,6 @@ class RateLimiter:
         now_ms = int(time.time() * 1000)
         window_start = now_ms - _WINDOW_SECONDS * 1000
         member = f"{time.time_ns()}:{uuid4().hex}"
-        await redis.zremrangebyscore(key, 0, window_start)  # type: ignore[attr-defined]
         await redis.zadd(key, {member: now_ms})  # type: ignore[attr-defined]
         await redis.zremrangebyscore(key, 0, window_start)  # type: ignore[attr-defined]
         await redis.expire(key, _WINDOW_SECONDS + 5)  # type: ignore[attr-defined]

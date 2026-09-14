@@ -46,6 +46,7 @@ class AsSession:
     role: str
     email: str
     name: str
+    auth_version: int = 1
 
 
 def _session_signing_key() -> str:
@@ -61,6 +62,7 @@ def issue_session_cookie_value(session: AsSession, *, now: datetime.datetime | N
         "role": session.role,
         "email": session.email,
         "name": session.name,
+        "auth_version": session.auth_version,
         "type": _TOKEN_TYPE,
         "iat": int(moment.timestamp()),
         "exp": int((moment + datetime.timedelta(seconds=SESSION_TTL_SECONDS)).timestamp()),
@@ -91,4 +93,5 @@ def read_session_cookie(value: str | None) -> AsSession | None:
         role=role,
         email=str(claims.get("email") or ""),
         name=str(claims.get("name") or ""),
+        auth_version=int(claims.get("auth_version") or 0),
     )

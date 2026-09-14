@@ -138,7 +138,7 @@ python -m app.outbox.worker
 | --- | --- |
 | **没有匿名业务数据** | `/.well-known/*` 与授权端点匿名可读（协议要求），但**任何真实 HR 业务数据都需要身份**。未认证的读调用拿不到内容。 |
 | **权限是三个维度的交集** | 有效权限 = 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限。任一项不足都会拒绝，且拒绝原因在日志里可分辨是"人不够"还是"这个客户端不够"。 |
-| **写入只创建审批** | 所有写工具**只创建 `ApprovalRequest`**，不直接改业务数据。工具返回的是"已提交审批 + 审批编号"，不是"已完成"。 |
+| **写入只创建审批** | 所有写工具**只创建 `ApprovalRequest`**，不直接改业务数据。工具返回的是"已提交审批 + 审批编号"，不是"已完成"；撤销对应安装、禁用客户端或用户角色变更会使待执行的审批失效。 |
 
 **授权范围**（对外契约，改名等于破坏已有客户端的授权）：
 
@@ -158,12 +158,34 @@ python -m app.outbox.worker
 - WorkBuddy 连接器包：`connectors/workbuddy/`
 - 端到端验收：`python scripts/verify_oauth_end_to_end.py --database-url <库>`
 
+### 选择你的部署方式
+
+| 使用场景 | 是否需要公网 HTTPS | 谁运行 HRBPilot | MCP 地址示例 |
+| --- | --- | --- | --- |
+| **个人本机自托管（推荐先从这里开始）** | **不需要**。本机 `localhost` 可使用 HTTP。 | 用户自己在电脑上以 Docker Compose 运行完整项目。 | `http://localhost:8001/mcp` |
+| 团队/公司集中托管 | **需要**。服务暴露给其他人的电脑时必须使用受信任的 HTTPS 域名。 | 管理员部署一套共享服务；用户无需部署项目。 | `https://hr.example.com/mcp` |
+| 另一台设备访问个人实例 | 建议需要。局域网或公网暴露都应使用 HTTPS、访问控制和备份。 | 实例拥有者。 | `https://hr.example.com/mcp` |
+
+开源不等于必须公网部署：用户可以完整地在自己电脑运行 HRBPilot，再由同一台电脑上的
+Codex / WorkBuddy 通过 `localhost` 调用；HR 数据不会因这一步离开本机。公网 HTTPS 是
+“一个服务供不同电脑上的人使用”时才需要的运维形态，不是本地体验 MCP 的前提。
+
+**Codex 本机接入**：先执行 `docker compose up -d --build`，然后在 **macOS 原生终端**
+运行（不要在 CI 或隔离 Agent 终端运行）：
+
+```bash
+./scripts/connect-codex-local-mcp.sh
+```
+
+首次运行会登记 `hrbpilot-local`，并打开 OAuth 授权页。Safari 和 Chrome 都可用；两者与
+运行脚本的 Codex CLI 必须处于同一台 Mac，才能接收 PKCE 的 `127.0.0.1` 回调。
+
 WorkBuddy 连接器包已随本仓库提供，但**有三项需要人工替换或确认**（占位域名、图标、
 服务端开关），见该目录的 `README.md`。
 
-**当前状态**：协议验收 10 条全过、端到端 71/71（含 CIMD 主路径、多租户路由、密钥轮换
-演练）；但**尚未用真实客户端验证过** ——
-兼容矩阵如实标注了每一格的"未实测"，见
+**当前状态**：协议验收 10 条全过、端到端 74/74（含 CIMD 主路径、多租户路由、密钥轮换、
+用户角色变更后的即时失效）；已完成 Codex / WorkBuddy 的发现与授权前置验证，完整的
+真实工具调用仍待在非隔离的本机客户端或公网环境完成。兼容矩阵如实标注每一格，见
 `docs/ops/2026-09-14-client-compatibility-matrix.md`。
 
 ---
@@ -451,13 +473,15 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 - `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
 - `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
 - HR Case Agent 的质量门禁目前仍是离线确定性评测，尚未宣称 REAL-LLM 端到端指标。`send_case_notification` 仍没有可验证的外部 Provider；该调用会进入 DLQ，不会伪造投递成功。
-- **外部 Agent 接入尚未用真实客户端验证过**：协议验收 10 条全过、端到端 71/71
-  （含 CIMD 主路径、多租户路由、密钥轮换演练），
-  但没有用 WorkBuddy / Codex / Claude Code 的真实客户端跑过。兼容矩阵如实标注了每
-  一格的"未实测"与验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
+- **外部 Agent 接入尚未完成逐客户端工具验收**：协议验收 10 条全过、端到端 74/74
+  （含 CIMD 主路径、多租户路由、密钥轮换与用户角色变更失效）。浏览器授权回调曾被
+  CSP 阻断，现已修复并有回归测试；WorkBuddy / Codex 的服务发现、DCR 与授权页面已验证，
+  仍需分别完成一次真实 `get_my_access_profile` 调用。兼容矩阵记录实际版本、证据与后续
+  验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
 - **外部接入没有独立的指标端点**：告警依赖结构化日志采集，见运维手册 §7 的事件名清单。
-- **多租户**：外部 Agent 的授权登录已按客户端租户路由（`oauth_clients.tenant_id`，
-  只有预注册配置能声明租户）；平台网页端登录的多租户仍是后续工作。
+- **多租户**：外部 Agent 的授权登录已按客户端租户路由（`oauth_clients.tenant_id`；
+  DCR 客户端首次成功登录时原子绑定到该用户租户，预注册客户端由配置声明）；平台网页端
+  登录的多租户仍是后续工作。
 
 ---
 

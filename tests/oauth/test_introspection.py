@@ -32,6 +32,7 @@ from app.oauth.main import create_oauth_app
 from app.oauth.metadata import INTROSPECTION_PATH
 from app.oauth.routes import introspect as introspect_route
 from app.oauth.routes import token as token_route
+from app.oauth.sessions import AsSession
 from app.oauth.storage import hash_opaque_value
 from app.oauth.tokens import ACCESS_TOKEN_TYPE, access_token_claims
 
@@ -74,11 +75,22 @@ async def session_factory(
             await session.close()
 
     monkeypatch.setattr(oauth_tokens, "oauth_session", _oauth_session)
+
+    async def _no_business_approvals(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(oauth_tokens, "_cancel_bound_approvals", _no_business_approvals)
     return factory
 
 
 @pytest.fixture()
 async def as_client(session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch):
+    # This suite tests introspection semantics, not the shared anonymous
+    # endpoint limiter. Disable the global buckets so prior tests/processes do
+    # not make an isolated assertion depend on Redis or wall-clock time.
+    monkeypatch.setattr(settings, "oauth_introspect_per_minute_per_ip", 0)
+    monkeypatch.setattr(settings, "oauth_token_per_minute_per_client", 0)
+
     async def _resolve_client(client_id: str) -> ClientMetadata | None:
         if client_id in {_REGISTERED_CLIENT, _OTHER_CLIENT}:
             return _client_metadata(client_id)
@@ -88,6 +100,18 @@ async def as_client(session_factory: async_sessionmaker[AsyncSession], monkeypat
     # （这本身不是问题：客户端解析仍然只有 registry 一个实现。）
     monkeypatch.setattr(introspect_route, "resolve_client", _resolve_client)
     monkeypatch.setattr(token_route, "resolve_client", _resolve_client)
+
+    async def _current_identity(user_id: str, tenant_id: str) -> AsSession:
+        return AsSession(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            role="hrbp",
+            email="user-1@example.test",
+            name="Test User",
+            auth_version=1,
+        )
+
+    monkeypatch.setattr("app.oauth.identity.current_identity", _current_identity)
     transport = httpx.ASGITransport(app=create_oauth_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://as.example.test") as client:
         yield client
@@ -323,6 +347,25 @@ async def test_a_token_for_another_resource_looks_inactive(as_client: httpx.Asyn
     token = _access_token(resource="https://other.example.test/mcp")
 
     assert (await _post(as_client, token=token)).json() == {"active": False}
+
+
+async def test_role_change_makes_an_existing_access_token_inactive(
+    as_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Introspection and the RS must agree after a live identity change."""
+
+    async def _changed_identity(user_id: str, tenant_id: str) -> AsSession:
+        return AsSession(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            role="employee",
+            email="user-1@example.test",
+            name="Test User",
+            auth_version=2,
+        )
+
+    monkeypatch.setattr("app.oauth.identity.current_identity", _changed_identity)
+    assert (await _post(as_client, token=_access_token())).json() == {"active": False}
 
 
 # --------------------------------------------------------------------------- #

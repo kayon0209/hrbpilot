@@ -363,3 +363,63 @@ test('does not explain hidden tools when nothing is hidden', async () => {
   await ready()
   expect(screen.queryByText(/未列出/)).toBeNull()
 })
+
+test('gives administrators a comprehensible connection manager and wires its containment actions', async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/api/mcp/capabilities')) return Response.json({ ...CAPABILITIES, role: 'admin' })
+    if (url.includes('/api/admin/mcp/clients')) {
+      return Response.json([
+        {
+          client_id: 'client-demo',
+          client_name: '常用办公助手',
+          registration_source: 'dcr',
+          installations: 1,
+          active_installations: 1,
+          last_seen_at: null,
+          blocked: false,
+        },
+      ])
+    }
+    if (url.includes('/api/admin/mcp/installations')) {
+      return Response.json([
+        {
+          family_id: 'family-demo',
+          client_id: 'client-demo',
+          user_id: 'user-id-only',
+          user_name: '李明',
+          role: 'hrbp',
+          active_refresh_tokens: 1,
+          created_at: null,
+          last_rotated_at: null,
+          revoked_at: null,
+        },
+      ])
+    }
+    return Response.json({})
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('confirm', vi.fn(() => true))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <McpPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+
+  expect(await screen.findByRole('heading', { name: 'AI 助手连接管理' })).toBeVisible()
+  expect(await screen.findAllByText('常用办公助手')).toHaveLength(2)
+  expect(screen.getByText(/李明 · hrbp · 有效/)).toBeVisible()
+
+  fireEvent.click(screen.getByRole('button', { name: '封禁并吊销' }))
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/admin/mcp/clients/client-demo/revoke'))).toBe(true),
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: '紧急撤销全部连接' }))
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/admin/mcp/revoke-all'))).toBe(true),
+  )
+})

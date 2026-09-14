@@ -217,7 +217,10 @@ async def login(body: LoginBody, request: Request):
             password_ok = bcrypt.checkpw(body.password.encode("utf-8"), stored_hash.encode("utf-8"))
         except ValueError:
             password_ok = False
-        if not user or not password_ok:
+        # ``is_active`` is a persisted security field after migration 042.  The
+        # fallback keeps older repository doubles/legacy rows readable while a
+        # real migrated User always carries an explicit value.
+        if not user or not getattr(user, "is_active", True) or not password_ok:
             logger.warning("login_failed", email=body.email)
             raise AuthError("Invalid email or password")
 
@@ -259,7 +262,7 @@ async def refresh(body: RefreshBody):
         async for db in get_db_session():
             repo = UserRepository(db)
             user = await repo.get_by_id(user_id)
-            if not user:
+            if not user or not getattr(user, "is_active", True):
                 raise NotFoundError("User", user_id)
             access_token = _create_access_token(user.id, user.role, user.tenant_id, user.email)
             refresh_token = _create_refresh_token(user.id, user.tenant_id)

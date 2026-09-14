@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -30,14 +32,46 @@ _environment = Environment(
 #: 于是可以直接把它们全部关掉 —— 万一将来有人注入了一个 <script>，
 #: CSP 让它什么都做不了。这是纵深防御，不是替代转义。
 _HARDENED_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Cache-Control": "no-store",
 }
 
+_CSP_FORM_ACTION_PREFIX = "default-src 'none'; style-src 'unsafe-inline'; form-action "
+_CSP_SUFFIX = "; base-uri 'none'"
 
-def render_page(template_name: str, *, status_code: int = 200, **context: Any) -> HTMLResponse:
+#: 允许出现在 ``form-action`` 里的源的形态：``scheme://authority``（http/https 回调）
+#: 或裸的 ``scheme:``（自定义协议回调，如 ``workbuddy:``）。
+#: 要挡的是"能把别的指令注入进来"的字符（空格、分号、引号、逗号）—— 这些在 URI 里
+#: 本来也不合法，直接丢弃这一项，宁可让跳转被拦，也不要放出一个被拼接过的 CSP。
+_FORM_ACTION_SOURCE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(//[A-Za-z0-9.\-\[\]:]+)?$")
+
+
+def _form_action_header(origins: Iterable[str]) -> str:
+    """拼 ``form-action``：默认只有 ``'self'``，外加调用方显式给出的回调源。
+
+    ``'self'`` 单独一条是不够的：授权页的表单 POST 之后服务端会 302 回客户端回调，
+    而 **Chrome 与 Safari 会把 ``form-action`` 也施加到那次重定向**（Firefox 不会）。
+    客户端回调几乎总是**别的源**（loopback 随机端口、自定义协议、平台域名），于是
+    "点授权后页面毫无反应、不跳转"—— 服务端其实已经签发了授权码。所以这里必须把
+    **那一个**已经过校验的回调源显式列出，且只列这一个：不做通配、不做全局放宽。
+    """
+    sources = ["'self'"]
+    for origin in origins:
+        candidate = (origin or "").strip()
+        if candidate and candidate not in sources and _FORM_ACTION_SOURCE.match(candidate):
+            sources.append(candidate)
+    return _CSP_FORM_ACTION_PREFIX + " ".join(sources) + _CSP_SUFFIX
+
+
+def render_page(
+    template_name: str,
+    *,
+    status_code: int = 200,
+    form_action_origins: Iterable[str] = (),
+    **context: Any,
+) -> HTMLResponse:
+    headers = {**_HARDENED_HEADERS, "Content-Security-Policy": _form_action_header(form_action_origins)}
     html = _environment.get_template(template_name).render(**context)
-    return HTMLResponse(html, status_code=status_code, headers=_HARDENED_HEADERS)
+    return HTMLResponse(html, status_code=status_code, headers=headers)

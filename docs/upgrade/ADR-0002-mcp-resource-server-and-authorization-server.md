@@ -624,6 +624,26 @@ OAuth 侧：`authorize` / `token` / `introspect` 按 IP 限流；`token` 额外�
 **其余**：`app/oauth/cimd.py` 上一轮引入的 `SSLContext` 转换在 mypy 下类型收窄报错，
 改为显式 `bool | ssl.SSLContext` 注解（行为不变）。
 
+### 14.10 浏览器回调与实时注册表复核（真实故障修复）
+
+**浏览器授权回调**：授权页原有 `form-action 'self'`。同意页 POST 后虽然 AS 已签发
+authorization code，但 Chrome/Safari 会对其 302 到 RFC 8252 loopback 回调继续施加
+`form-action`，于是浏览器停在同意页、回调不会到达客户端。修复不是全局放宽 CSP：
+`render_page` 默认仍只允许 `'self'`；只有已经通过 `redirect_uri_matches` 的客户端回调，
+才由路由归约出一个精确 origin（自定义协议仅写 scheme），传给登录/同意页及其错误重渲染。
+未知客户端的错误页不派生任何 origin。`tests/oauth/test_form_action_csp.py` 覆盖 loopback、
+自定义协议、注入形态与未校验客户端；浏览器参与验收必须包含“点击授权 → 回调到达 → 换令牌”。
+
+**AS 到 RS 的 JWKS 获取**：Compose 中公开 issuer 是 `http://localhost:8002`，而 RS 进入
+容器网络后必须从显式配置的 `OAUTH_INTERNAL_BASE_URL=http://oauth-as:8000` 拉取 metadata/JWKS。
+只放行环回明文 HTTP 会让 RS 把所有外部令牌判为 malformed。守卫现仅额外放行这个运维显式
+配置的主机；任意其他明文主机照旧拒绝。`tests/mcp/test_as_document_fetch_guard.py` 锁定该边界。
+
+**看似相反的取舍**：DCR/CIMD 省略 `scope` 时，AS 记录完整 scope 词表作为客户端**上限**，
+兼容先发现资源、后协商授权范围的客户端；但 RS 对未知、禁用或被拉黑客户端每次都失败关闭。
+两者共同保证“可协商的已注册客户端”不会变成“令牌自述即可绕过实时撤销”：有效权限仍是角色
+能力 ∩ 已同意令牌 scope ∩ 注册上限。该取舍同时记录在 T-4/T-6，后续不得单独放宽任一侧。
+
 ## 15. 来源
 
 - MCP Authorization Specification，revision 2026-07-28：<https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/>

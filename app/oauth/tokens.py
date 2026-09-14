@@ -89,6 +89,7 @@ def access_token_claims(
     tenant_id: str,
     user_id: str,
     role: str,
+    auth_version: int = 1,
     email: str,
     scope: str,
     resource: str,
@@ -116,6 +117,7 @@ def access_token_claims(
         # RS 侧构造 McpPrincipal 所需的最小身份集合。
         "tenant_id": tenant_id,
         "role": role,
+        "auth_version": auth_version,
         "email": email,
     }
 
@@ -126,6 +128,7 @@ def _build_tokens(
     tenant_id: str,
     user_id: str,
     role: str,
+    auth_version: int,
     email: str,
     scope: str,
     resource: str,
@@ -139,6 +142,7 @@ def _build_tokens(
         tenant_id=tenant_id,
         user_id=user_id,
         role=role,
+        auth_version=auth_version,
         email=email,
         scope=scope,
         resource=resource,
@@ -157,6 +161,7 @@ def _build_tokens(
         tenant_id=tenant_id,
         user_id=user_id,
         role=role,
+        auth_version=auth_version,
         email=email,
         scope=scope,
         resource=resource,
@@ -171,6 +176,7 @@ async def issue_tokens_for_authorization(
     tenant_id: str,
     user_id: str,
     role: str,
+    auth_version: int,
     email: str,
     scope: str,
     resource: str,
@@ -183,6 +189,7 @@ async def issue_tokens_for_authorization(
         tenant_id=tenant_id,
         user_id=user_id,
         role=role,
+        auth_version=auth_version,
         email=email,
         scope=scope,
         resource=resource,
@@ -238,11 +245,17 @@ async def revoke_family(
     登记 family 撤销是给 **RS** 用的：RS 手里只有 access token，它没有 refresh token
     的行可查，只能凭令牌里的 ``family_id`` 去撤销表里比对。
     """
+    # Binding the tenant before the first statement makes cancellation of
+    # tenant-scoped approvals obey the same RLS boundary as the business API.
+    if tenant_id:
+        session.info["tenant_id"] = tenant_id
     await session.execute(
         update(OAuthToken)
         .where(OAuthToken.family_id == family_id, OAuthToken.revoked_at.is_(None))
         .values(revoked_at=now, revoked_reason=reason)
     )
+    if tenant_id:
+        await _cancel_bound_approvals(session, tenant_id=tenant_id, family_id=family_id, now=now)
     await _record_revocation(
         session,
         kind=REVOCATION_KIND_FAMILY,
@@ -252,6 +265,23 @@ async def revoke_family(
         + datetime.timedelta(seconds=_REVOCATION_CLOCK_SKEW_SECONDS),
         reason=reason,
         tenant_id=tenant_id,
+    )
+
+
+async def _cancel_bound_approvals(
+    session: AsyncSession, *, tenant_id: str, family_id: str, now: datetime.datetime
+) -> None:
+    """Linearize authorization revocation against APPROVED -> CONSUMED."""
+    from app.data.models.hr_case import ApprovalRequest
+
+    await session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.tenant_id == tenant_id,
+            ApprovalRequest.installation_id == family_id,
+            ApprovalRequest.status.in_(("PENDING", "APPROVED")),
+        )
+        .values(status="EXPIRED", decided_at=now, decision_reason="external Agent authorization revoked")
     )
 
 
@@ -275,7 +305,7 @@ async def revoke_family_in_own_session(
         await revoke_family(session, family_id, now=moment, reason=reason, tenant_id=tenant_id)
 
 
-async def rotate_refresh_token(*, refresh_token: str, client_id: str) -> IssuedTokens:
+async def rotate_refresh_token(*, refresh_token: str, client_id: str, resource: str) -> IssuedTokens:
     """用 refresh token 换一对新令牌，并把旧的那把作废。"""
     digest = hash_opaque_value(refresh_token)
     now = _now()
@@ -296,9 +326,10 @@ async def rotate_refresh_token(*, refresh_token: str, client_id: str) -> IssuedT
         tenant_id = row.tenant_id
         user_id = row.user_id
         role = row.role
+        auth_version = row.auth_version
         email = row.email
         scope = row.scope
-        resource = row.resource
+        stored_resource = row.resource
         expires_at = _as_utc(row.expires_at)
         used_at = row.used_at
         revoked_at = row.revoked_at
@@ -307,6 +338,21 @@ async def rotate_refresh_token(*, refresh_token: str, client_id: str) -> IssuedT
         raise TokenError("invalid_grant", "refresh token has been revoked")
     if expires_at <= now:
         raise TokenError("invalid_grant", "refresh token has expired")
+    if not resource or resource != str(stored_resource):
+        raise TokenError("invalid_target", "resource does not match the original authorization")
+
+    # A refresh token is a long-lived capability. Re-check the current user
+    # before rotating it so disable/role/password changes take effect now.
+    from app.oauth.identity import current_identity
+
+    identity = await current_identity(str(user_id), str(tenant_id))
+    if identity is None or identity.auth_version != int(auth_version) or identity.role != str(role):
+        await revoke_family_in_own_session(
+            family_id, reason=REVOKED_REASON_USER_REVOKED, tenant_id=str(tenant_id), now=now
+        )
+        raise TokenError("invalid_grant", "the resource owner's authorization is no longer valid")
+    role = identity.role
+    email = identity.email
 
     if used_at is not None:
         # 重用：合法客户端永远只用最新那把。见模块头部。
@@ -333,9 +379,10 @@ async def rotate_refresh_token(*, refresh_token: str, client_id: str) -> IssuedT
                 tenant_id=tenant_id,
                 user_id=str(user_id),
                 role=str(role),
+                auth_version=int(auth_version),
                 email=str(email),
                 scope=str(scope),
-                resource=str(resource),
+                resource=str(stored_resource),
                 family_id=family_id,
                 now=now,
             )
@@ -470,6 +517,11 @@ async def introspect_token(*, token: str, client_id: str) -> dict[str, Any]:
             # 看起来仍然可用：未撤销、未用过（用过即说明它已被轮换掉）、未过期。
             if row.revoked_at is not None or row.used_at is not None or _as_utc(row.expires_at) <= now:
                 return {"active": False}
+            from app.oauth.identity import current_identity
+
+            identity = await current_identity(str(row.user_id), str(row.tenant_id))
+            if identity is None or identity.role != row.role or identity.auth_version != int(row.auth_version):
+                return {"active": False}
             return {
                 "active": True,
                 "client_id": row.client_id,
@@ -498,6 +550,16 @@ async def introspect_token(*, token: str, client_id: str) -> dict[str, Any]:
     async with oauth_session() as session:
         if await is_revoked(session, jti=jti, family_id=family_id):
             return {"active": False}
+
+    from app.oauth.identity import current_identity
+
+    identity = await current_identity(str(claims.get("sub") or ""), str(claims.get("tenant_id") or ""))
+    if (
+        identity is None
+        or identity.role != str(claims.get("role") or "")
+        or identity.auth_version != int(claims.get("auth_version") or 0)
+    ):
+        return {"active": False}
 
     body: dict[str, Any] = {
         "active": True,

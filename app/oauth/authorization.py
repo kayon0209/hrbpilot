@@ -84,6 +84,7 @@ class AuthorizationCodeRecord:
     tenant_id: str
     user_id: str
     role: str
+    auth_version: int
     email: str
     redirect_uri: str
     scope: str
@@ -96,6 +97,7 @@ async def issue_authorization_code(
     tenant_id: str,
     user_id: str,
     role: str,
+    auth_version: int,
     email: str,
     redirect_uri: str,
     scope: str,
@@ -111,6 +113,7 @@ async def issue_authorization_code(
         tenant_id=tenant_id,
         user_id=user_id,
         role=role,
+        auth_version=auth_version,
         email=email,
         redirect_uri=redirect_uri,
         scope=scope,
@@ -174,6 +177,7 @@ async def redeem_authorization_code(
             tenant_id=row.tenant_id,
             user_id=row.user_id,
             role=row.role,
+            auth_version=row.auth_version,
             email=row.email,
             redirect_uri=row.redirect_uri,
             scope=row.scope,

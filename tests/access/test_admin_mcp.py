@@ -38,6 +38,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/admin/mcp/installations/{family_id}/revoke"),
     ("GET", "/api/admin/mcp/clients"),
     ("POST", "/api/admin/mcp/clients/{client_id:path}/revoke"),
+    ("POST", "/api/admin/mcp/clients/{client_id:path}/enable"),
     ("POST", "/api/admin/mcp/revoke-all"),
 }
 
@@ -141,21 +142,16 @@ async def two_tenants(sqlite_engine, monkeypatch: pytest.MonkeyPatch):  # type: 
         await session.commit()
 
     monkeypatch.setattr(admin_mcp, "get_session_factory", lambda: factory)
+
+    async def _revoke_family(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def _append_audit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(admin_mcp, "revoke_family", _revoke_family)
+    monkeypatch.setattr(admin_mcp, "append_security_audit_event", _append_audit)
     return factory
-
-
-@pytest.mark.asyncio()
-async def test_a_family_belongs_to_its_own_tenant(two_tenants) -> None:  # type: ignore[no-untyped-def]
-    assert await admin_mcp._family_exists("tenant-a", "family-a") is True
-
-
-@pytest.mark.asyncio()
-async def test_a_family_from_another_tenant_is_reported_as_missing(two_tenants) -> None:  # type: ignore[no-untyped-def]
-    """别的租户的 family_id 必须表现为"不存在"，而不是"找到了但不能动"。
-
-    后者会让管理员看到一条跨租户的确认信息（那本身是信息泄漏），前者只是 404。
-    """
-    assert await admin_mcp._family_exists("tenant-a", "family-b") is False
 
 
 @pytest.mark.asyncio()
@@ -171,3 +167,12 @@ async def test_revoking_a_family_from_another_tenant_raises_not_found(two_tenant
         await admin_mcp.revoke_installation.__wrapped__(  # type: ignore[attr-defined]
             _request(tenant_id="tenant-a"), "family-b"
         )
+
+
+@pytest.mark.asyncio()
+async def test_revoking_a_visible_family_completes_in_the_same_transaction(two_tenants) -> None:  # type: ignore[no-untyped-def]
+    result = await admin_mcp.revoke_installation.__wrapped__(  # type: ignore[attr-defined]
+        _request(tenant_id="tenant-a"), "family-a"
+    )
+    assert result.family_id == "family-a"
+    assert result.revoked_families == 1

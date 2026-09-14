@@ -7,12 +7,11 @@
 漏掉某一类的概率很高 —— 而漏掉的那一类往往正是需要审计的那一类
 （"有人在试探边界"只出现在被拒的行里）。
 
-为什么审计失败不阻断调用
-------------------------
-审计写不进去时，工具**仍然返回结果**。这不是不重视审计：一次数据库抖动让所有
-外部 Agent 调用全线失败，是一个比"丢了几行审计"严重得多的故障。
-但失败必须**响亮** —— 记 error 级日志并带上工具名与租户，让监控能看见。
-静默吞掉异常，才是真正把审计变成摆设的做法。
+审计失败的两种语义
+----------------------
+读操作和已拒绝的请求采用**可用性优先**：审计失败会记 error 日志，但不改变原调用结果。
+会产生待执行写操作的审批则采用**安全性优先**：审计行与审批记录在同一事务内写入，
+审计失败就整体回滚，不留下无法追溯的写入授权。
 """
 
 from __future__ import annotations
@@ -20,6 +19,8 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.models.mcp_audit import McpCallAudit
 from app.mcp.auth.principal import McpPrincipal
@@ -58,6 +59,8 @@ async def record_mcp_call(
     approval_id: str | None = None,
     trace_id: str | None = None,
     detail: dict[str, Any] | None = None,
+    session: AsyncSession | None = None,
+    required: bool = False,
 ) -> str | None:
     """写一行 MCP 调用审计，返回行 ID（写失败返回 ``None``）。
 
@@ -87,6 +90,11 @@ async def record_mcp_call(
             trace_id=trace_id,
             detail=json.dumps(detail, ensure_ascii=False, sort_keys=True) if detail else None,
         )
+        if session is not None:
+            session.add(row)
+            await session.flush()
+            return row.id
+
         from app.data.database import get_session_factory
 
         factory = get_session_factory()
@@ -103,4 +111,6 @@ async def record_mcp_call(
             tenant_id=principal.tenant_id if principal else "",
             error=str(exc),
         )
+        if required:
+            raise
         return None

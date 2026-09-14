@@ -14,8 +14,10 @@ import datetime
 import json
 from typing import Any
 
+from sqlalchemy import update
+
 from app.config.settings import settings
-from app.data.models.oauth import DEFAULT_TENANT, OAuthClient
+from app.data.models.oauth import DEFAULT_TENANT, UNBOUND_TENANT, OAuthClient, OAuthClientBlock
 from app.oauth.cimd import resolve_cimd_client
 from app.oauth.clients import (
     ClientMetadata,
@@ -71,7 +73,14 @@ async def resolve_client(client_id: str) -> ClientMetadata | None:
     """
     async with oauth_session() as session:
         row = await session.get(OAuthClient, client_id)
+        blocked = (
+            await session.get(OAuthClientBlock, (row.tenant_id, client_id))
+            if row is not None and row.tenant_id != UNBOUND_TENANT
+            else None
+        )
 
+    if row is not None and (row.status != "active" or (blocked is not None and blocked.blocked)):
+        return None
     if row is not None and not _is_stale(row, _now()):
         return row_to_client(row)
 
@@ -154,11 +163,41 @@ async def sync_preconfigured_clients() -> int:
 
 async def register_dynamic_client(document: dict[str, Any], client_id: str) -> ClientMetadata:
     """写入一个 DCR 客户端。``client_id`` 由调用方生成（见 ``new_dynamic_client_id``）。"""
-    metadata = validate_client_metadata(document, client_id=client_id, registration_source="dcr")
+    metadata = validate_client_metadata(
+        document, client_id=client_id, registration_source="dcr", tenant_id=UNBOUND_TENANT
+    )
     async with oauth_session() as session:
         await save_client(session, metadata)
     logger.info("oauth_dynamic_client_registered", client_id=client_id)
     return metadata
+
+
+async def bind_dynamic_client_tenant(client_id: str, tenant_id: str) -> ClientMetadata | None:
+    """Bind a newly DCR-registered client after successful tenant login.
+
+    The compare-and-set prevents two simultaneous first logins from moving one
+    client between tenants. An already bound client only succeeds for the same
+    tenant.
+    """
+    if not tenant_id or tenant_id == UNBOUND_TENANT:
+        return None
+    async with oauth_session() as session:
+        claimed = await session.execute(
+            update(OAuthClient)
+            .where(
+                OAuthClient.client_id == client_id,
+                OAuthClient.registration_source == "dcr",
+                OAuthClient.tenant_id == UNBOUND_TENANT,
+                OAuthClient.status == "active",
+            )
+            .values(tenant_id=tenant_id)
+        )
+        row = await session.get(OAuthClient, client_id)
+        if row is None or row.status != "active" or row.tenant_id != tenant_id:
+            return None
+        if int(getattr(claimed, "rowcount", 0) or 0) == 1:
+            logger.info("oauth_dynamic_client_tenant_bound", client_id=client_id, tenant_id=tenant_id)
+        return row_to_client(row)
 
 
 def new_dynamic_client_id() -> str:

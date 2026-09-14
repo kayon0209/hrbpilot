@@ -61,6 +61,7 @@ class ClientMetadata:
     #: 客户端归属租户。**不来自注册文档**（见 ``validate_client_metadata``）：它只能由
     #: 预注册路径在构造时显式给出，自助注册一律是缺省租户。
     tenant_id: str = DEFAULT_TENANT
+    status: str = "active"
 
 
 def allowed_custom_redirect_schemes() -> frozenset[str]:
@@ -248,16 +249,23 @@ def validate_client_metadata(
     if client_name is not None and not isinstance(client_name, str):
         raise ClientMetadataError("invalid_client_metadata", "client_name must be a string")
 
+    scopes = _coerce_scope(document.get("scope"))
+    if "scope" not in document and registration_source in {"dcr", "cimd"}:
+        # General-purpose MCP clients often omit scope from registration and
+        # learn the required set from the protected-resource challenge.
+        scopes = frozenset(scope.value for scope in Scope)
+
     return ClientMetadata(
         client_id=client_id,
         client_name=(client_name or "").strip() or client_id,
         redirect_uris=redirect_uris,
         grant_types=grant_types,
         response_types=response_types,
-        scopes=_coerce_scope(document.get("scope")),
+        scopes=scopes,
         registration_source=registration_source,
         metadata_document_url=metadata_document_url,
         tenant_id=tenant_id,
+        status="active",
     )
 
 
@@ -273,6 +281,7 @@ def client_to_row(metadata: ClientMetadata) -> OAuthClient:
         registration_source=metadata.registration_source,
         metadata_document_url=metadata.metadata_document_url,
         tenant_id=metadata.tenant_id,
+        status=metadata.status,
     )
 
 
@@ -287,6 +296,7 @@ def row_to_client(row: OAuthClient) -> ClientMetadata:
         registration_source=row.registration_source,
         metadata_document_url=row.metadata_document_url,
         tenant_id=row.tenant_id or DEFAULT_TENANT,
+        status=row.status,
     )
 
 

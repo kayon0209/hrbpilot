@@ -1,8 +1,14 @@
 import { useRef, useState, type ChangeEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   callMcpTool,
   getMcpCapabilities,
+  enableMcpClient,
+  listMcpClients,
+  listMcpInstallations,
+  revokeAllMcpInstallations,
+  revokeMcpClient,
+  revokeMcpInstallation,
   type McpCapabilities,
   type McpToolResult,
   type McpToolView,
@@ -145,6 +151,85 @@ function ConnectInfo({ data }: { data: McpCapabilities }) {
   )
 }
 
+function ConnectionManager() {
+  const queryClient = useQueryClient()
+  const clients = useQuery({ queryKey: ['mcp-admin-clients'], queryFn: listMcpClients })
+  const installations = useQuery({ queryKey: ['mcp-admin-installations'], queryFn: listMcpInstallations })
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['mcp-admin-clients'] }),
+    queryClient.invalidateQueries({ queryKey: ['mcp-admin-installations'] }),
+  ])
+  const action = useMutation({
+    mutationFn: async (input: { kind: 'installation' | 'client' | 'enable' | 'all'; id?: string }) => {
+      if (input.kind === 'installation') return revokeMcpInstallation(input.id!)
+      if (input.kind === 'client') return revokeMcpClient(input.id!)
+      if (input.kind === 'enable') return enableMcpClient(input.id!)
+      return revokeAllMcpInstallations()
+    },
+    onSuccess: refresh,
+  })
+
+  return (
+    <section className="panel" aria-labelledby="connection-manager-title">
+      <div className={styles.managerHead}>
+        <div>
+          <span className="eyebrow">管理员</span>
+          <h2 id="connection-manager-title">AI 助手连接管理</h2>
+          <p className={styles.muted}>查看谁连接了哪些助手；吊销后旧令牌立即失效，客户端也不能再次授权。</p>
+        </div>
+        <button
+          type="button"
+          className={styles.dangerButton}
+          disabled={action.isPending}
+          onClick={() => window.confirm('确定撤销本组织的全部 AI 助手连接吗？') && action.mutate({ kind: 'all' })}
+        >
+          紧急撤销全部连接
+        </button>
+      </div>
+      {action.isError && <p className={styles.error}>操作失败：{action.error.message}</p>}
+      <div className={styles.managerGrid}>
+        <div>
+          <h3>已登记客户端</h3>
+          {clients.isPending ? <p className={styles.muted}>正在加载…</p> : clients.isError ? (
+            <p className={styles.error}>客户端列表读取失败</p>
+          ) : clients.data?.length ? (
+            <ul className={styles.connectionList}>
+              {clients.data.map(client => (
+                <li key={client.client_id}>
+                  <div><strong>{client.client_name}</strong><span>{client.active_installations} 个活跃连接 · {client.registration_source}</span></div>
+                  <button
+                    type="button"
+                    disabled={action.isPending}
+                    onClick={() => action.mutate({ kind: client.blocked ? 'enable' : 'client', id: client.client_id })}
+                  >{client.blocked ? '允许重新连接' : '封禁并吊销'}</button>
+                </li>
+              ))}
+            </ul>
+          ) : <p className={styles.muted}>暂无客户端。</p>}
+        </div>
+        <div>
+          <h3>授权实例</h3>
+          {installations.isPending ? <p className={styles.muted}>正在加载…</p> : installations.isError ? (
+            <p className={styles.error}>授权实例读取失败</p>
+          ) : installations.data?.length ? (
+            <ul className={styles.connectionList}>
+              {installations.data.map(item => (
+                <li key={item.family_id}>
+                  <div>
+                    <strong>{clients.data?.find(client => client.client_id === item.client_id)?.client_name ?? item.client_id}</strong>
+                    <span>{item.user_name ?? `用户 ${item.user_id}`} · {item.role} · {item.active_refresh_tokens > 0 ? '有效' : '已撤销'}</span>
+                  </div>
+                  {item.active_refresh_tokens > 0 && <button type="button" disabled={action.isPending} onClick={() => action.mutate({ kind: 'installation', id: item.family_id })}>吊销</button>}
+                </li>
+              ))}
+            </ul>
+          ) : <p className={styles.muted}>暂无授权实例。</p>}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export function McpPage() {
   const caps = useQuery({ queryKey: ['mcp-capabilities'], queryFn: getMcpCapabilities })
   const [selected, setSelected] = useState<string>(INITIAL_TOOL)
@@ -223,6 +308,8 @@ export function McpPage() {
           <p className="lede">把你常用的 AI 助手接到这里，用一句大白话就能查制度、发起办理。</p>
         </div>
       </header>
+
+      {data.role === 'admin' && <ConnectionManager />}
 
       <section className={styles.introGrid}>
         <article className="panel">

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hrbpilot-local": {
+      "args": [],
+      "print": true,
+      "url": "http://localhost:8001/mcp",
+      "type": "http"
+    }
+  },
+  "disabledMcpServers": []
+}

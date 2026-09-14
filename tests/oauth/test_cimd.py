@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from app.config.settings import settings
-from app.data.models.oauth import OAuthClient
+from app.data.models.oauth import OAuthClient, OAuthClientBlock
 from app.oauth import storage as oauth_storage
 from app.oauth.cimd import (
     MAX_DOCUMENT_BYTES,
@@ -344,6 +344,7 @@ async def registry(sqlite_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) 
     """
     async with sqlite_engine.begin() as connection:
         await connection.run_sync(OAuthClient.__table__.create)
+        await connection.run_sync(OAuthClientBlock.__table__.create)
     factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
     monkeypatch.setattr(oauth_storage, "get_session_factory", lambda: factory)
     yield factory
