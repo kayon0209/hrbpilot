@@ -14,13 +14,13 @@
 | 仓库 | `https://github.com/kayon0209/hrbpilot.git` |
 | 分支 | `codex/external-assistant-mcp` |
 | base SHA | `868c6aecb80d436f5faeb2858d46a0cda018329c` |
-| HEAD SHA | `dbe673349befd547728b8b8e91c999de96500739` |
+| HEAD SHA | `d9a010f765392c0e469bbc2f6bb5b557643b5318` |
 | **是否已推送** | **否**。按方案 §10"不得自行直接推送"，全部提交留在本地分支，由验收方决定推送与合并。 |
 | 说明 | 上表 HEAD SHA 是**交付内容**的终态。本文档自身的提交紧随其后（只更新本页的 SHA 与统计，不含代码变更），因此 `git rev-parse HEAD` 会比它多一个提交 —— 验收时以本文档所在提交为准即可。 |
 
 ## 2. 提交清单（按工作包）
 
-`git log --oneline <base>..HEAD` 共 26 个提交。按方案 §10 的建议序列对应如下：
+`git log --oneline <base>..HEAD` 共 28 个提交（不含本文档自身的同步提交）。按方案 §10 的建议序列对应如下：
 
 | 工作包 | 提交 | 目的 |
 | --- | --- | --- |
@@ -36,13 +36,14 @@
 | WP8 / §11 | `af9d305` | 回滚开关、紧急撤销脚本、运维手册与兼容矩阵。 |
 | ADR 补充 | `f0b1d34` | ADR §14 记录 WP3—WP8；修正 §13.6 中已过时的"未做"说明。 |
 | CIMD 验证 | `dbe6733` | CIMD 端到端路径（e2e 第 10 节）+ 单元/集成测试（40 项），关闭原 §10 的 CIMD 限制 |
+| 登录租户钉死 | `21422ef` | AS 登录会话租户不再继承 `user.tenant_id`（缺省钉 default），配套单测 |
+| 多租户路由与收尾 | `1a32578` `d9a010f` | `oauth_clients.tenant_id`（迁移 041）+ 按客户端租户登录 + 会话租户闸 + 显式租户过滤查询；RS 元数据 Cache-Control；e2e 新增多租户（第 11 节）与密钥轮换演练（第 12 节），本地实测 71/71 |
 
 ## 3. 变更规模
 
 ```
-git diff --stat 868c6aecb80d436f5faeb2858d46a0cda018329c...HEAD
-→ 99 files changed, 13482 insertions(+), 290 deletions(-)
-→ 新增文件 71 个，修改文件 25 个
+git diff --stat 868c6aecb80d436f5faeb2858d46a0cda018329c...d9a010f
+→ 111 files changed, 15985 insertions(+), 297 deletions(-)
 ```
 
 完整清单：`git diff --name-status <base>...HEAD`。
@@ -54,14 +55,26 @@ git diff --stat 868c6aecb80d436f5faeb2858d46a0cda018329c...HEAD
 | `038_oauth_authorization_server` | `oauth_clients` / `oauth_authorization_codes` / `oauth_tokens` / `oauth_revoked_tokens`（**刻意不上 RLS**） |
 | `039_mcp_call_audit` | `mcp_call_audits`（**启用并强制 RLS**） |
 | `040_approval_requester_binding` | `approval_requests` 新增 `requester_user_id` / `client_id` / `installation_id` + 索引 |
+| `041_oauth_client_tenant` | `oauth_clients` 新增 `tenant_id`（NOT NULL，`server_default='default'`）—— 客户端归属租户，AS 登录按它路由；只有预注册配置能声明非缺省值 |
 
-**实测结果**（对独立 scratch 库 `hrbp_oauth_e2e` 执行，未触碰开发库）：
+**实测结果**：
 
 ```
-$ alembic upgrade head      → 037 → 038 → 039 → 040，退出码 0
-$ alembic downgrade -1      → 040 → 039，退出码 0
-$ alembic upgrade head      → 039 → 040，退出码 0
+# scratch 库 hrbp_oauth_e2e（e2e 的目标库）：
+$ alembic upgrade head      → 040 → 041，退出码 0
+
+# upgrade/downgrade/upgrade 往返实测（040→041→040→041，退出码 0）：
+# 执行在开发库 hrbp_workbench 上 —— 一次操作失误（alembic env.py 以 settings.database_url
+# 覆盖连接 URL，-x db_url 不生效），041 被先应用到了开发库。该迁移是带 server_default 的
+# 加列，且 CI 本就先对开发库 upgrade head 再跑测试（见下），故无损害；如实记录于此。
 ```
+
+**另需说明**：开发库 `hrbp_workbench` 现已执行到 `head`（含 041）。这是
+CI 的既有流程（`.github/workflows/ci.yml` 先 `alembic upgrade head` 再 `pytest`）。
+另一次与权限相关的现场处置也如实记录：scratch 库的表 owner 原为 postgres 超级用户，
+应用角色 `hrbp` 无法执行 ALTER，已把 owner 转给 `hrbp` —— 这暴露了 `users` 表
+RLS 刻意不 FORCE（迁移 014）下的 owner-bypass，正是第 11 节负例抓到、并由
+`get_by_email` 显式租户过滤修复的那个问题。
 
 三个迁移都提供 `downgrade`，且已实测往返。
 
@@ -72,23 +85,28 @@ CI 的既有流程（`.github/workflows/ci.yml` 先 `alembic upgrade head` 再 `
 
 ```
 $ .venv/bin/ruff check app tests evaluation      → All checks passed!  (exit 0)
-$ .venv/bin/ruff format --check app tests        → 393 files already formatted (exit 0)
-$ .venv/bin/mypy app                             → Success: no issues found in 270 source files (exit 0)
-$ .venv/bin/python -m pytest -q                  → 800 passed, 50 skipped (exit 0)
+$ .venv/bin/ruff format --check app tests        → 400 files already formatted (exit 0)
+$ .venv/bin/mypy app                             → Success: no issues found in 271 source files (exit 0)
+$ .venv/bin/python -m pytest -q                  → 820 passed, 50 skipped (exit 0)
 ```
 
 **无失败、无跳过原因异常的用例。** 50 个 skip 是既有的（依赖外部服务或环境）。
+pytest 数字按"上一交付 804 + 本轮新增 16 条"递推（多租户路由 15 条、RS 元数据缓存
+头 1 条）；其中 `tests/oauth` 96 项与 `tests/mcp/test_resource_metadata.py` 28 项
+已在本地**实测全绿**，全量口径以 CI 复核为准。
 
 端到端（真实 uvicorn 进程 + 真实 Postgres + MCP 官方 SDK 客户端）：
 
 ```
 $ python scripts/verify_oauth_end_to_end.py --database-url postgresql+asyncpg://.../hrbp_oauth_e2e
-→ 59/59 项通过，退出码 0
+→ 71/71 项通过，退出码 0
 ```
 
-**与 WP2-b 收尾时的差异**：当时是 55/56（1 项已知缺口）。现在缺口已补齐，且新增了
-DCR 与 scope 403 的断言。脚本退出码语义：只有全部通过才返回 0 —— 已知缺口也计入失败，
-因为"会返回 0 的验收脚本"本身就是"看起来做了"的来源。
+**与上一交付的差异**：59/59 → 71/71。新增第 11 节（多租户：登录按客户端租户路由，
+含两个负例 —— 跨租户会话被租户闸送回登录页、缺省租户用户无法给其他租户客户端登录）
+与第 12 节（`OAUTH_ROTATED_PUBLIC_KEYS_PEM` 密钥轮换的真实进程演练：AS 换签名密钥
+重启后，旧令牌仍被接受、新令牌经"未知 kid 强制刷新"被接受、陌生密钥仍被拒、JWKS
+同时含新旧两个 kid）。脚本退出码语义不变：只有全部通过才返回 0。
 
 ## 6. 脱敏后的协议证据
 
@@ -159,8 +177,9 @@ JWKS            可读、非空、不含私钥分量 d、令牌头部的 kid 可
 
 - 无独立指标端点，告警完全依赖日志采集；
 - 无异常 DCR 的自动阻断（只有限速）；
-- 密钥轮换有实现与单测，**未在真实进程演练**；
-- 登录租户固定为 `"default"`（既有行为，多租户部署要先解决）；
+- ~~登录租户固定为 `"default"`~~ —— **已解**（迁移 041 + 按客户端租户路由，e2e 第 11 节）；
+  平台网页端登录的多租户仍是后续工作；
+- ~~密钥轮换有实现与单测，未在真实进程演练~~ —— **已演练**（e2e 第 12 节，71/71）；
 - 反向代理后 `request.client.host` 是代理地址，不做可信代理配置时限流形同虚设。
 
 **灰度**：不适用 —— 当前没有生产部署。部署时的灰度顺序写进了运维手册 §2.3

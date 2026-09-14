@@ -347,13 +347,15 @@ scheme 不合规），或抢先兑换一次性 authorization code。
   "本资源没有授权服务器"，从而不再尝试发现 —— 又一个静默失败。WP2-b 之后，
   RS 侧的 `mcp_authorization_servers` 已是**生产必需配置**：留空的 RS 不会接受任何
   AS 令牌，但也不会报错，症状是"外部 Agent 全部 401"。
-- 这三条匿名端点都没有独立的**限流**：它们匿名可读，理论上可被高频探测。复用
-  tenant/user 配额在这里不成立（根本还没有身份），是否需要一条独立的宽松配额属
-  WP3/WP8。
-- **RS 侧的元数据仍未设 `Cache-Control`**（`app/access/routes/well_known.py`）。
-  AS 侧已设：元数据 `public, max-age=60`、JWKS `public, max-age=300`
-  （`app/oauth/routes/discovery.py`）—— JWKS 的 300 秒是密钥轮换的传播上界，
-  也是"撤销一把泄漏的私钥后，最坏情况下它还能被接受多久"。RS 侧补上属 WP8 收尾项。
+- 这三条匿名端点**维持不限流**（显式决定，WP3 复核确认）：它们是"该去哪拿令牌"的
+  地址簿，响应是廉价的公共配置，限流会让客户端在最脆弱的时刻（还没有任何凭据时）
+  走不下去。需要成本核算的匿名端点只有内省（SHA-256 + 查库），它已在 WP3 按 IP 限流
+  （`oauth-introspect-ip` 桶，`0` 显式关闭）。DCR 另有限速 —— 它是**写**端点。
+  该决定由 `tests/oauth/test_anonymous_endpoint_limits.py` 守护。
+- ~~**RS 侧的元数据未设 `Cache-Control`**~~ —— **已补**：`public, max-age=60`
+  （`app/access/routes/well_known.py`）。AS 侧早已设置：元数据 `public, max-age=60`、
+  JWKS `public, max-age=300` —— JWKS 的 300 秒是密钥轮换的传播上界，
+  也是"撤销一把泄漏的私钥后，最坏情况下它还能被接受多久"。
 
 **停止条件**：任何租户数据（哪怕只是一个字段）出现在 `/.well-known/*` 的响应里
 → 立即停止。
@@ -396,9 +398,10 @@ scheme 不合规），或抢先兑换一次性 authorization code。
 
 **缺口**：
 
-- **无限流**。DCR 端点做了限流，因为它是写端点且无需输入即可滥用；内省是只读的，
-  且没有 client_id 与令牌时只回 401 或 `active: false`、不产生状态。但"不产生状态"
-  不等于"没有成本"：每次调用都要算一次 SHA-256 并查库。需要独立配额（WP3/WP8）。
+- ~~**无限流**~~ —— **已限流**（WP3）：`POST /oauth/introspect` 按 IP 计入
+  `oauth-introspect-ip` 桶（阈值可配，`0` 显式关闭作为运维逃生口），超限回 429 +
+  `Retry-After`。DCR 端点的限流理由（写端点、无需输入即可滥用）见其自身条目；
+  内省虽然只读，但每次调用要算一次 SHA-256 并查库，"不产生状态"不等于"没有成本"。
 - 内省**不参与** RS 的令牌校验路径（`app/access/as_tokens.py` 走本地 JWKS 验签 +
   本地撤销查询，不发起到 AS 的网络调用）。这是刻意的（避免每次 `/mcp` 调用都
   依赖 AS 可用性），代价是**撤销到失效存在传播延迟**，且内省与 RS 的判据一致性

@@ -161,7 +161,8 @@ python -m app.outbox.worker
 WorkBuddy 连接器包已随本仓库提供，但**有三项需要人工替换或确认**（占位域名、图标、
 服务端开关），见该目录的 `README.md`。
 
-**当前状态**：协议验收 10 条全过、端到端 58/58；但**尚未用真实客户端验证过** ——
+**当前状态**：协议验收 10 条全过、端到端 71/71（含 CIMD 主路径、多租户路由、密钥轮换
+演练）；但**尚未用真实客户端验证过** ——
 兼容矩阵如实标注了每一格的"未实测"，见
 `docs/ops/2026-09-14-client-compatibility-matrix.md`。
 
@@ -450,14 +451,13 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 - `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
 - `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
 - HR Case Agent 的质量门禁目前仍是离线确定性评测，尚未宣称 REAL-LLM 端到端指标。`send_case_notification` 仍没有可验证的外部 Provider；该调用会进入 DLQ，不会伪造投递成功。
-- **外部 Agent 接入尚未用真实客户端验证过**：协议验收 10 条全过、端到端 58/58，
+- **外部 Agent 接入尚未用真实客户端验证过**：协议验收 10 条全过、端到端 71/71
+  （含 CIMD 主路径、多租户路由、密钥轮换演练），
   但没有用 WorkBuddy / Codex / Claude Code 的真实客户端跑过。兼容矩阵如实标注了每
   一格的"未实测"与验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
-- **CIMD（Client ID Metadata Documents）没有端到端验证**：它需要一个公网 HTTPS 文档
-  服务器，本地起不出来。而它是 ADR 指定的**主**注册路径 —— 验证程度低于兼容回退路径
-  （DCR），补它的优先级更高。
 - **外部接入没有独立的指标端点**：告警依赖结构化日志采集，见运维手册 §7 的事件名清单。
-- **登录租户固定为 `default`**：多租户部署要接外部 Agent 时，这一条必须先解决。
+- **多租户**：外部 Agent 的授权登录已按客户端租户路由（`oauth_clients.tenant_id`，
+  只有预注册配置能声明租户）；平台网页端登录的多租户仍是后续工作。
 
 ---
 

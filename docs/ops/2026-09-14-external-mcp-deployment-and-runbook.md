@@ -138,7 +138,8 @@ alembic downgrade -1     # 回退一步
 | 403 + `insufficient_scope` | 凭据的有效 scope 不含所需范围 | `mcp_tool_denied`（`reason` 为 `missing_scope` / `client_ceiling`） |
 | 429 | 限流 | `mcp_rate_limited`、`oauth_rate_limited`、`oauth_token_rate_limited` |
 | **全部** 429，日志里没有 `*_rate_limited` | **Redis 不可达**。`RATE_LIMIT_FAIL_OPEN` 默认 `false`，生产环境取「拒绝」而不是「放行」—— 见 §6.3 | `rate_limit_passthrough`（仅非生产会出现） |
-| 用户登录后仍 401 | 登录租户与令牌租户不一致（当前登录固定为 `default`） | `oauth_as_login_*` |
+| 用户登录后仍 401 | 登录租户与客户端租户不一致。登录按 `oauth_clients.tenant_id` 路由（只有 `OAUTH_PRE_REGISTERED_CLIENTS` 条目能声明），用户必须在**该租户**的用户目录里存在 | `oauth_as_login_*` |
+| 客户端应在的租户不对 | 预注册条目漏写 `tenant_id`（缺省落 `default`）；写空/null 会让 AS **启动失败**而不是静默回退 | `oauth_preconfigured_clients_synced` |
 | 审批通过后动作未执行 | 发起方的授权已被撤销 | `approval_blocked_installation_revoked` |
 | 审计表没有新行 | 审计写入失败（不影响调用本身） | `mcp_audit_persist_failed` |
 
