@@ -14,6 +14,13 @@ from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+#: AS 登录**固定**使用默认租户。外部 Agent 接入走的是单租户部署：OAuth 令牌签发后由
+#: RS 按 ``tenant_id`` 定位数据，一旦 AS 会话租户与 RS 校验的租户不一致，令牌拿到的就是
+#: 另一个（或不存在的）租户的数据，表现成"登录成功却一直 401"。所以这里**不继承**
+#: ``user.tenant_id``，而是把会话租户**钉死**为 ``DEFAULT_TENANT``。多租户部署要接外部
+#: Agent 时，这一条必须先解（需要按请求/租户路由选择登录库，见 ADR-0002 §13.6）。
+DEFAULT_TENANT = "default"
+
 #: 用户不存在时用来消耗等量 CPU 的占位哈希（与 ``app/access/routes/auth.py`` 同一取值）。
 #: 没有它，"用户不存在"会比"密码错误"快一个数量级，于是响应时间本身就成了一个
 #: "这个邮箱注册过吗"的探测器。
@@ -37,7 +44,8 @@ async def authenticate(email: str, password: str) -> AsSession | None:
 
     user = None
     try:
-        async for db in get_db_session():
+        # 显式以默认租户进入 RLS 上下文：AS 登录只可见 ``tenant_id == "default"`` 的用户。
+        async for db in get_db_session(DEFAULT_TENANT):
             repo = UserRepository(db)
             user = await repo.get_by_email(supplied)
     except Exception as exc:
@@ -60,7 +68,8 @@ async def authenticate(email: str, password: str) -> AsSession | None:
     logger.info("oauth_as_login_success", user_id=user.id, role=user.role)
     return AsSession(
         user_id=user.id,
-        tenant_id=user.tenant_id,
+        # 钉死为默认租户：不继承 user.tenant_id，避免跨租户令牌（见模块顶部说明）。
+        tenant_id=DEFAULT_TENANT,
         role=user.role,
         email=user.email,
         name=user.name,
