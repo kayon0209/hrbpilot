@@ -67,9 +67,7 @@ async def test_the_session_tenant_is_the_requested_one_regardless_of_the_user_re
     # 数据库中该用户的 tenant_id 是另一个值 —— 会话租户必须仍是调用方指定的那个。
     user = _user_with_password("something-else")
     calls: list[str | None] = []
-    monkeypatch.setattr(
-        app.data.repositories.user_repo, "UserRepository", lambda db: _FakeRepo(user, calls=calls)
-    )
+    monkeypatch.setattr(app.data.repositories.user_repo, "UserRepository", lambda db: _FakeRepo(user, calls=calls))
 
     session = await authenticate("a@example.com", "pw", tenant_id="acme")
 
@@ -93,24 +91,18 @@ async def test_the_default_tenant_is_used_when_none_is_requested(
     assert patched["tenant_id"] == DEFAULT_TENANT
 
 
-async def test_unknown_user_returns_none(
-    patched: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_unknown_user_returns_none(patched: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app.data.repositories.user_repo, "UserRepository", lambda db: _FakeRepo(None))
     assert await authenticate("a@example.com", "pw", tenant_id="acme") is None
 
 
-async def test_bad_password_returns_none(
-    patched: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_bad_password_returns_none(patched: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     user = _user_with_password("acme", "pw")
     monkeypatch.setattr(app.data.repositories.user_repo, "UserRepository", lambda db: _FakeRepo(user))
     assert await authenticate("a@example.com", "wrong-password", tenant_id="acme") is None
 
 
-async def test_empty_credentials_return_none(
-    patched: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_empty_credentials_return_none(patched: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         app.data.repositories.user_repo, "UserRepository", lambda db: _FakeRepo(_user_with_password(DEFAULT_TENANT))
     )

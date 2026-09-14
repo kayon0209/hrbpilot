@@ -65,9 +65,7 @@ def test_pre_registered_config_without_a_tenant_defaults(
 
 
 @pytest.mark.parametrize("bad", ["", "   ", 123, None])
-def test_an_invalid_tenant_in_pre_registered_config_fails_startup(
-    monkeypatch: pytest.MonkeyPatch, bad: Any
-) -> None:
+def test_an_invalid_tenant_in_pre_registered_config_fails_startup(monkeypatch: pytest.MonkeyPatch, bad: Any) -> None:
     """预注册是运维的显式决定，写错租户要让启动失败，而不是静默落回缺省租户。
 
     ``None`` 在这里是 JSON ``null``（键存在但值为空）—— 与"没写这个键"是两回事。

@@ -38,7 +38,9 @@ _METADATA_MAX_AGE_SECONDS = 60
 
 
 def _metadata_response() -> JSONResponse:
-    return JSONResponse(content=protected_resource_metadata(), headers={"Cache-Control": f"public, max-age={_METADATA_MAX_AGE_SECONDS}"})
+    return JSONResponse(
+        content=protected_resource_metadata(), headers={"Cache-Control": f"public, max-age={_METADATA_MAX_AGE_SECONDS}"}
+    )
 
 
 @router.get("/.well-known/oauth-protected-resource")

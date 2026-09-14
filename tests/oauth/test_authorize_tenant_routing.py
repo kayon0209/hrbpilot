@@ -49,9 +49,7 @@ def client() -> TestClient:
     return TestClient(create_oauth_app(), raise_server_exceptions=False)
 
 
-def test_login_authenticates_in_the_clients_tenant(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_login_authenticates_in_the_clients_tenant(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.oauth.routes import authorize as authorize_module
 
     captured: dict[str, Any] = {}
@@ -72,9 +70,7 @@ def test_login_authenticates_in_the_clients_tenant(
     assert captured["tenant_id"] == "acme"
 
 
-def test_a_session_from_another_tenant_cannot_consent(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_session_from_another_tenant_cannot_consent(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """缺省租户的登录态给 acme 客户端同意 → 回登录页，绝不签授权码。"""
     from app.oauth.routes import authorize as authorize_module
 
@@ -96,9 +92,7 @@ def test_a_session_from_another_tenant_cannot_consent(
     assert "登录" in response.text
 
 
-def test_a_matching_tenant_session_can_consent(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_matching_tenant_session_can_consent(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """正向对照：租户一致时签码路径不被这道闸挡住。"""
     from app.oauth.routes import authorize as authorize_module
 

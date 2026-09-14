@@ -77,9 +77,7 @@ def tls_material(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
 
 
 @pytest.fixture()
-def document_server(
-    tls_material: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> Iterator[DocumentServer]:
+def document_server(tls_material: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> Iterator[DocumentServer]:
     """一个本地 HTTPS 文档服务器，并把它显式接进配置。
 
     两个 ``monkeypatch`` 就是"允许抓取环回地址"与"信任这份自签根"。前者在
@@ -430,9 +428,7 @@ async def test_a_stale_cache_survives_an_outage(document_server: DocumentServer,
 
 
 @pytest.mark.asyncio()
-async def test_an_unknown_client_without_a_cache_is_unknown(
-    document_server: DocumentServer, registry: Any
-) -> None:
+async def test_an_unknown_client_without_a_cache_is_unknown(document_server: DocumentServer, registry: Any) -> None:
     """库里没有、抓取又失败 → 未知客户端。
 
     与上一条配对：回退的是**缓存**，不是"抓取失败也算通过"。少这一条的话，一条
