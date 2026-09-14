@@ -49,6 +49,7 @@
 - [产品特色](#-产品特色)
 - [覆盖的 HR 场景](#-覆盖的-hr-场景)
 - [HR Case Agent：受控执行与通知](#-hr-case-agent受控执行与通知)
+- [外部 AI Agent 接入（MCP + OAuth）](#-外部-ai-agent-接入mcp--oauth)
 - [系统架构](#-系统架构)
 - [评测结果](#-评测结果真实-llm-跑通)
 - [快速开始](#-快速开始)
@@ -119,6 +120,50 @@ python -m app.outbox.worker
 ```
 
 可用 `python -m app.outbox.worker --once --max-messages 100` 做受限的排障/运维轮询。接口示例、DLQ 重放与 `UNKNOWN` 对账流程见 [运维手册](./docs/upgrade/HR_CASE_AGENT_RUNBOOK.md)，设计取舍见 [ADR](./docs/upgrade/ADR-0001-single-bounded-agent.md)。
+
+---
+
+## 🔌 外部 AI Agent 接入（MCP + OAuth）
+
+在 WorkBuddy、Codex、Claude Code 等**你自己日常使用的 AI Agent** 里，通过标准 MCP
+实时调用 HRBPilot。HRBPilot 侧负责认证、租户与权限判定、最小化返回、审批与审计。
+
+**接入方式**：远程 MCP（Streamable HTTP）+ OAuth 2.1 + PKCE。客户端首次调用未带凭据时
+会收到 `401` 与 RFC 9728 挑战，据此自动完成发现、授权与令牌交换 —— 用户只需在浏览器里
+登录并点一次同意。
+
+**能力边界**（三点最要紧）：
+
+| 边界 | 说明 |
+| --- | --- |
+| **没有匿名业务数据** | `/.well-known/*` 与授权端点匿名可读（协议要求），但**任何真实 HR 业务数据都需要身份**。未认证的读调用拿不到内容。 |
+| **权限是三个维度的交集** | 有效权限 = 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限。任一项不足都会拒绝，且拒绝原因在日志里可分辨是"人不够"还是"这个客户端不够"。 |
+| **写入只创建审批** | 所有写工具**只创建 `ApprovalRequest`**，不直接改业务数据。工具返回的是"已提交审批 + 审批编号"，不是"已完成"。 |
+
+**授权范围**（对外契约，改名等于破坏已有客户端的授权）：
+
+| Scope | 能力 |
+| --- | --- |
+| `hrb:policy:read` | 搜索制度、读取制度来源与引用证据 |
+| `hrb:case:read` | 搜索与读取有权查看的案件 |
+| `hrb:case:propose` | 为案件提交待审批的建议动作 |
+| `hrb:approval:read` | 查询有权查看的审批状态 |
+| `hrb:profile:read` | 读取当前身份与可用能力的摘要 |
+
+**部署与运维**：
+
+- 管理员部署与故障排查：`docs/ops/2026-09-14-external-mcp-deployment-and-runbook.md`
+- 架构决策与偏差记录：`docs/upgrade/ADR-0002-mcp-resource-server-and-authorization-server.md`
+- 威胁模型：`docs/security/mcp-threat-model.md`
+- WorkBuddy 连接器包：`connectors/workbuddy/`
+- 端到端验收：`python scripts/verify_oauth_end_to_end.py --database-url <库>`
+
+WorkBuddy 连接器包已随本仓库提供，但**有三项需要人工替换或确认**（占位域名、图标、
+服务端开关），见该目录的 `README.md`。
+
+**当前状态**：协议验收 10 条全过、端到端 58/58；但**尚未用真实客户端验证过** ——
+兼容矩阵如实标注了每一格的"未实测"，见
+`docs/ops/2026-09-14-client-compatibility-matrix.md`。
 
 ---
 
@@ -405,6 +450,14 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 - `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
 - `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
 - HR Case Agent 的质量门禁目前仍是离线确定性评测，尚未宣称 REAL-LLM 端到端指标。`send_case_notification` 仍没有可验证的外部 Provider；该调用会进入 DLQ，不会伪造投递成功。
+- **外部 Agent 接入尚未用真实客户端验证过**：协议验收 10 条全过、端到端 58/58，
+  但没有用 WorkBuddy / Codex / Claude Code 的真实客户端跑过。兼容矩阵如实标注了每
+  一格的"未实测"与验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
+- **CIMD（Client ID Metadata Documents）没有端到端验证**：它需要一个公网 HTTPS 文档
+  服务器，本地起不出来。而它是 ADR 指定的**主**注册路径 —— 验证程度低于兼容回退路径
+  （DCR），补它的优先级更高。
+- **外部接入没有独立的指标端点**：告警依赖结构化日志采集，见运维手册 §7 的事件名清单。
+- **登录租户固定为 `default`**：多租户部署要接外部 Agent 时，这一条必须先解决。
 
 ---
 
