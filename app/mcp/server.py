@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.server import MCPServer
@@ -198,9 +198,10 @@ async def search_policy(
     query: str,
     kb_id: str | None = None,
     top_k: int = 3,
+    detail: Literal["concise", "detailed"] = "concise",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"query": query, "top_k": top_k}
+    params: dict[str, Any] = {"query": query, "top_k": top_k, "detail": detail}
     if kb_id is not None:
         params["kb_id"] = kb_id
     return await _run_read("search_policy", params, ctx)
@@ -231,11 +232,13 @@ async def get_policy_source(
 )
 async def search_cases(
     limit: int = 20,
+    offset: int = 0,
+    detail: Literal["concise", "detailed"] = "concise",
     status: str | None = None,
     category: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"limit": limit}
+    params: dict[str, Any] = {"limit": limit, "offset": offset, "detail": detail}
     if status is not None:
         params["status"] = status
     if category is not None:
@@ -497,6 +500,21 @@ async def hrbpilot_capabilities() -> str:
         "required_scopes": {tool.name: tool.required_scope.value for tool in TOOL_CATALOG.tools},
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _tighten_tool_schemas() -> None:
+    """给所有工具的入参 schema 补 ``additionalProperties: false``（T3-5）。
+
+    SDK 从函数签名生成的 schema 默认不写这个键 —— 客户端模型于是认为
+    "多传未知参数也合法"。收紧后，拼错参数名（``caseId`` vs ``case_id``）
+    会在协议层被拒，而不是被静默吞掉后报一个难定位的 INVALID_PARAMS。
+    """
+    for tool in mcp_server._tool_manager.list_tools():
+        if isinstance(tool.parameters, dict):
+            tool.parameters.setdefault("additionalProperties", False)
+
+
+_tighten_tool_schemas()
 
 
 if __name__ == "__main__":

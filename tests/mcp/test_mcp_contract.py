@@ -151,7 +151,8 @@ async def test_get_policy_source_actually_reaches_the_registered_executor(monkey
 
     result = await run_read_tool("get_policy_source", {"document_name": "请假管理制度"}, "tenant-1")
 
-    assert calls == [{"document_name": "请假管理制度"}], "出口没有把请求交给执行器"
+    # detail 档位参数自 T4 起随 schema 默认值一同透传给执行器（concise）。
+    assert calls == [{"document_name": "请假管理制度", "detail": "concise"}], "出口没有把请求交给执行器"
     assert result["outcome"] == ToolOutcome.FOUND.value
     assert result["document"]["filename"] == "请假管理制度.pdf"
     assert "note" not in result

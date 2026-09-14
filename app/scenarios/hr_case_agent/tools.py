@@ -25,15 +25,26 @@ class ToolError(Exception):
         self.code = code
 
 
+#: 读工具结果的详尽分档（响应预算，任务书 T4-3）：
+#: - ``concise``（默认）：出处 + 片段正文，足以支撑引用式回答；
+#: - ``detailed``：额外携带 chunk_id / document_id 等后续调用需要的标识字段。
+#: 需要新档位时在这里扩展 —— 客户端按字面值传参，它是对外契约的一部分。
+DetailLevel = Literal["concise", "detailed"]
+
+
 class SearchPolicyInput(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
     kb_id: str | None = None
     top_k: int = Field(3, ge=1, le=10)
+    # 结果分档（响应预算，任务书 T4-3）：concise 只给 出处+片段正文（引用问答够用）；
+    # detailed 才带 chunk_id/document_id 等后续调用需要的标识字段。默认 concise。
+    detail: DetailLevel = "concise"
 
 
 class GetPolicySourceInput(BaseModel):
     document_name: str = Field(..., min_length=1, max_length=200)
     section: str | None = None
+    detail: DetailLevel = "concise"
 
 
 class GetMyAccessProfileInput(BaseModel):
@@ -41,9 +52,13 @@ class GetMyAccessProfileInput(BaseModel):
 
 
 class SearchCasesInput(BaseModel):
-    limit: int = Field(20, ge=1, le=50)
+    limit: int = Field(20, ge=1, le=20)
     status: str | None = Field(None, max_length=30)
     category: str | None = Field(None, max_length=50)
+    # offset 游标（T4-1）：与 limit 配合翻页。0 = 第一页；返回里的 next_cursor
+    # 直接作为下一次的 offset 回传。上限与 limit 联动钳制，永不返回全量。
+    offset: int = Field(0, ge=0, le=980)
+    detail: DetailLevel = "concise"
 
 
 class CaseIdInput(BaseModel):

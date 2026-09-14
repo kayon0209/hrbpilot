@@ -78,11 +78,34 @@ def _summary_from_chunks(chunks: list[dict], kb_id: str) -> str:
     return f"命中 {len(chunks)} 条制度片段（kb={kb_id}）：{source} / {section} — {preview}"
 
 
+#: concise 档的单片段正文预算。detailed 档不复用这个值 —— 它的用途是
+#: 「核对条款完整措辞」，截到 300 字会破坏这一用途；detailed 的长度由
+#: app.mcp.budgets 的总闸兜底。
+_CONCISE_SNIPPET_CHARS = 300
+
+
+def _chunk_view(chunk: dict, detail: str) -> dict[str, Any]:
+    """检索片段按档位裁剪（任务书 T4-3）。
+
+    concise：出处（source/section）+ 片段正文 —— 引用式问答需要的全部。
+    detailed：额外带 chunk_id/document_id/kb_id 与未截断的 content —— 只有
+    需要后续按 id 精读（get_policy_source）或落库对账时才值得多花这些 token。
+    """
+    if detail == "concise":
+        return {
+            "source": chunk.get("source"),
+            "section": chunk.get("section"),
+            "content": str(chunk.get("content", ""))[:_CONCISE_SNIPPET_CHARS],
+        }
+    return dict(chunk)
+
+
 async def execute_search_policy(params: dict) -> dict:
     """Hybrid RAG search over the tenant's policy knowledge base."""
     tenant_id = _require_tenant()
     kb_id = await _resolve_kb_id(tenant_id, params.get("kb_id"))
     top_k = int(params.get("top_k") or 3)
+    detail = str(params.get("detail") or "concise")
 
     from app.rag.retrieval.retriever import Retriever
 
@@ -105,8 +128,9 @@ async def execute_search_policy(params: dict) -> dict:
         }
     return {
         "summary": _summary_from_chunks(chunks, kb_id),
-        "chunks": chunks[:top_k],
+        "chunks": [_chunk_view(c, detail) for c in chunks[:top_k]],
         "kb_id": kb_id,
+        "detail": detail,
     }
 
 
@@ -194,6 +218,11 @@ async def execute_get_my_access_profile(params: dict) -> dict:
 def _require_principal() -> McpPrincipal:
     """取当前已绑定主体。缺失即失败 —— 案件相关工具没有"匿名降级"这一档。"""
 
+    # 运行时 isinstance 需要真实的类对象；顶层导入会与 app.mcp.* 循环，
+    # 所以延迟到这里。之前这里引用 TYPE_CHECKING 下的名字，运行时是 NameError
+    # —— 任何走 execute_search_cases 的真实调用都会变成 INTERNAL_ERROR。
+    from app.mcp.auth.principal import McpPrincipal
+
     principal = current_read_principal()
     if not isinstance(principal, McpPrincipal):
         raise ToolError(
@@ -203,22 +232,28 @@ def _require_principal() -> McpPrincipal:
     return principal
 
 
-def _case_view(case: HRCase) -> dict[str, Any]:
+def _case_view(case: HRCase, detail: str = "concise") -> dict[str, Any]:
     """案件的最小字段集。
 
     **不含** ``description``：那是自由文本，通常写着员工的具体情况。列表的用途是
     "找到那个案件"，不是"读完它"。也不含任何真实员工标识 —— ``subject_ref`` 是
     合成引用，本来就是为这个用途设计的。
+
+    ``case_id`` 在两个档位都保留：它是后续调用（get_case_summary / 提交办理）
+    的必要键，concise 档省掉它会让"找到案件"这个列表用途失效。detailed 档
+    额外带 created_at，用于人工对账与排序核对。
     """
-    return {
+    view: dict[str, Any] = {
         "case_id": case.id,
         "title": case.title,
         "subject_ref": case.subject_ref,
         "category": case.category,
         "risk_level": case.risk_level,
         "status": case.status,
-        "created_at": case.created_at.isoformat() if case.created_at else None,
     }
+    if detail == "detailed":
+        view["created_at"] = case.created_at.isoformat() if case.created_at else None
+    return view
 
 
 def _approval_view(approval: ApprovalRequest) -> dict[str, Any]:
@@ -242,31 +277,57 @@ async def _visible_user_ids(principal: McpPrincipal) -> set[str]:
 
 
 async def execute_search_cases(params: dict) -> dict:
-    """按 ACL 搜索案件。跨租户与越权案件在这里就不可见 —— 不是"返回空摘要"。"""
+    """按 ACL 搜索案件。跨租户与越权案件在这里就不可见 —— 不是"返回空摘要"。
+
+    分页（任务书 T4-1）：多取一条（``limit + 1``）来判断 ``has_more``；返回
+    ``next_cursor``（= 下一页的 offset）供客户端直接回传。**永不返回全量**：
+    schema 的 limit 上限 20 + offset 上限 980 一起钳住最大窗口。
+    """
     from app.scenarios.hr_case_agent.service import HRCaseService
 
     tenant_id = _require_tenant()
     principal = _require_principal()
     visible_user_ids = await _visible_user_ids(principal)
 
+    limit = int(params.get("limit") or 20)
+    offset = int(params.get("offset") or 0)
+    detail = str(params.get("detail") or "concise")
+
     session = await make_tenant_session(tenant_id)
     try:
         service = HRCaseService(session, tenant_id, actor=_actor_label(principal), visible_user_ids=visible_user_ids)
         cases = await service.search_cases(
-            limit=int(params.get("limit") or 20),
+            limit=limit + 1,
+            offset=offset,
             status=params.get("status"),
             category=params.get("category"),
         )
     finally:
         await session.close()
 
+    has_more = len(cases) > limit
+    cases = cases[:limit]
     if not cases:
-        return {"summary": "没有找到你有权查看的案件。", "cases": [], "count": 0}
-    return {
-        "summary": f"找到 {len(cases)} 个案件。",
-        "cases": [_case_view(case) for case in cases],
+        return {
+            "summary": "没有找到你有权查看的案件。",
+            "cases": [],
+            "count": 0,
+            "has_more": False,
+        }
+    result: dict[str, Any] = {
+        "summary": f"找到 {len(cases)} 个案件（从第 {offset + 1} 条起）。",
+        "cases": [_case_view(case, detail) for case in cases],
         "count": len(cases),
+        "has_more": has_more,
     }
+    if has_more:
+        # 截断必须留痕并给出下一步（T4-2）：静默截断会让模型以为拿到了全部。
+        result["next_cursor"] = offset + limit
+        result["pagination_note"] = (
+            f"还有更多案件未显示（本次最多 {limit} 条）。把 next_cursor={offset + limit} "
+            "作为 offset 回传可取下一页；也可以用 status / category 缩小范围。"
+        )
+    return result
 
 
 async def execute_get_case_summary(params: dict) -> dict:

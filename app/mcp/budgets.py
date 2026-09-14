@@ -30,6 +30,14 @@ from typing import Any
 #: schema 约束的是**请求**，这里约束的是**响应**（执行器可能因为内部逻辑多返回）。
 MAX_RESULTS = 5
 
+#: 分页列表类字段（search_cases.cases）的独立上限（任务书 T4-1）：这类列表的
+#: 条数**本来就由用户显式请求**（schema limit≤20，executor 用 limit+1 探测
+#: has_more 后裁回 limit），信封层再按 MAX_RESULTS=5 去砍，等于把"默认 20 条"
+#: 的契约变成"永远只有 5 条 + 一句截断提示"—— 用户按 next_cursor 翻页也永远
+#: 只能看到 5 条。这里的 20 与 schema 的 limit 上限对齐，作用是防执行器内部
+#: 逻辑失守多返回，而不是第二道业务分页。
+MAX_LIST_RESULTS = 20
+
 #: 单个引用片段的最大字符数。政策正文是给模型读的，不是给人复制的；
 #: 600 字足以承载一段完整条款，再多就是把它当成文档传输通道用。
 MAX_SNIPPET_CHARS = 600
@@ -38,8 +46,18 @@ MAX_SNIPPET_CHARS = 600
 #: 字段**数量**仍可能把响应推大（例如新增一个返回很多小字段的工具）。
 MAX_ENVELOPE_CHARS = 24_000
 
-#: 会被按 MAX_RESULTS 收窄的列表字段。其余列表（例如 ``next_actions``）本来就短。
-_RESULT_LIST_KEYS = ("chunks", "results", "items", "cases", "documents", "approvals")
+#: 列表字段 → 各自的条数上限。其余列表（例如 ``next_actions``）本来就短。
+#: 新增"分页型"列表字段时登记到这里并配独立上限；忘登记的后果是回落到
+#: MAX_RESULTS=5 —— 宁可保守截断，也不放任全量。
+_RESULT_LIST_LIMITS: dict[str, int] = {
+    "cases": MAX_LIST_RESULTS,
+    "chunks": MAX_RESULTS,
+    "results": MAX_RESULTS,
+    "items": MAX_RESULTS,
+    "documents": MAX_RESULTS,
+    "approvals": MAX_RESULTS,
+}
+_RESULT_LIST_KEYS = tuple(_RESULT_LIST_LIMITS)
 
 #: 收窄时优先从**尾部**丢弃的字段顺序：读结果的相关性是从高到低排的，
 #: 丢掉排在后面的，比丢掉排第一的合理。
@@ -61,12 +79,12 @@ def trim_strings(payload: Any, limit: int = MAX_SNIPPET_CHARS) -> Any:
     return payload
 
 
-def limit_result_lists(payload: dict[str, Any], limit: int = MAX_RESULTS) -> dict[str, Any]:
-    """按 ``MAX_RESULTS`` 收窄已知的结果列表字段。"""
-    for key in _RESULT_LIST_KEYS:
+def limit_result_lists(payload: dict[str, Any]) -> dict[str, Any]:
+    """按各字段自己的条数上限收窄已知的结果列表字段。"""
+    for key, cap in _RESULT_LIST_LIMITS.items():
         value = payload.get(key)
-        if isinstance(value, list) and len(value) > limit:
-            payload[key] = value[:limit]
+        if isinstance(value, list) and len(value) > cap:
+            payload[key] = value[:cap]
     return payload
 
 

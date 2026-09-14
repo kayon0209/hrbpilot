@@ -165,6 +165,7 @@ class HRCaseService:
         self,
         *,
         limit: int = 20,
+        offset: int = 0,
         status: str | None = None,
         category: str | None = None,
     ) -> list[HRCase]:
@@ -191,7 +192,9 @@ class HRCaseService:
             statement = statement.where(HRCase.status == status)
         if category:
             statement = statement.where(HRCase.category == category)
-        statement = statement.order_by(HRCase.created_at.desc()).limit(max(1, min(limit, 50)))
+        # limit ≤ 20、offset ≤ 980 由 MCP schema 钳制；这里再钳一次是防御纵深 ——
+        # 任何新调用方（内部脚本、REST 桥）都不该能把一次查询变成全量导出。
+        statement = statement.order_by(HRCase.created_at.desc()).limit(max(1, min(limit, 50))).offset(max(0, offset))
         return list((await self.session.execute(statement)).scalars().all())
 
     async def get_approval(self, case_id: str, approval_id: str) -> ApprovalRequest:
