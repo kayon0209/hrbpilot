@@ -109,6 +109,7 @@ ROUTE_CAPABILITY_MAP = {
     "/api/data-sources": "data_source_admin",
     "/api/admin/users": "user_admin",
     "/api/admin/mcp": "mcp_admin",
+    "/api/agent-tasks": "hr_case",
 }
 
 # Legacy aliases kept for internal callers

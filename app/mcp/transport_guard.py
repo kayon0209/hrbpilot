@@ -16,7 +16,8 @@ JSON-RPC 里，无论返回什么都是一次 HTTP 200，因为 HTTP 状态码�
 会漂移，而漂移方向是安全故障。这里刻意避免了这一点：
 
 - 判定的**函数**是同一个：``app.mcp.auth.authorize_tool_call``；
-- 判定的**输入**是同一组：同一个主体、同一个工具名、同一个 ``TOOL_CATALOG``；
+- 判定的**输入**是同一组：同一个主体、同一个工具名、同一个合并发现目录
+  （``app.scenarios.agent_tasks.tools.combined_catalog``）；
 - 该函数是**纯函数**（无 IO），所以两次调用对同一输入必然同一输出 ——
   不存在"两处结论不同"的可能，只存在"同一结论被表达两次"。
 
@@ -49,6 +50,7 @@ from typing import Any
 
 from starlette.responses import JSONResponse
 
+from app.access.policies.contracts import ToolCatalog
 from app.access.resource_metadata import (
     BEARER_ERROR_INSUFFICIENT_SCOPE,
     www_authenticate_challenge,
@@ -59,7 +61,7 @@ from app.guardrails.rate_limiter import RateLimiter
 from app.mcp.audit import record_mcp_call
 from app.mcp.auth import McpPrincipal, authorize_tool_call, log_denial, principal_from_headers
 from app.mcp.auth.authorization import DenyReason
-from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
+from app.scenarios.agent_tasks.tools import combined_catalog
 from app.shared.errors import RateLimitError
 from app.shared.logger import get_logger
 
@@ -237,14 +239,19 @@ async def _rate_limit_response(scope: AsgiScope) -> JSONResponse | None:
 class InsufficientScopeGuard:
     """把 scope 类拒绝翻译成 HTTP 403 的 ASGI 中间件。
 
-    只在 ``/mcp`` 上启用（``app.main`` 里包住挂载的子应用）。它不处理认证 ——
-    那属于 ``AuthMiddleware._dispatch_mcp``，本模块运行在它之后，因此到这里时
-    凭据一定已经验过签；这里拿不到主体（例如 stdio 不会有 HTTP 层）就放行，
+    在两条 MCP 出口上启用（``/mcp`` 与 ``/mcp/tasks``，见 ``app.main``）。它不处理
+    认证 —— 那属于 ``AuthMiddleware._dispatch_mcp``，本模块运行在它之后，因此到
+    这里时凭据一定已经验过签；这里拿不到主体（例如 stdio 不会有 HTTP 层）就放行，
     交给工具层按匿名处理。
+
+    ``catalog`` 参数决定按哪份目录判定：两条出口共用 **合并** 目录
+    （``combined_catalog()``）—— 工具名在两个 bundle 间不重叠，用合并目录意味着
+    无论请求打到哪条出口，"哪个工具需要哪个 scope"只有一个答案。
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, catalog: ToolCatalog | None = None) -> None:
         self.app: ASGIApp = app
+        self.catalog = catalog or combined_catalog()
 
     async def __call__(self, scope: AsgiScope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http" or scope.get("method") != "POST":
@@ -271,7 +278,7 @@ class InsufficientScopeGuard:
 
         principal = await _resolve_principal(scope)
         for name in names:
-            decision = authorize_tool_call(principal, name, catalog=TOOL_CATALOG)
+            decision = authorize_tool_call(principal, name, catalog=self.catalog)
             if decision.allowed or decision.deny_reason not in _SCOPE_DENIALS:
                 continue
             log_denial(decision, principal, surface=_SURFACE)

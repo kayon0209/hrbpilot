@@ -31,6 +31,12 @@ class ToolOutcome(str, Enum):
     FOUND = "FOUND"  # 有依据（命中片段 / 水合到正文）
     NO_EVIDENCE = "NO_EVIDENCE"  # 通道可用，但没有匹配 —— 应按「无依据」处理，不是错误
     AWAITING_APPROVAL = "AWAITING_APPROVAL"  # 写工具：已生成待审批记录，尚未执行
+    INPUT_REQUIRED = "INPUT_REQUIRED"  # 任务缺少必填信息，等待补充
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"  # 服务端冻结草稿，等待用户确认
+    RUNNING = "RUNNING"  # 已排队或正在执行，真实进度由任务投影返回
+    SUCCEEDED = "SUCCEEDED"  # 已得到真实产出
+    CANCELLED = "CANCELLED"  # 用户取消且未继续副作用
+    EXPIRED = "EXPIRED"  # 草稿/审批超过有效期
     AUTH_REQUIRED = "AUTH_REQUIRED"  # 未携带身份，无法确定作用范围
     FORBIDDEN = "FORBIDDEN"  # 身份有效，但当前角色不持有该能力
     FAILED = "FAILED"  # 调用失败（含依赖不可达）
@@ -41,6 +47,12 @@ USER_MESSAGES: dict[ToolOutcome, str] = {
     ToolOutcome.FOUND: "查询完成，已找到相关内容。",
     ToolOutcome.NO_EVIDENCE: "没有找到匹配的内容。这不代表制度里没有规定，建议换一种说法，或交给 HR 人工确认。",
     ToolOutcome.AWAITING_APPROVAL: "已提交，等待 HR 批准后才会真正执行。",
+    ToolOutcome.INPUT_REQUIRED: "信息还不完整，请补齐后再生成确认卡。",
+    ToolOutcome.AWAITING_CONFIRMATION: "草稿已冻结，请核对确认卡并提交审批。",
+    ToolOutcome.RUNNING: "任务正在处理中，可稍后查询状态。",
+    ToolOutcome.SUCCEEDED: "任务已完成。",
+    ToolOutcome.CANCELLED: "任务已取消。",
+    ToolOutcome.EXPIRED: "草稿已过期，请重新发起。",
     ToolOutcome.AUTH_REQUIRED: "这次调用没有携带身份信息，无法确定它在哪个单位、哪个权限范围内执行，因此没有返回任何真实数据。",
     ToolOutcome.FORBIDDEN: "你当前的权限不包含这项能力，请联系管理员。",
     ToolOutcome.FAILED: "调用没有完成，请稍后重试或联系管理员。",
@@ -52,6 +64,12 @@ _SUCCEEDED: frozenset[ToolOutcome] = frozenset(
         ToolOutcome.FOUND,
         ToolOutcome.NO_EVIDENCE,
         ToolOutcome.AWAITING_APPROVAL,
+        ToolOutcome.AWAITING_CONFIRMATION,
+        ToolOutcome.INPUT_REQUIRED,
+        ToolOutcome.RUNNING,
+        ToolOutcome.SUCCEEDED,
+        ToolOutcome.CANCELLED,
+        ToolOutcome.EXPIRED,
     }
 )
 
@@ -77,6 +95,16 @@ FAILURE_MESSAGES: dict[str, str] = {
     "CASE_PERMISSION_DENIED": USER_MESSAGES[ToolOutcome.FORBIDDEN],
     "HIGH_RISK_WRITE_BLOCKED": "这类事项不能由 AI 直接办理，只能先收集材料并转人工处理。",
     "NOT_FOUND": "没有找到对应的案件，请核对案件编号。",
+    "TASK_NOT_FOUND": "没有找到这个任务，或它不属于当前用户。",
+    "TASK_NOT_EDITABLE": "这个任务已经进入审批或执行阶段，不能再补充信息；如需调整请取消后重新发起。",
+    "TASK_NOT_SUBMITTABLE": "草稿信息还不完整或已有提交，当前状态无法提交。请先到任务中心核对状态。",
+    "TASK_STALE_VERSION": "你确认的是旧版本的草稿。请重新获取最新草稿并确认。",
+    "TASK_HASH_MISMATCH": "冻结草稿校验未通过，不能提交。请重新获取草稿。",
+    "TASK_ALREADY_SUBMITTED": "这个动作已经提交过一次，不会重复创建新审批。",
+    "TASK_EXPIRED": "草稿已过期。请重新发起一个新任务。",
+    "TASK_NOT_CANCELLABLE": "这个任务已经不能取消（已批准/已执行或已终态）。",
+    "TASK_OWNER_UNRESOLVED": "负责人或接收人需要是系统内唯一成员：请在任务中心选择已注册的成员后重试。",
+    "TASK_TYPE_UNDETECTED": "这句话暂时不支持转成任务：请换一种说法，或在任务中心手动创建。",
 }
 
 #: 错误码 → ``fix``（怎么改才能通过）与 ``retryable``（同一输入重试是否有意义）。
@@ -103,6 +131,11 @@ FAILURE_HINTS: dict[str, tuple[str | None, bool]] = {
     "APPROVAL_INVALID": ("这条请求已失效，请用相同参数重新提交一条新的。", False),
     "NOT_FOUND": ("案件编号可能不对：先用 search_cases 列出案件，确认编号后再试。", False),
     "INTERNAL_ERROR": ("服务内部错误，可稍后重试；若持续失败请联系管理员。", True),
+    "TASK_NOT_EDITABLE": ("该任务不在草稿阶段，补参无效；如需调整请取消后重新发起。", False),
+    "TASK_STALE_VERSION": ("使用get_task_status获取最新草稿版本后重新确认。", False),
+    "TASK_OWNER_UNRESOLVED": ("指定唯一的系统成员姓名，或在工作台中选择成员。", False),
+    "TASK_EXPIRED": ("草稿已过期，请重新用prepare_hr_action发起新任务。", False),
+    "TASK_NOT_CANCELLABLE": ("已进入不可撤销阶段的任务不能取消；先用get_task_status查看真实进度。", False),
 }
 
 

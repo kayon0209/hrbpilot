@@ -1,6 +1,7 @@
 """HRBP AI Workbench — all ORM models imported here for Alembic auto-detect."""
 
 from app.data.models.access_scope import ManagerOrgScope, OrgUnit
+from app.data.models.agent_task import AgentTask, AgentTaskEvent
 from app.data.models.base import Base, TenantMixin, TimestampMixin, UUIDPrimaryKey
 from app.data.models.chat import ChatMessage, ChatSession
 from app.data.models.connector import (
@@ -47,6 +48,8 @@ from app.data.models.work_task import WorkTask
 
 __all__ = [
     "AgentRun",
+    "AgentTask",
+    "AgentTaskEvent",
     "ApprovalRequest",
     "AsyncTask",
     "AuditLog",

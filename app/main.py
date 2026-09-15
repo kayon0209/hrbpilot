@@ -22,6 +22,7 @@ from app.access.middleware.security_headers import SecurityHeadersMiddleware
 from app.access.middleware.tenant import TenantContextMiddleware
 from app.access.routes.admin_mcp import router as admin_mcp_router
 from app.access.routes.admin_users import router as admin_users_router
+from app.access.routes.agent_tasks import router as agent_tasks_router
 from app.access.routes.audit import router as audit_router
 from app.access.routes.auth import router as auth_router
 from app.access.routes.connector_webhooks import router as connector_webhooks_router
@@ -42,6 +43,7 @@ from app.access.routes.voice_insight import router as voice_router
 from app.access.routes.weekly_report import router as weekly_router
 from app.access.routes.work_summary import router as work_summary_router
 from app.config.settings import settings
+from app.mcp.task_server import task_mcp_server
 from app.shared.error_handler import app_error_handler, unhandled_error_handler
 from app.shared.errors import AppError
 from app.shared.logger import get_logger, setup_logging
@@ -159,6 +161,14 @@ def create_app() -> FastAPI:
             _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
         ),
     )
+    # 任务型网关是第二台 MCPServer（同一份合并目录、同一个纯函数判定），
+    # 挂在 /mcp/tasks：普通 HR 的 7+2 高频工具，高级/兼容的原子工具仍在 /mcp。
+    app.mount(
+        "/mcp/tasks",
+        InsufficientScopeGuard(
+            task_mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
+        ),
+    )
     app.include_router(auth_router)
     app.include_router(hr_case_router)
     app.include_router(policy_qa_router)
@@ -181,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_router)
     app.include_router(admin_users_router)
     app.include_router(admin_mcp_router)
+    app.include_router(agent_tasks_router)
     app.include_router(ops_reconciliation_router)
 
     logger.info("app_created", app=settings.app_name, env=settings.app_env)

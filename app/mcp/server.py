@@ -62,6 +62,7 @@ from app.mcp.auth import (
 from app.mcp.contract import APPROVAL_SUBMITTED_TEMPLATE, ToolOutcome, envelope, failure_envelope
 from app.mcp.read_dispatch import anonymous_read_envelope, run_read_tool
 from app.mcp.tool_descriptions import TOOL_DESCRIPTIONS
+from app.scenarios.agent_tasks.tools import combined_catalog
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, ToolError, validate_tool_call
 from app.shared.errors import AppError
 from app.shared.logger import get_logger
@@ -148,7 +149,7 @@ async def _run_read(tool_name: str, params: dict[str, Any], ctx: Context | None)
     """读工具的统一入口：先授权，再交给 ``run_read_tool``。"""
     started = time.perf_counter()
     principal = await _principal_from_ctx(ctx)
-    decision = authorize_tool_call(principal, tool_name, catalog=TOOL_CATALOG)
+    decision = authorize_tool_call(principal, tool_name, catalog=combined_catalog())
 
     if principal is not None and decision.allowed:
         result = await run_read_tool(tool_name, params, principal.tenant_id, principal=principal)
