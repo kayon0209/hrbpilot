@@ -30,8 +30,19 @@ from app.mcp.auth.authorization import visible_tools
 from app.mcp.auth.principal import McpPrincipal
 
 
-def access_profile(principal: McpPrincipal | None, catalog: ToolCatalog) -> dict[str, Any]:
-    """当前凭据的身份摘要与可用范围。``principal`` 为 ``None`` 时返回"未认证"。"""
+def access_profile(
+    principal: McpPrincipal | None,
+    catalog: ToolCatalog,
+    *,
+    installations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """当前凭据的身份摘要与可用范围。``principal`` 为 ``None`` 时返回"未认证"。
+
+    ``installations`` 由**调用方**查好传入 —— 本函数保持无 IO，才能被单测直接断言。
+    传 ``None`` 表示"这次没有查询能力"，此时不返回该字段；而不是返回空列表 ——
+    那会让"没查"和"查了发现一个都没有"变成同一个响应，而这两件事对用户的
+    行动指引完全相反。
+    """
     if principal is None:
         # 匿名不是错误，是"没有作用范围"。返回结构一致的摘要而不是抛异常 ——
         # 调用方拿到的字段集合不随认证状态变化，少一类分支少一类漏判。
@@ -41,7 +52,7 @@ def access_profile(principal: McpPrincipal | None, catalog: ToolCatalog) -> dict
         }
 
     visible, hidden = visible_tools(principal, catalog)
-    return {
+    payload: dict[str, Any] = {
         "authenticated": True,
         # 刻意**不**返回 tenant_id：信封本体已经带着它，重复返回会让
         # ``envelope()`` 收到重复关键字而整条调用崩掉（真实发生过）。工具 payload
@@ -60,6 +71,9 @@ def access_profile(principal: McpPrincipal | None, catalog: ToolCatalog) -> dict
         "unavailable_tool_count": len(hidden),
         "user_message": _summary_message(principal, available=len(visible)),
     }
+    if installations is not None:
+        payload["my_installations"] = installations
+    return payload
 
 
 def _summary_message(principal: McpPrincipal, *, available: int) -> str:

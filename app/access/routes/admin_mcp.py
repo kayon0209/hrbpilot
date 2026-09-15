@@ -45,33 +45,13 @@ from app.access.middleware.decorators import require_auth, require_capability
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_session_factory
 from app.data.models.oauth import OAuthClient, OAuthClientBlock, OAuthToken
-from app.data.models.user import User
+from app.mcp.installations import InstallationOut
+from app.mcp.installations import list_installations as query_installations
 from app.oauth.tokens import REVOKED_REASON_USER_REVOKED, revoke_family
 from app.shared.audit import append_security_audit_event
 from app.shared.errors import NotFoundError
 
 router = APIRouter(prefix="/api/admin/mcp", tags=["admin-mcp"])
-
-
-class InstallationOut(BaseModel):
-    """一个安装实例（= 一条 refresh 轮换链）的最小视图。"""
-
-    family_id: str
-    client_id: str
-    user_id: str
-    #: 租户内用户的显示名。用户记录已被清理时为 ``None``，管理端仍保留不可歧义的 id。
-    user_name: str | None = None
-    role: str
-    #: 未撤销的 refresh token 条数。为 0 表示已经没有可续期的凭据 ——
-    #: 现有 access token 到期后这个实例即彻底失效。
-    active_refresh_tokens: int
-    created_at: datetime | None = None
-    #: 链上最后一条 refresh token 的签发时间，是"最后活动"的**近似**：
-    #: access token 是无状态的，服务端看不到它被用的时刻。字段名不叫
-    #: last_used_at 正是为了不让人把它当成真实的最近调用时间。
-    last_rotated_at: datetime | None = None
-    resource: str = ""
-    revoked_at: datetime | None = None
 
 
 class ClientOut(BaseModel):
@@ -126,72 +106,9 @@ async def list_installations(request: Request) -> list[InstallationOut]:
     """列出本租户的外部 Agent 安装实例。"""
     tenant_id = require_tenant_id(request)
     async with db_session(tenant_id) as session:
-        grouped = (
-            await session.execute(
-                select(
-                    OAuthToken.family_id,
-                    OAuthToken.client_id,
-                    OAuthToken.user_id,
-                    User.name.label("user_name"),
-                    OAuthToken.role,
-                    OAuthToken.resource,
-                    func.min(OAuthToken.created_at),
-                    func.max(OAuthToken.created_at),
-                )
-                .outerjoin(
-                    User,
-                    (User.id == OAuthToken.user_id) & (User.tenant_id == OAuthToken.tenant_id),
-                )
-                .where(OAuthToken.tenant_id == tenant_id)
-                .group_by(
-                    OAuthToken.family_id,
-                    OAuthToken.client_id,
-                    OAuthToken.user_id,
-                    User.name,
-                    OAuthToken.role,
-                    OAuthToken.resource,
-                )
-                .order_by(func.max(OAuthToken.created_at).desc())
-            )
-        ).all()
-
-        # 未撤销条数要单独查：把 revoked_at 放进 group_by 会把一条链拆成两行。
-        active_counts: dict[str, int] = {}
-        for family_id, count in (
-            await session.execute(
-                select(OAuthToken.family_id, func.count())
-                .where(OAuthToken.tenant_id == tenant_id, OAuthToken.revoked_at.is_(None))
-                .group_by(OAuthToken.family_id)
-            )
-        ).all():
-            active_counts[str(family_id)] = int(count)
-
-        revoked_at_by_family: dict[str, datetime] = {}
-        for family_id, revoked_at in (
-            await session.execute(
-                select(OAuthToken.family_id, func.min(OAuthToken.revoked_at))
-                .where(OAuthToken.tenant_id == tenant_id, OAuthToken.revoked_at.is_not(None))
-                .group_by(OAuthToken.family_id)
-            )
-        ).all():
-            if revoked_at is not None:
-                revoked_at_by_family[str(family_id)] = revoked_at
-
-    return [
-        InstallationOut(
-            family_id=str(family_id),
-            client_id=str(client_id),
-            user_id=str(user_id),
-            user_name=str(user_name) if user_name else None,
-            role=str(role),
-            active_refresh_tokens=active_counts.get(str(family_id), 0),
-            created_at=created_at,
-            last_rotated_at=last_rotated_at,
-            resource=str(resource or ""),
-            revoked_at=revoked_at_by_family.get(str(family_id)),
-        )
-        for family_id, client_id, user_id, user_name, role, resource, created_at, last_rotated_at in grouped
-    ]
+        # 查询只写一份（app/mcp/installations.py）：管理端与用户自助端读的是同一个
+        # 事实，两份 SQL 迟早漂移成"管理端说还有一个、用户端说没有了"。
+        return await query_installations(session, tenant_id)
 
 
 @router.post("/installations/{family_id}/revoke")

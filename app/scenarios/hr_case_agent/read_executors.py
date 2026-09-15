@@ -191,28 +191,55 @@ async def execute_get_policy_source(params: dict) -> dict:
 
 
 async def execute_get_my_access_profile(params: dict) -> dict:
-    """当前凭据的身份摘要与可用范围。
-
-    它不需要查库 —— 数据全在**已绑定的主体**里。但仍然走读执行器这条路，理由与
-    其它读工具一样：新增出口分支正是同一个工具长出两套实现的方式。
+    """当前凭据的身份摘要、可用范围，以及**自己接过的助手**。
 
     ``params`` 只用于满足签名；真正的输入是绑定在上下文里的主体，**不接受**由调用
     方传入身份（那会把"你是谁"重新变成可以伪造的参数）。
 
     legacy agent loop 也会注册这个执行器，但那条路径不绑定主体 —— 那时这里会抛
     ``ToolError``，这是正确的：循环里的读步骤没有"外部 Agent 凭据"这个概念。
+
+    安装实例是这里**唯一**要查库的部分（其余字段全在已绑定的主体里）。查询失败时
+    降级为不返回该字段，而不是把整条调用变成 INTERNAL_ERROR —— 那样用户连"我是谁、
+    能做什么"都看不到了，代价远大于少一个列表。
     """
+    from app.mcp.installations import list_installations
     from app.mcp.profile import access_profile
     from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
 
     _ = params
-    principal = current_read_principal()
-    if principal is None:
+    # 运行时 isinstance 需要真实类对象；顶层导入会与 app.mcp.* 成环，所以延迟到这里
+    # （与 _require_principal 同一手法）。顺带把 current_read_principal() 的 ``object``
+    # 收窄成 McpPrincipal —— 下面要用它的 tenant_id / user_id 查安装实例。
+    from app.mcp.auth.principal import McpPrincipal
+
+    bound = current_read_principal()
+    if not isinstance(bound, McpPrincipal):
         raise ToolError(
             "PRINCIPAL_CONTEXT_MISSING",
             "access profile requires a bound principal (MCP transports bind it)",
         )
-    return access_profile(principal, TOOL_CATALOG)  # type: ignore[arg-type]
+    principal = bound
+
+    installations: list[dict] | None = None
+    try:
+        # 用 make_tenant_session 而不是自己拼 session：它把 RLS 的租户上下文与预热
+        # 一起做了，是本仓库"非请求路径"的既有做法（本文件其余几处也用它）。
+        session = await make_tenant_session(principal.tenant_id)
+        try:
+            records = await list_installations(
+                session,
+                principal.tenant_id,
+                user_id=principal.user_id,
+                active_only=True,
+            )
+            installations = [record.model_dump(mode="json") for record in records]
+        finally:
+            await session.close()
+    except Exception:
+        logger.exception("access_profile_installations_unavailable", tenant_id=principal.tenant_id)
+
+    return access_profile(principal, TOOL_CATALOG, installations=installations)
 
 
 def _require_principal() -> McpPrincipal:

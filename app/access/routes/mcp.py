@@ -32,6 +32,8 @@ from app.access.middleware.tenant import require_tenant_id
 from app.access.policies.contracts import ToolDefinition
 from app.access.policies.tool_access import MISSING_CAPABILITY_REASON
 from app.access.tokens import SCOPE_AUTH_METHOD_INTERNAL
+from app.data.database import get_session_factory
+from app.mcp import capabilities as capability_manifest
 from app.mcp.auth import (
     McpPrincipal,
     ToolAuthorization,
@@ -41,10 +43,12 @@ from app.mcp.auth import (
     verified_principal,
     visible_tools,
 )
+from app.mcp.connection_status import build_my_connections
 from app.mcp.contract import APPROVAL_SUBMITTED_TEMPLATE, ToolOutcome, envelope, failure_envelope
+from app.mcp.installations import list_installations, revoke_own_installation
 from app.mcp.read_dispatch import run_read_tool
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, ToolError, validate_tool_call
-from app.shared.errors import AppError
+from app.shared.errors import AppError, AuthError, NotFoundError
 from app.shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -118,6 +122,19 @@ async def capabilities(request: Request) -> dict[str, Any]:
     tenant_id = require_tenant_id(request)
     principal = _principal(request)
     visible, hidden = visible_tools(principal, TOOL_CATALOG)
+    # 任务网关的清单从 manifest 派生，不在这里另抄一份 —— 抄一份就会重演本项目
+    # 自己警告过的漂移（加了工具但副本没跟上，而 assert_manifest_is_current()
+    # 只校验 目录↔描述↔manifest，拦不住副本）。
+    manifest = capability_manifest.build_manifest()
+    task_bundle = manifest["bundles"]["task"]
+    # 用户自助视图：只回**自己**的安装实例。不加 user_id 过滤就会把同租户其他人
+    # 接了什么助手一并返回 —— 那既是隐私问题，也让「我接过的助手」这个名字变成谎话。
+    my_installations: list[dict[str, Any]] = []
+    if principal is not None:
+        async with get_session_factory()() as session:
+            session.info["tenant_id"] = tenant_id
+            records = await list_installations(session, tenant_id, user_id=principal.user_id, active_only=True)
+            my_installations = [record.model_dump(mode="json") for record in records]
     return {
         "server": "hrbpilot-mcp",
         "scope": "L",
@@ -132,6 +149,11 @@ async def capabilities(request: Request) -> dict[str, Any]:
                     "RFC 9728 挑战（resource_metadata 指向 /.well-known/oauth-protected-resource）"
                 ),
             },
+            {
+                "kind": "streamable-http",
+                "url": "/mcp/tasks",
+                "note": "任务型网关（默认连接入口）：同一判定，7+2 高频工具 + 冻结草稿/确认/审批/状态",
+            },
         ],
         "tenant_id": tenant_id,
         "read_tools": [_tool_view(t) for t in visible if t.kind.value == "read"],
@@ -141,9 +163,92 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "hidden_tool_count": len(hidden),
         "hidden_reason": MISSING_CAPABILITY_REASON if hidden else None,
         "write_mode": "create-approval-request",
+        "task_gateway": {
+            "default_bundle": "task",
+            "entrypoint": task_bundle["entrypoint"],
+            "tools": task_bundle["tools"],
+            "task_types": task_bundle["task_types"],
+            "manifest_version": manifest["version"],
+            "confirmation": "服务端冻结草稿；提交只接受 task_id + draft_version + idempotency_key",
+        },
+        # 「我接过的助手」——用户自助视图，只含自己那条链上的活跃实例。
+        "my_installations": my_installations,
+        # 两档授权套餐（仅查询 / 查询 + 提交办理建议）。前端据此拼接入命令，
+        # 而不是自己硬编码一份 scope 串 —— 那是本仓库明令禁止的第二份事实源，
+        # 而且改了后端没改前端会让用户照着界面配出一个权限不对的助手。
+        "scope_packages": manifest["scope_packages"],
         "auth": "读可匿名试（但拿不到真实数据），写需登录；写工具仅创建 ApprovalRequest，不直执",
         "authorization": "按 用户角色能力 ∩ 凭据 scope ∩ 客户端授权上限 判定，与 /mcp 共用同一判定",
     }
+
+
+@router.get("/my-connections")
+@require_auth
+async def my_connections(request: Request) -> dict[str, Any]:
+    """「我的连接」：我接过的助手 + 每个的最近调用情况 + 一份结构化结论。
+
+    与 ``/capabilities`` 分开的理由见 ``app.mcp.connection_status`` 的模块说明：
+    那边是静态能力清单（工具表、套餐），这里是动态运行状态（最近调用、失败、用量）。
+    """
+    tenant_id = require_tenant_id(request)
+    principal = _principal(request)
+    if principal is None:
+        # 与 ``/capabilities`` 的 ``my_installations`` 不同：这里**不用空列表兜底**。
+        # 空列表的含义是"你一个都没接"，而实际发生的是"没识别出你的身份" ——
+        # 这两件事对用户是相反的结论，把后者说成前者会让他去重做一个已经做过的接入。
+        raise AuthError("Authentication required")
+
+    visible, hidden = visible_tools(principal, TOOL_CATALOG)
+    async with get_session_factory()() as session:
+        session.info["tenant_id"] = tenant_id
+        return await build_my_connections(
+            session,
+            tenant_id,
+            principal.user_id,
+            tool_count=len(visible),
+            hidden_tool_count=len(hidden),
+        )
+
+
+class RevokeOwnInstallationOut(BaseModel):
+    family_id: str
+    revoked: bool
+    user_message: str
+
+
+@router.post("/my-installations/{family_id}/revoke")
+@require_auth
+async def revoke_my_installation(request: Request, family_id: str) -> RevokeOwnInstallationOut:
+    """解绑一个**自己接过**的助手。
+
+    与管理员那条 ``/api/admin/mcp/installations/{id}/revoke`` 的区别只有两处：不需要
+    ``mcp_admin`` 能力，且把 ``user_id`` 下推到查询里 —— 用户只能撤掉自己的实例。
+    归属不符与不存在返回**同一个** 404，不区分：区分它等于提供一个"这个 id 是否
+    存在"的探测器，而 ``family_id`` 是可能从日志或截图里泄漏的。
+    """
+    tenant_id = require_tenant_id(request)
+    principal = _principal(request)
+    if principal is None:
+        raise AuthError("Authentication required")
+
+    async with get_session_factory()() as session:
+        session.info["tenant_id"] = tenant_id
+        revoked = await revoke_own_installation(
+            session,
+            tenant_id,
+            principal.user_id,
+            family_id,
+            actor_id=principal.user_id,
+        )
+        if not revoked:
+            raise NotFoundError("oauth_family", family_id)
+        await session.commit()
+
+    return RevokeOwnInstallationOut(
+        family_id=family_id,
+        revoked=True,
+        user_message="已解绑。这个助手下一次调用会立即失败，不用等登录过期。",
+    )
 
 
 @router.get("/tools")

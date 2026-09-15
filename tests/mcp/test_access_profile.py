@@ -104,3 +104,34 @@ def test_role_capability_names_is_the_internal_view() -> None:
     names = role_capability_names(_principal())
     assert "hr_case" in names
     assert "hr_case" not in str(access_profile(_principal(), TOOL_CATALOG))
+
+
+# --------------------------------------------------------------------------- #
+# 「我接过的助手」：字段的有无本身就是信息
+#
+# 这里钉的不是"能返回一个列表"，而是**三种状态彼此可区分**：
+#   没查（字段缺席）≠ 查了但没有（空列表）≠ 查到了（非空列表）
+# 把前两者合并会让调用方无法判断"是这个人没接过助手"还是"这次没查到"，
+# 而这两件事对用户的行动指引正好相反。
+# --------------------------------------------------------------------------- #
+
+
+def test_installations_field_is_absent_when_the_caller_did_not_query() -> None:
+    assert "my_installations" not in access_profile(_principal(), TOOL_CATALOG)
+
+
+def test_installations_field_is_present_and_empty_when_queried_empty() -> None:
+    profile = access_profile(_principal(), TOOL_CATALOG, installations=[])
+    assert profile["my_installations"] == []
+
+
+def test_installations_are_passed_through_untouched() -> None:
+    rows = [{"family_id": "f-1", "client_id": "codex", "active_refresh_tokens": 1}]
+    profile = access_profile(_principal(), TOOL_CATALOG, installations=rows)
+    assert profile["my_installations"] == rows
+
+
+def test_an_anonymous_caller_never_receives_installations() -> None:
+    """匿名时连身份都没有，"我接过的助手"无从谈起 —— 传了也不能回。"""
+    profile = access_profile(None, TOOL_CATALOG, installations=[{"family_id": "f-1"}])
+    assert "my_installations" not in profile
