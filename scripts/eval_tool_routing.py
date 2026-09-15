@@ -96,6 +96,9 @@ class SampleResult:
     # 真实调用验证（expect=tool 且模型选了工具时）
     live_call_outcome: str = ""
     live_call_ok: bool | None = None
+    # 路由选对了、但真实调用没跑通 —— 单独标记，便于把"后端问题"从
+    # "模型不会用工具"里剥离出来，避免误读准确率。
+    routed_ok_but_live_failed: bool = False
     # 计量
     input_tokens: int = 0
     output_tokens: int = 0
@@ -115,11 +118,29 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+async def _discover_as_metadata(client: httpx.AsyncClient, *, as_url: str) -> dict[str, Any]:
+    """从 AS 元数据发现端点（RFC 8414）；取不到就回退到本项目已知路径。
+
+    刻意不硬编码端点：AS 的挂载前缀属于**部署配置**，写死会让脚本在换部署时
+    以「HTTP 404 看起来像服务端故障」的方式失败，把排查带偏到错误方向。
+    """
+    try:
+        resp = await client.get(f"{as_url}/.well-known/oauth-authorization-server", timeout=10.0)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return {}
+
+
 async def obtain_access_token(client: httpx.AsyncClient, *, as_url: str, scope: str) -> tuple[str, dict[str, Any]]:
     """DCR 注册一个评测客户端 → 授权码流换 access token。返回 (token, 注册元数据)。"""
     redirect_uri = "http://127.0.0.1:8642/eval-callback"
+    meta = await _discover_as_metadata(client, as_url=as_url)
+    register_url = meta.get("registration_endpoint") or f"{as_url}/oauth/register"
+    token_url = meta.get("token_endpoint") or f"{as_url}/oauth/token"
     register = await client.post(
-        f"{as_url}/register",
+        register_url,
         json={
             "client_name": "HRBPilot 路由评测器",
             "redirect_uris": [redirect_uri],
@@ -164,7 +185,7 @@ async def obtain_access_token(client: httpx.AsyncClient, *, as_url: str, scope: 
         raise RuntimeError(f"回调无授权码：{granted.headers.get('location')!r}")
 
     token = await client.post(
-        f"{as_url}/oauth/token",
+        token_url,
         data={
             "grant_type": "authorization_code",
             "code": code,
@@ -186,7 +207,10 @@ async def obtain_access_token(client: httpx.AsyncClient, *, as_url: str, scope: 
 
 class McpClient:
     def __init__(self, base_url: str, token: str) -> None:
-        self._base = base_url.rstrip("/")
+        # Streamable HTTP 的挂载点**带尾斜杠**：不带会被 307 重定向到带斜杠的地址，
+        # 而重定向响应是空 body —— 那会让下面 json.loads 抛一个看不懂的
+        # JSONDecodeError，把排查带偏到协议层。这里直接补齐，从源头避免。
+        self._base = base_url.rstrip("/") + "/"
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json, text/event-stream",
@@ -200,6 +224,14 @@ class McpClient:
         payload = {"jsonrpc": "2.0", "id": self._call_id, "method": method, "params": params}
         response = await client.post(self._base, headers=self._headers, json=payload)
         text = response.text
+        if not text.strip():
+            # 空响应最常见的两个来源：挂载点重定向、以及通知类方法的 202。
+            # 两种都不该以 JSONDecodeError 的形式暴露。
+            raise RuntimeError(
+                f"{method} 返回空响应：HTTP {response.status_code}"
+                f"{'；location=' + response.headers['location'] if response.headers.get('location') else ''}"
+                f"（挂载点 {self._base!r}）"
+            )
         # Streamable HTTP 可能以 SSE 帧返回；两者都解析。
         if text.startswith("event:") or "data:" in text[:32]:
             for line in text.splitlines():
@@ -286,7 +318,10 @@ async def route_utterance(
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0,
-            "max_tokens": 200,
+            # 带思考模式的模型（GLM 等）会先用 reasoning_content 消耗预算；
+            # 预算不足时 content 为空，会被误读成"模型不会用工具"。默认给足，
+            # 并允许按需覆盖。
+            "max_tokens": int(os.environ.get("EVAL_LLM_MAX_TOKENS", "1200")),
         },
         timeout=60,
     )
@@ -296,7 +331,14 @@ async def route_utterance(
         "input_tokens": body.get("usage", {}).get("prompt_tokens", 0),
         "output_tokens": body.get("usage", {}).get("completion_tokens", 0),
     }
-    content = body["choices"][0]["message"]["content"].strip()
+    content = (body["choices"][0]["message"].get("content") or "").strip()
+    if not content:
+        # 空 content 有两个常见来源：token 预算被思考过程吃光，或模型不支持该参数。
+        # 两种都不是"路由能力"的结论，必须显式区分，否则会把环境问题记成模型分数。
+        return {
+            "action": "unparsable",
+            "raw": "（模型返回空 content：可能是思考模式占满了 max_tokens 预算）",
+        }, usage
     # 模型可能裹 markdown 代码块；剥掉再解析。
     if content.startswith("```"):
         content = content.strip("`").lstrip("json").strip()
@@ -337,13 +379,32 @@ def _grade(sample: dict[str, Any], prediction: dict[str, Any], live: SampleResul
     if sample["expect"] == "tool":
         ok = action == "call" and sample.get("tool") in r.predicted_tools
         if not ok:
-            r.reason = f"期望 {sample.get('tool')}，实际 {action}:{r.predicted_tools}"
+            # 模型选了 clarify 时把"它问了什么"打出来，而不是空的 tools ——
+            # 后者会让人误读成"模型什么都没做"，掩盖真正的问题
+            # （常常是黄金集期望直接调用、却没在话术里给出必需的 ID）。
+            detail = r.predicted_tools if action == "call" else (r.followup_mentioned or ["（未给出补充提问）"])
+            r.reason = f"期望 {sample.get('tool')}，实际 {action}:{detail}"
         else:
-            r.passed = live.live_call_ok is not False  # None（未验）不算失败
+            # 保留既有约定（有测试守护）：真实调用失败即该行不算通过。
+            # 但**必须把两类失败区分开**——"没选对工具"和"选对了但后端没跑通"
+            # 是完全不同的问题，混在一起会让人误以为模型不会用工具。
+            # 后者在 reason 里显式标注，并由汇总里的 routed_ok_but_live_failed 单独计数。
+            r.passed = live.live_call_ok is not False
+            if live.live_call_ok is False:
+                r.routed_ok_but_live_failed = True
+                r.reason = (
+                    f"路由正确（{sample.get('tool')}）；但真实调用未成功"
+                    f"（{live.live_call_outcome or '无 outcome'}）—— 后端问题，非路由错误"
+                )
     elif sample["expect"] == "clarify":
         must_ask = sample.get("must_ask", [])
         asked = " ".join(r.followup_mentioned)
-        r.passed = action == "clarify" and all(k in asked for k in must_ask)
+        # must_ask 的每一项可写成 "A|B|C"：任一候选命中即算问到。
+        # 判分是字面匹配，而模型完全可能用另一种自然说法问同一个东西
+        # （期望"哪件事"、实际问"哪个案件"），不这么做会产生大量假阴性。
+        r.passed = action == "clarify" and all(
+            any(cand.strip() in asked for cand in str(k).split("|")) for k in must_ask
+        )
         if not r.passed:
             r.reason = f"期望补问{must_ask}，实际 {action}:{asked[:80]}"
     elif sample["expect"] == "refuse":
@@ -392,7 +453,9 @@ async def run(args: argparse.Namespace) -> int:
         catalog = _tool_catalog_for_prompt(tools)
 
         # 预备一次真实调用的参数样例：路由判定为工具时才发起（避免对写工具滥发）
-        live_args = {
+        # 显式标注：值是「样例参数」或 None（表示跳过 live 验证）。不标注的话
+        # mypy 会把混合了 dict 与 None 的值推断成 object，传参处报 arg-type。
+        live_args: dict[str, dict[str, Any] | None] = {
             "search_policy": {"query": "年假"},
             "get_policy_source": {"document_name": "员工手册"},
             "search_cases": {"limit": 5},
@@ -423,9 +486,10 @@ async def run(args: argparse.Namespace) -> int:
             picked = [t for t in prediction.get("tools", []) if isinstance(t, str)]
             if prediction.get("action") == "call" and picked:
                 target = picked[0]
-                if target in live_args and live_args[target] is not None:
+                sample_args = live_args.get(target)
+                if sample_args is not None:
                     try:
-                        call = await mcp.call_tool(http, target, live_args[target])
+                        call = await mcp.call_tool(http, target, sample_args)
                         result = call.get("result", {})
                         structured = result.get("structuredContent") or result.get("content")
                         payload = structured if isinstance(structured, dict) else {}
@@ -466,6 +530,14 @@ def summarize(results: list[SampleResult]) -> int:
     total_in = sum(r.input_tokens for r in results)
     total_out = sum(r.output_tokens for r in results)
     print(f"token 消耗:          输入 {total_in} / 输出 {total_out}（共 {len(results)} 条）")
+
+    # "选对了工具但后端没跑通"必须单独列出：它反映的是后端/数据问题，
+    # 不是模型的路由能力。混进准确率会让人误以为模型不会用工具。
+    routed_only = [r for r in results if r.routed_ok_but_live_failed]
+    if routed_only:
+        tool_clean = [r for r in tool_rows if not r.routed_ok_but_live_failed]
+        print(f"路由正确但后端未跑通: {len(routed_only)} 条 → 非路由问题，见各条 reason")
+        print(f"  剔除后端失败后:      工具路由准确率 {rate(tool_clean)}")
 
     for split in ("train", "held-out"):
         rows = by_split.get(split, [])

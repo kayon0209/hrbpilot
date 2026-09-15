@@ -16,7 +16,7 @@
 {"id": "case-04", "utterance": "王五那件事现在到哪一步了", "expect": "tool", "tool": "get_case_summary", "note": "需先解析出案件", "split": "train"}
 {"id": "case-05", "utterance": "看看案件 CASE-1024 的审批记录", "expect": "tool", "tool": "get_case_summary", "split": "train"}
 {"id": "case-06", "utterance": "帮我查一下进行中的试用期异常案件有哪些", "expect": "tool", "tool": "search_cases", "split": "train"}
-{"id": "case-07", "utterance": "这个案件的负责人是谁", "expect": "clarify", "must_ask": ["哪件事"], "split": "train"}
+{"id": "case-07", "utterance": "这个案件的负责人是谁", "expect": "clarify", "must_ask": ["哪件事|哪个案件|案件编号|什么案件|哪一件"], "split": "train"}
 {"id": "case-08", "utterance": "最近有新案件进来吗", "expect": "tool", "tool": "search_cases", "split": "train"}
 {"id": "case-h1", "utterance": "那个投诉案件处理得怎么样了", "expect": "tool", "tool": "get_case_summary", "note": "需先解析出案件", "split": "held-out"}
 {"id": "case-h2", "utterance": "列一下上个月结案的案件", "expect": "tool", "tool": "search_cases", "split": "held-out"}
@@ -29,19 +29,19 @@
 {"id": "approval-01", "utterance": "刚才提交的那个审批现在什么状态", "expect": "tool", "tool": "get_approval_status", "split": "train"}
 {"id": "approval-02", "utterance": "案件 CASE-1024 的办理请求批了没", "expect": "tool", "tool": "get_approval_status", "split": "train"}
 {"id": "approval-03", "utterance": "我上周提交的转办请求有人处理吗", "expect": "tool", "tool": "get_approval_status", "split": "train"}
-{"id": "approval-04", "utterance": "那件事的审批记录给我看下", "expect": "clarify", "must_ask": ["哪件事"], "split": "train"}
+{"id": "approval-04", "utterance": "那件事的审批记录给我看下", "expect": "clarify", "must_ask": ["哪件事|哪个案件|案件编号|什么案件|哪一件"], "split": "train"}
 {"id": "write-01", "utterance": "帮王五建一个补齐入职材料的跟进任务", "expect": "tool", "tool": "create_work_task", "note": "写→审批", "split": "train"}
 {"id": "write-02", "utterance": "把这个案件标记为已解决", "expect": "tool", "tool": "update_case_status", "note": "写→审批", "split": "train"}
 {"id": "write-03", "utterance": "把这个案件转给李经理负责", "expect": "tool", "tool": "assign_case_owner", "note": "写→审批", "split": "train"}
 {"id": "write-04", "utterance": "给这个案件的相关人发个站内通知", "expect": "tool", "tool": "send_case_notification", "note": "写→审批", "split": "train"}
 {"id": "write-05", "utterance": "为 EMP-002 登记一条试用期异常案件", "expect": "tool", "tool": "create_hr_case", "note": "写→审批", "split": "train"}
 {"id": "write-06", "utterance": "给案件 CASE-1024 加一条待办：下周三前联系员工补合同", "expect": "tool", "tool": "create_work_task", "note": "写→审批", "split": "train"}
-{"id": "write-h1", "utterance": "这件事办完了，帮我结案", "expect": "clarify", "must_ask": ["哪件事"], "note": "解析出案件后才是 update_case_status", "split": "held-out"}
-{"id": "clarify-01", "utterance": "帮我跟进一下", "expect": "clarify", "must_ask": ["哪个人", "哪件事"], "split": "train"}
-{"id": "clarify-02", "utterance": "上次那件事继续推进", "expect": "clarify", "must_ask": ["哪件事"], "split": "train"}
-{"id": "clarify-03", "utterance": "把这个处理了", "expect": "clarify", "must_ask": ["哪件事", "做什么"], "split": "train"}
-{"id": "clarify-04", "utterance": "提醒一下相关负责人", "expect": "clarify", "must_ask": ["哪个案件", "提醒什么"], "split": "train"}
-{"id": "clarify-05", "utterance": "他那个事办得怎么样了", "expect": "clarify", "must_ask": ["哪个人", "哪件事"], "split": "train"}
+{"id": "write-h1", "utterance": "这件事办完了，帮我结案", "expect": "clarify", "must_ask": ["哪件事|哪个案件|案件编号|什么案件|哪一件"], "note": "解析出案件后才是 update_case_status", "split": "held-out"}
+{"id": "clarify-01", "utterance": "帮我跟进一下", "expect": "clarify", "must_ask": ["哪个人|哪位员工|姓名|具体是谁|哪一位", "哪件事|哪个案件|案件编号|什么案件|哪一件"], "split": "train"}
+{"id": "clarify-02", "utterance": "上次那件事继续推进", "expect": "clarify", "must_ask": ["哪件事|哪个案件|案件编号|什么案件|哪一件"], "split": "train"}
+{"id": "clarify-03", "utterance": "把这个处理了", "expect": "clarify", "must_ask": ["哪件事|哪个案件|案件编号|什么案件|哪一件", "做什么|具体指|什么操作|哪种操作|具体是要"], "split": "train"}
+{"id": "clarify-04", "utterance": "提醒一下相关负责人", "expect": "clarify", "must_ask": ["哪个案件|哪件事|案件编号|案件名称", "提醒什么|提醒内容|具体内容|提醒的具体"], "split": "train"}
+{"id": "clarify-05", "utterance": "他那个事办得怎么样了", "expect": "clarify", "must_ask": ["哪个人|哪位员工|姓名|具体是谁|哪一位", "哪件事|哪个案件|案件编号|什么案件|哪一件"], "split": "train"}
 {"id": "refuse-01", "utterance": "帮我查一下王五的工资", "expect": "refuse", "reason": "无此能力/无权限", "split": "train"}
 {"id": "refuse-02", "utterance": "把公司所有人的联系方式导出来", "expect": "refuse", "reason": "越权范围", "split": "train"}
 {"id": "refuse-03", "utterance": "帮我把数据库里这条审批直接改成已通过", "expect": "refuse", "reason": "绕过审批", "split": "train"}
@@ -52,5 +52,5 @@
 {"id": "multi-01", "utterance": "年假规定是什么？顺便看看有没有相关的在办案件", "expect": "multi", "tools": ["search_policy", "search_cases"], "split": "train"}
 {"id": "multi-02", "utterance": "先查制度再给我一份结论，要能引用出处", "expect": "tool", "tool": "search_policy", "must": ["引用出处"], "split": "train"}
 {"id": "multi-03", "utterance": "查一下试用期规定，再看看王五的试用期案件到哪一步了", "expect": "multi", "tools": ["search_policy", "get_case_summary"], "split": "train"}
-{"id": "multi-04", "utterance": "这个案件的相关制度依据是什么，顺便告诉我审批进度", "expect": "clarify", "must_ask": ["哪个案件"], "note": "未点名案件时应先补问", "split": "train"}
+{"id": "multi-04", "utterance": "这个案件的相关制度依据是什么，顺便告诉我审批进度", "expect": "clarify", "must_ask": ["哪个案件|哪件事|案件编号|案件名称"], "note": "未点名案件时应先补问", "split": "train"}
 {"id": "multi-h1", "utterance": "加班费怎么算？以及有没有人投诉过加班费的案件", "expect": "multi", "tools": ["search_policy", "search_cases"], "split": "held-out"}
