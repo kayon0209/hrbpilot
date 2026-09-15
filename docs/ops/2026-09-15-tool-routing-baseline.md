@@ -33,7 +33,7 @@ train 29/48 · held-out 5/8
 
 | 类别 | 条数 | 是什么问题 | 是否反映模型能力 |
 | --- | --- | --- | --- |
-| **A. 后端未跑通** | 8 | `search_policy` 真实调用返回 `FAILED`。本机**未启动 Milvus**（向量检索依赖，只起了 postgres/redis/minio/etcd） | ❌ 环境问题 |
+| **A. 后端未跑通** | 8 | `search_policy` 返回 `FAILED / NO_KNOWLEDGE_BASE`：开发库里**一条制度数据都没有**（`document_chunks` 0 行、`knowledge_bases` 0 行）。**已排除 Milvus 因素**——补起 Milvus 后仍失败，才定位到是无数据 | ❌ 数据/环境问题 |
 | **B. 黄金集期望不合理** | 约 7 | 话术没给出 `case_id`，却期望直接调 `get_case_summary` / `get_approval_status` / 写工具。模型只能先问"您指的是哪个案件？"——**模型是对的** | ❌ 评测集问题 |
 | **C. 真实语义混淆** | 2 | `policy-02`/`policy-h2`："找政策原文"被判给 `search_policy` 而非 `get_policy_source` | ✅ **真实问题** |
 | **D. multi 串联偏差** | 1 | `multi-03` 期望 `[get_case_summary, search_policy]`，实际 `[search_policy, search_cases]` | ✅ 真实问题 |
@@ -43,7 +43,12 @@ A 和 B 占 15 条，是环境与评测集缺陷。**在这 15 条修好之前�
 
 ### 修复优先级
 
-1. **A（环境问题）**：补跑前启动 Milvus，或接受这 8 条为"未验证"（判分器已支持 `live_call_ok=None` 不判负）。
+1. **A（数据问题）**：在「知识库管理」里为当前单位启用并导入一个制度库，让 `document_chunks`
+   有数据。这是**前置的数据准备，不是代码缺陷**。
+
+   > 顺带验证：这 8 条的失败响应本身就是 T3 的产物——`error_code`、`user_message`、
+   > `fix`、`retryable=false` 全部到位，中文可读。说明"可自纠错的错误"确实生效了。
+   > 另：`validated_params` 里回显了 `detail: "concise"`，证明 T4 的摘要分档也已落地。
 2. **B（评测集问题）**：二选一 ——
    - 在话术里补上可解析的案件号（如"EMP-1024 那件事现在到哪一步了"）；或
    - 把这类条目的 `expect` 从 `tool` 改成 `clarify`，并写清 `must_ask`。
