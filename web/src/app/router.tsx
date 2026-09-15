@@ -71,7 +71,19 @@ export const routes: RouteObject[] = [
       { path: 'tasks', element: <ProtectedRoute roles={only('hrbp', 'hr_manager')}><TasksPage /></ProtectedRoute> },
       { path: 'evaluation', element: <ProtectedRoute roles={only('admin')}><EvaluationPage /></ProtectedRoute> },
       { path: 'data-sources', element: <ProtectedRoute roles={only('admin')}><DataSourcesPage /></ProtectedRoute> },
-      { path: 'mcp', element: <ProtectedRoute roles={only('admin', 'hrbp', 'hr_manager')}><McpPage /></ProtectedRoute> },
+      // 刻意**不用** `/mcp` 做页面路径：nginx 把 `/mcp` 与 `/mcp/` 反代给 MCP 协议
+      // 端点（`web/nginx.conf` 的 `location = /mcp` 会 307 到 `/mcp/`）。同名时
+      // 点击导航能进（React Router 在客户端接管），但**刷新、收藏夹、地址栏直达、
+      // 新标签打开都会被 nginx 抢走**并返回后端的 401 JSON —— 用户无法自行恢复。
+      // 页面路径与协议端点必须分开，所以这里用 `/assistant`。
+      {
+        path: 'assistant',
+        element: (
+          <ProtectedRoute roles={only('admin', 'hrbp', 'hr_manager')}>
+            <McpPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: 'settings', element: <ProtectedRoute roles={only('admin')}><SettingsPage /></ProtectedRoute> },
       { path: 'audit', element: <ProtectedRoute roles={only('admin')}><AuditPage /></ProtectedRoute> },
       { path: 'users', element: <ProtectedRoute roles={only('admin')}><AdminUsersPage /></ProtectedRoute> },

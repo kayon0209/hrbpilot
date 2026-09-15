@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   advanceWorkTask,
   createWorkSubtask,
@@ -11,6 +11,7 @@ import {
   type WorkSummary,
 } from '../../api/work-summaries'
 import { AsyncState } from '../../components/AsyncState'
+import { AgentTasksSection } from '../agent-tasks/AgentTasksSection'
 
 function formatDeadline(value: string) {
   // The API stores an ISO-8601 UTC instant (backend returns .isoformat() with
@@ -220,6 +221,9 @@ function WorkItem({
  */
 export function TasksPage() {
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // 深链：submit 返回的 web 链接是 /tasks?tab=agent[&task_id=…] —— 打开即落到 AI 分区。
+  const tab = searchParams.get('tab') === 'agent' ? 'agent' : 'mine'
   const work = useQuery({ queryKey: ['work-summaries'], queryFn: getWorkSummaries })
   const ownersQuery = useQuery({ queryKey: ['assignable-owners'], queryFn: getAssignableOwners })
   const owners = ownersQuery.data?.owners ?? []
@@ -287,11 +291,25 @@ export function TasksPage() {
       <header className="page-heading">
         <div>
           <span className="eyebrow">工作台</span>
-          <h1>工作任务</h1>
-          <p>每项任务标明阶段、下一步动作与等待对象；完成反馈直接指向产出。</p>
+          <h1>任务中心</h1>
+          <p>我的工作与 AI 发起的任务集中在这里；每项任务都显示真实状态与下一步。</p>
+        </div>
+        <div className="admin-links" role="tablist" aria-label="任务来源">
+          <button type="button" role="tab" aria-selected={tab === 'mine'} onClick={() => setSearchParams({})}>我的工作</button>
+          <button type="button" role="tab" aria-selected={tab === 'agent'} onClick={() => setSearchParams({ tab: 'agent' })}>AI 发起</button>
         </div>
       </header>
 
+      {tab === 'agent' ? <AgentTasksSection /> : <>
+      {/* 「我的工作」只含多日任务；AI 助手提交的办理在另一个分区 —— 不引导的话，
+          从导航进来的用户找不到"我让助手办的事"，会以为没提交成功。 */}
+      <p className="form-note">
+        你通过 AI 助手发起、提交或等待审批的办理在{' '}
+        <button type="button" className="link-button" onClick={() => setSearchParams({ tab: 'agent' })}>
+          AI 发起
+        </button>{' '}
+        分区查看进度。
+      </p>
       <section className="panel" aria-labelledby="create-task-heading">
         <h2 id="create-task-heading">新建多日任务</h2>
         <div className="task-metadata">
@@ -382,6 +400,7 @@ export function TasksPage() {
           </div>
         </section>
       )}
+      </>}
     </main>
   )
 }

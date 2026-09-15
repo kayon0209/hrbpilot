@@ -23,8 +23,10 @@ const navigation: NavItem[] = [
   // —— HR 工作台（hrbp 与 hr_manager 共用；employee 不可见）——
   { to: '/', label: '今日工作', group: '工作台' },
   { to: '/policy', label: '制度问答', group: '工作台' },
-  { to: '/tasks', label: '工作任务', group: '工作台' },
-  { to: '/mcp', label: 'MCP 外部工具', group: '更多工具' },
+  { to: '/tasks', label: '任务中心', group: '工作台' },
+  // 路径是 /assistant 而不是 /mcp：nginx 把 /mcp 与 /mcp/ 反代给 MCP 协议端点
+  // （`web/nginx.conf`），页面用同名路径会导致刷新/直达时被 307 抢走并落到后端。
+  { to: '/assistant', label: 'AI 助手接入', group: '更多工具' },
   { to: '/interview', label: '面谈纪要', group: '工作材料', capability: 'interview_digest' },
   { to: '/voice', label: '员工声音', group: '工作材料', capability: 'voice_insight' },
   { to: '/weekly', label: 'HR 周报', group: '输出与复盘', capability: 'weekly_report' },
@@ -54,7 +56,7 @@ export function getVisibleNav(role: UserRole | null | undefined): NavItem[] {
       { to: '/evaluation', label: 'AI 质量', group: '平台状态' },
       { to: '/knowledge-base', label: '知识库管理', group: '数据与接入' },
       { to: '/data-sources', label: '数据接入', group: '数据与接入' },
-      { to: '/mcp', label: 'MCP 外部工具', group: '数据与接入' },
+      { to: '/assistant', label: 'AI 助手接入', group: '数据与接入' },
       { to: '/settings', label: '服务设置', group: '服务与审计' },
       { to: '/audit', label: '审计记录', group: '服务与审计' },
     ]

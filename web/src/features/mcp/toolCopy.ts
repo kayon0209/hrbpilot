@@ -9,6 +9,7 @@
  * 注意：字段的**类型/必填**来自后端 schema（见 toolForm.ts），这里只放"怎么说人话"。
  */
 import type { McpToolResult, ToolOutcome } from '../../api/mcp'
+import type { AgentTaskOutcome } from '../../api/agent-tasks'
 
 export interface ToolCopy {
   /** 中文名，替代技术名做卡片主标题 */
@@ -135,11 +136,18 @@ export const OPTION_LABELS: Record<string, string> = {
 
 export type ResultTone = 'ok' | 'warn' | 'error'
 
-const TONE_BY_OUTCOME: Record<ToolOutcome, ResultTone> = {
+/** 任务型 outcome 也走同一套语气：草稿/待审批/运行中是"进行中"，不是错误。 */
+const TONE_BY_OUTCOME: Record<string, ResultTone> = {
   FOUND: 'ok',
+  SUCCEEDED: 'ok',
   // 没查到不是错误：它是"这次没有依据"，用户需要知道但不能被吓到。
   NO_EVIDENCE: 'warn',
   AWAITING_APPROVAL: 'warn',
+  AWAITING_CONFIRMATION: 'warn',
+  INPUT_REQUIRED: 'warn',
+  RUNNING: 'warn',
+  CANCELLED: 'warn',
+  EXPIRED: 'warn',
   AUTH_REQUIRED: 'warn',
   FORBIDDEN: 'error',
   FAILED: 'error',
@@ -174,11 +182,30 @@ export function describeResult(res: McpToolResult): { tone: ResultTone; text: st
   return { tone: 'warn', text: message ?? '已返回结果，详情见下方原始数据。' }
 }
 
-const DEFAULT_TEXT: Record<ToolOutcome, string> = {
+const DEFAULT_TEXT: Record<string, string> = {
   FOUND: '查询完成，已找到相关内容。',
   NO_EVIDENCE: '没有找到匹配的内容。',
   AWAITING_APPROVAL: '已提交，等待 HR 批准后才会真正执行。',
+  AWAITING_CONFIRMATION: '草稿已冻结，请核对确认卡并提交审批。',
+  INPUT_REQUIRED: '信息还不完整，请补齐后再生成确认卡。',
+  RUNNING: '任务正在处理中，可稍后查询状态。',
+  SUCCEEDED: '任务已完成。',
+  CANCELLED: '任务已取消。',
+  EXPIRED: '草稿已过期，请重新发起。',
   AUTH_REQUIRED: '这次调用没有携带身份信息，因此没有返回真实数据。',
   FORBIDDEN: '你当前的权限不包含这项能力。',
   FAILED: '调用没有完成，请稍后重试。',
+}
+
+export function describeTaskResult(res: {
+  outcome?: AgentTaskOutcome | ToolOutcome | string
+  user_message?: string
+  ok?: boolean
+  approval_id?: string
+  chunks?: unknown[]
+}): { tone: ResultTone; text: string } {
+  if (typeof res.outcome === 'string' && res.outcome in TONE_BY_OUTCOME) {
+    return { tone: TONE_BY_OUTCOME[res.outcome], text: res.user_message ?? DEFAULT_TEXT[res.outcome] }
+  }
+  return describeResult(res as McpToolResult)
 }

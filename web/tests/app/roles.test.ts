@@ -85,6 +85,10 @@ test('navigation renders three distinct experiences', () => {
   // hrbp: today workspace + business scenes, no governance
   expect(hrbp).toContain('/interview')
   expect(hrbp).toContain('/voice')
+  // 「AI 助手接入」是 HR 自助页，所以入口必须在；路径用 /assistant 而非 /mcp
+  // （后者被 nginx 让给了 MCP 协议端点）—— 钉住它，避免再被改回同名路径。
+  expect(hrbp).toContain('/assistant')
+  expect(hrbp).not.toContain('/mcp')
   expect(hrbp).not.toContain('/knowledge')
   expect(hrbp).not.toContain('/evaluation')
   expect(hrbp).not.toContain('/settings')
@@ -95,8 +99,17 @@ test('navigation renders three distinct experiences', () => {
   expect(manager).not.toContain('/knowledge-base')
   expect(manager).not.toContain('/evaluation')
   expect(manager).not.toContain('/settings')
-  // admin: platform pages only, no business entries (/mcp is a platform tool page)
-  expect(admin).toEqual(['/admin', '/users', '/evaluation', '/knowledge-base', '/data-sources', '/mcp', '/settings', '/audit'])
+  // admin: platform pages only, no business entries (/assistant is a platform tool page)
+  expect(admin).toEqual([
+    '/admin',
+    '/users',
+    '/evaluation',
+    '/knowledge-base',
+    '/data-sources',
+    '/assistant',
+    '/settings',
+    '/audit',
+  ])
 })
 
 test('each experience lands on its own home after login', () => {

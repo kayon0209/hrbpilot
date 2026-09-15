@@ -10,6 +10,72 @@
   gap: 16px;
 }
 
+.checkup {
+  padding: 18px 20px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--action);
+  border-radius: var(--radius-2);
+}
+
+.checkupRunning,
+.checkupIdle {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.checkupList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.checkupList li {
+  padding-left: 4px;
+}
+
+.checkupList strong {
+  color: var(--ink);
+}
+
+.checkupOk::marker {
+  color: var(--success);
+}
+
+.checkupWarn::marker {
+  color: var(--warning);
+}
+
+.checkupError::marker {
+  color: var(--danger);
+}
+
+.plainSteps {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0 0;
+  padding-left: 22px;
+  color: var(--ink-soft);
+  font-size: var(--text-meta);
+  line-height: 1.7;
+}
+
+.plainSteps strong {
+  color: var(--ink);
+}
+
+.introGrid h2 {
+  margin-top: 5px;
+}
+
+
+
 .sectionTitle {
   margin: 0 0 14px;
   font: 600 var(--text-h3) var(--font-display);
@@ -575,6 +641,243 @@
   line-height: 1.6;
 }
 
+/* 写工具卡上的「提交后需 HR 批准才生效」：与 chipWrite 同色系，提示副作用。 */
+.toolNote {
+  margin: 0 0 var(--space-3);
+  color: var(--evidence);
+  font: var(--text-micro) / 1.6 var(--font-body);
+}
+
+/* 租户级管理原先自己就是一块 panel，现在收进 details —— 这里只补内容间距。 */
+.managerBody {
+  padding: var(--space-5) 0 0;
+}
+
+/* ---- 自助接入（2026-09-15）：选助手 → 选权限 → 照做 → 试一句 ----
+ *
+ * 面向 HR 本人：接入配置在他自己的电脑上完成，不需要 IT 参与，所以界面
+ * 直接把"复制这条命令"作为主行动，而不是给他一段配置去转发。
+ */
+
+.assistantPicks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.assistantPick {
+  padding: 7px 16px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font: var(--text-ui) / 1.4 var(--font-body);
+  cursor: pointer;
+}
+
+.assistantPick:hover {
+  background: var(--surface-subtle);
+}
+
+.assistantPick[aria-pressed='true'] {
+  color: #fff;
+  background: var(--action);
+  border-color: var(--action);
+  font-weight: 500;
+}
+
+.stepBlock {
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.stepBlock:first-child {
+  padding-top: 0;
+}
+
+.stepBlock:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.stepHead {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  margin-bottom: var(--space-2);
+}
+
+.stepNo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--action);
+  background: var(--action-soft);
+  border-radius: var(--radius-pill);
+  font: 500 var(--text-micro) / 1 var(--font-body);
+}
+
+.stepTitle {
+  color: var(--ink);
+  font: 500 var(--text-ui) / 1.5 var(--font-body);
+}
+
+.stepWhy {
+  margin: 0 0 var(--space-3) 34px;
+  color: var(--muted);
+  font: var(--text-meta) / 1.6 var(--font-body);
+}
+
+.plans {
+  display: grid;
+  gap: var(--space-2);
+  margin-left: 34px;
+}
+
+.plan {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+
+.plan:hover {
+  background: var(--surface-subtle);
+}
+
+.plan input {
+  margin-top: 4px;
+  accent-color: var(--action);
+}
+
+.plan:has(input:checked) {
+  background: var(--action-soft);
+  border-color: var(--action);
+}
+
+.planTitle {
+  display: block;
+  color: var(--ink);
+  font: 500 var(--text-ui) / 1.5 var(--font-body);
+}
+
+.planDetail {
+  display: block;
+  color: var(--muted);
+  font: var(--text-meta) / 1.6 var(--font-body);
+}
+
+.cmdList {
+  display: grid;
+  gap: var(--space-3);
+  margin-left: 34px;
+}
+
+.cmdRow {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+}
+
+.cmdCode {
+  flex: 1;
+  min-width: 0;
+  padding: 11px var(--space-4);
+  color: var(--ink);
+  font: var(--text-micro) / 1.7 var(--font-mono);
+  /* 命令**不折行**：折行后用户会以为这是一条命令里的换行，粘进终端可能被当成两条。
+     超长时横向滚动；复制按钮是 flex:none，始终固定在右侧不被推走。 */
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.cmdCopy {
+  flex: none;
+  padding: 0 var(--space-4);
+  color: var(--action);
+  background: var(--surface);
+  border: 0;
+  border-left: 1px solid var(--line);
+  font: 500 var(--text-meta) / 1 var(--font-body);
+  cursor: pointer;
+}
+
+.cmdCopy:hover {
+  background: var(--action-soft);
+}
+
+.cmdHint {
+  margin: var(--space-2) 0 0 34px;
+  color: var(--muted);
+  font: var(--text-meta) / 1.6 var(--font-body);
+}
+
+.copied {
+  margin: var(--space-2) 0 0 34px;
+  color: var(--success);
+  font: var(--text-meta) / 1.6 var(--font-body);
+}
+
+.guideList {
+  margin: 0 0 var(--space-3) 34px;
+  padding-left: 20px;
+  color: var(--ink-soft);
+  font: var(--text-ui) / 1.7 var(--font-body);
+}
+
+.guideList code {
+  padding: 1px 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+}
+
+.mineList {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.mineRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+}
+
+.mineWho {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mineName {
+  color: var(--ink);
+  font: 500 var(--text-ui) / 1.5 var(--font-body);
+}
+
+.mineMeta {
+  color: var(--muted);
+  font: var(--text-micro) / 1.6 var(--font-body);
+}
+
 @media (max-width: 860px) {
   .tryLayout {
     grid-template-columns: 1fr;
@@ -582,4 +885,128 @@
   .managerHead {
     flex-direction: column;
   }
+  .plans,
+  .cmdList,
+  .stepWhy,
+  .cmdHint,
+  .copied,
+  .guideList {
+    margin-left: 0;
+  }
+}
+
+/* ---- 连接中心（2026-09-15 第二轮）：状态点、数据范围、复制反馈、助手状态 ---- */
+
+/* 仅屏幕阅读器可见：状态点靠符号表达（✓/●/○），符号本身对读屏无意义，补一段文字。 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 步骤状态：✓ 已完成 / ● 进行中 / ○ 尚未开始。光有数字看不出走到哪一步。 */
+.stepNo[data-state='done'] {
+  color: var(--action);
+}
+
+.stepNo[data-state='active'] {
+  color: var(--ink);
+}
+
+.stepNo[data-state='todo'] {
+  color: var(--muted);
+}
+
+/* 助手按钮改成"名称 + 接入方式·状态"两行 —— 名称一行放不下说明兼容性从哪来。 */
+.assistantPick {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.assistantName {
+  font: 500 var(--text-ui) / 1.3 var(--font-body);
+}
+
+.assistantMeta {
+  color: var(--muted);
+  font: var(--text-micro) / 1.3 var(--font-body);
+}
+
+/* 数据范围：让用户在选权限的同一屏里就看到"助手能看到什么、不会做什么"。 */
+.dataScope {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+}
+
+.dataScopeTitle {
+  margin: 0 0 var(--space-2);
+  color: var(--ink-soft);
+  font: 500 var(--text-meta) / 1.4 var(--font-body);
+}
+
+.dataScopeList {
+  margin: 0;
+  padding-left: 1.15em;
+  color: var(--muted);
+  font: var(--text-micro) / 1.7 var(--font-body);
+}
+
+.dataScopeNote {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font: var(--text-micro) / 1.6 var(--font-body);
+}
+
+/* 「复制全部步骤」那一行。 */
+.stepActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
+/* 复制失败要说出来，而不是继续显示"已复制" —— 用户会粘出旧内容而不自知。 */
+.cmdCopy[data-state='failed'] {
+  color: var(--danger);
+}
+
+/* 连接状态徽章。 */
+.mineStateOk,
+.mineStateOff {
+  margin-left: var(--space-2);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: var(--text-micro) / 1.6 var(--font-body);
+}
+
+.mineStateOk {
+  color: var(--action);
+  background: var(--surface-subtle);
+}
+
+.mineStateOff {
+  color: var(--danger);
+  background: var(--surface-subtle);
+}
+
+/* 未被后续成功覆盖的最近失败：挂在行内，提醒用户这里有个还没好的问题。 */
+.mineAlert {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--danger);
+  font: var(--text-micro) / 1.6 var(--font-body);
 }
