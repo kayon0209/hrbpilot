@@ -186,7 +186,10 @@ async def bind_dynamic_client_tenant(client_id: str, tenant_id: str) -> ClientMe
             update(OAuthClient)
             .where(
                 OAuthClient.client_id == client_id,
-                OAuthClient.registration_source == "dcr",
+                # DCR 与 CIMD 同待遇：两者都是"注册时无租户、首次授权登录时认领"。
+                # CIMD 的身份锚点（文档所在的 HTTPS 域名）不弱于 DCR 的自造随机 id，
+                # 把它排除在认领之外只会让走 CIMD 发现的客户端永远无法完成授权。
+                OAuthClient.registration_source.in_(("dcr", "cimd")),
                 OAuthClient.tenant_id == UNBOUND_TENANT,
                 OAuthClient.status == "active",
             )

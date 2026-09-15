@@ -37,6 +37,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config.settings import settings
+from app.data.models.oauth import UNBOUND_TENANT
 from app.oauth.clients import ClientMetadata, ClientMetadataError, validate_client_metadata
 from app.shared.logger import get_logger
 
@@ -192,4 +193,12 @@ async def resolve_cimd_client(url: str) -> ClientMetadata:
             "fetched from",
         )
     # client_id 一律以**抓取用的 URL** 为准，而不是文档里那个（两者此时已相等）。
-    return validate_client_metadata(document, client_id=url, registration_source="cimd", metadata_document_url=url)
+    #
+    # 租户：与 DCR 同待遇，先落 ``UNBOUND_TENANT``，由首次授权登录的租户认领
+    # （``bind_dynamic_client_tenant``）。落在缺省租户是错的 —— 缺省值不是真实
+    # 租户（库里是 UUID），认证必然失败，且报"密码不正确"误导用户去试密码。
+    # CIMD 的身份锚点是文档所在域名（攻击者控制不了别人的 HTTPS 域名），比
+    # DCR 的自造随机 id 更强；DCR 既可被认领，CIMD 没有理由更弱。
+    return validate_client_metadata(
+        document, client_id=url, registration_source="cimd", tenant_id=UNBOUND_TENANT, metadata_document_url=url
+    )

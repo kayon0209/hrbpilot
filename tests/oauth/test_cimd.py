@@ -455,3 +455,18 @@ async def test_a_non_url_client_id_is_not_fetched(registry: Any, monkeypatch: py
     monkeypatch.setattr("app.oauth.registry.resolve_cimd_client", _record)
     assert await resolve_client("workbuddy") is None
     assert calls == []
+
+
+@pytest.mark.asyncio()
+async def test_a_resolved_client_is_unbound_until_first_login(document_server: DocumentServer) -> None:
+    """解析出的 CIMD 客户端先落 ``UNBOUND_TENANT``，由首次授权登录的租户认领。
+
+    落在缺省租户是错的：缺省值不是真实租户，认证必然失败 —— 用户只会看到
+    "密码不正确"，没人能想到是租户归属问题。
+    """
+    from app.data.models.oauth import UNBOUND_TENANT
+
+    url = document_server.serve_json("unbound.json", _document())
+    document_server.serve_json("unbound.json", _document(client_id=url))
+    metadata = await resolve_cimd_client(url)
+    assert metadata.tenant_id == UNBOUND_TENANT

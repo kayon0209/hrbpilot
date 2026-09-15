@@ -5,38 +5,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>授权 · HRBPilot</title>
   <style>
-    :root { color-scheme: light; }
-    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-           background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
-           align-items: center; justify-content: center; }
-    main { width: calc(100% - 32px); max-width: 500px; background: #fff; border: 1px solid #d8dee4;
-           border-radius: 14px; padding: 30px; box-shadow: 0 14px 42px rgba(31,35,40,.10); box-sizing: border-box; }
-    .brand { display:flex; align-items:center; gap:10px; margin-bottom:20px; color:#174c3c; font-weight:700; }
-    .mark { display:grid; place-items:center; width:34px; height:34px; color:#fff; background:#174c3c; border-radius:10px; }
-    h1 { font-size: 18px; margin: 0 0 6px; }
-    .muted { color: #59636e; font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
-    ul.scopes { list-style: none; padding: 0; margin: 0 0 18px; }
-    ul.scopes li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid #eceff2;
+    /* 与工作台同一套视觉（取色见 web/src/styles/tokens.css）。这一屏是用户判断
+       "这是不是真的 HRBPilot"的地方，风格自成一套会削弱这个判断依据。 */
+    :root {
+      color-scheme: light;
+      --canvas: #F6F6F1; --surface: #FFFFFF; --surface-subtle: #F0F1EC; --surface-hover: #E8EAE3;
+      --ink: #1E2420; --muted: #626A63; --line: #E1E4DD; --line-strong: #C7CDC4;
+      --action: #1F5A48; --action-hover: #184939; --action-soft: #E3EEE8;
+      --amber-soft: #FAEEDA; --amber: #854F0B;
+      --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      --font-body: "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+      --font-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+    }
+    body { margin: 0; font-family: var(--font-body); background: var(--canvas); color: var(--ink);
+           display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+    main { width: calc(100% - 32px); max-width: 500px; background: var(--surface); border: 1px solid var(--line);
+           border-radius: 10px; padding: 30px; box-shadow: 0 10px 30px rgba(30,36,32,.08); box-sizing: border-box; }
+    .brand { display:flex; align-items:center; gap:10px; margin-bottom:20px; color: var(--action); font-weight:700; }
+    .mark { display:grid; place-items:center; width:34px; height:34px; color:#fff; background: var(--action);
+            border-radius: 8px; font-size: 13px; }
+    h1 { font-family: var(--font-display); font-size: 18px; margin: 0 0 6px; }
+    .muted { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+    ul.scopes { list-style: none; padding: 0; margin: 0 0 12px; }
+    ul.scopes li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line);
                    font-size: 13px; line-height: 1.5; }
     ul.scopes li:first-child { border-top: 0; }
-    .scope-id { color: #59636e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                font-size: 12px; white-space: nowrap; }
-    .account { font-size: 12px; color: #59636e; margin: 0 0 18px; }
+    .scope-id { color: var(--muted); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+    .scopeRaw summary { color: var(--action); font-size: 12px; cursor: pointer; margin-bottom: 14px; }
+    .account { font-size: 12px; color: var(--muted); margin: 0 0 18px; }
     .badges { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 16px; }
-    .badge { padding:5px 9px; border-radius:999px; font-size:12px; background:#eaf5ef; color:#175c41; }
-    .badge.unverified { background:#fff4df; color:#805500; }
+    .badge { padding:5px 9px; border-radius:999px; font-size:12px; background: var(--action-soft); color: var(--action); }
+    .badge.unverified { background: var(--amber-soft); color: var(--amber); }
     .actions { display: flex; gap: 10px; }
-    button { flex: 1; padding: 10px; font-size: 14px; font-weight: 600; border-radius: 6px;
-             cursor: pointer; border: 1px solid transparent; }
-    button.allow { color: #fff; background: #1f6feb; }
-    button.allow:hover { background: #1a60cf; }
-    button.deny { color: #1f2328; background: #f6f8fa; border-color: #d0d7de; }
-    button.deny:hover { background: #eef1f4; }
-    .warn { background: #fff8e5; border: 1px solid #f2d894; color: #7a5b00;
+    button { flex: 1; padding: 10px; font-family: var(--font-body); font-size: 14px; font-weight: 600;
+             border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+    button.allow { color: #fff; background: var(--action); }
+    button.allow:hover { background: var(--action-hover); }
+    button.deny { color: var(--ink); background: var(--surface-subtle); border-color: var(--line-strong); }
+    button.deny:hover { background: var(--surface-hover); }
+    .warn { background: var(--amber-soft); border: 1px solid #E9CE94; color: var(--amber);
             border-radius: 6px; padding: 9px 11px; font-size: 12.5px; line-height: 1.6; margin: 0 0 16px; }
-    .manage { margin:16px 0 0; color:#59636e; font-size:12px; line-height:1.6; }
+    .manage { margin:16px 0 0; color: var(--muted); font-size:12px; line-height:1.6; }
     .switch { margin:8px 0 18px; }
-    .switch button { padding:0; color:#0969da; background:transparent; border:0; font-size:12px; }
+    .switch button { padding:0; color: var(--action); background:transparent; border:0; font-size:12px; }
   </style>
 </head>
 <body>
@@ -57,14 +68,21 @@
       <span class="badge">{{ risk_label }}</span>
     </div>
 
+    {# 用户要判断的是"这个助手能拿到我多少权限"，中文说明才是正文；权限代号是给想核对
+       的人用的，收进折叠 —— 摊在正文里会让普通用户以为自己得先读懂它。 #}
     <ul class="scopes">
       {% for scope in scopes %}
-      <li>
-        <span class="scope-id">{{ scope.value }}</span>
-        <span>{{ scope.description }}</span>
-      </li>
+      <li><span>{{ scope.description }}</span></li>
       {% endfor %}
     </ul>
+    <details class="scopeRaw">
+      <summary>查看权限代号</summary>
+      <ul class="scopes">
+        {% for scope in scopes %}
+        <li><span class="scope-id">{{ scope.value }}</span></li>
+        {% endfor %}
+      </ul>
+    </details>
 
     {% if unregistered_scopes %}
     <p class="warn">
@@ -82,7 +100,7 @@
         <button class="allow" type="submit" name="decision" value="allow">授权</button>
       </div>
     </form>
-    <p class="manage">授权后可随时在 HRBPilot「MCP 外部工具 → AI 助手连接管理」中查看或撤销。撤销后旧令牌和未执行审批都会失效。</p>
+    <p class="manage">授权后可随时在 HRBPilot 的「AI 助手接入」页查看或撤销。撤销后旧令牌和未执行审批都会失效。</p>
   </main>
 </body>
 </html>

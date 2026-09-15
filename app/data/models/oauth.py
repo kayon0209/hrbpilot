@@ -77,8 +77,9 @@ class OAuthClient(Base, TimestampMixin):
     #: CIMD 客户端的文档地址（与 client_id 逐字节一致）。非 CIMD 为 NULL。
     metadata_document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: 客户端归属的租户。预注册客户端由运维在配置里声明（``OAUTH_PRE_REGISTERED_CLIENTS``
-    #: 条目的 ``tenant_id`` 键）；DCR / CIMD 一律为缺省租户 —— 见 ``DEFAULT_TENANT`` 的
-    #: 说明：这个值决定 AS 登录去哪个租户的用户目录里找人，**不能**由注册文档自带。
+    #: 条目的 ``tenant_id`` 键）；DCR / CIMD 先落 ``UNBOUND_TENANT``，由首次授权登录的
+    #: 租户认领（``bind_dynamic_client_tenant``）。这个值决定 AS 登录去哪个租户的
+    #: 用户目录里找人，**不能**由注册文档自带。
     tenant_id: Mapped[str] = mapped_column(
         String(64), nullable=False, default=DEFAULT_TENANT, server_default=DEFAULT_TENANT
     )

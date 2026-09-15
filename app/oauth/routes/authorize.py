@@ -29,10 +29,13 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from sqlalchemy import select
 
 from app.access.scopes import Scope
 from app.config.settings import settings
+from app.data.database import get_session_factory
 from app.data.models.oauth import UNBOUND_TENANT
+from app.data.models.tenant import Tenant
 from app.oauth.authorization import SUPPORTED_CODE_CHALLENGE_METHODS, issue_authorization_code
 from app.oauth.clients import ClientMetadata, redirect_uri_matches
 from app.oauth.html import render_page
@@ -309,6 +312,30 @@ async def authorize(request: Request) -> Response:
     session = read_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
     if session is not None:
         session = await revalidate_session(session)
+
+    if session is not None and client.tenant_id == UNBOUND_TENANT:
+        # 客户端还没绑定租户（自助注册的常态）。既然用户**已经在某个租户里登录过**，
+        # 就用那个租户认领它 —— 这正是 `bind_dynamic_client_tenant` 的语义，只是把
+        # 时机提前到"认证已经存在"的场合，而不是逼用户再登录一次。
+        #
+        # 不这样做的后果：`session.tenant_id != client.tenant_id` 对未绑定客户端
+        # **恒为真**，于是已经登录的用户每次接入都要重新登录、还要重填一个他无从
+        # 得知的组织标识 —— 而他明明已经在这个租户里登录过了。
+        bound = await bind_dynamic_client_tenant(client.client_id, session.tenant_id)
+        if bound is not None:
+            client = bound
+            # 校验必须在**绑定后的客户端**上重跑一次：同意页与同意提交都按
+            # `client.tenant_id` 判定归属，用旧的（未绑定）对象会让后面每一步都读错租户。
+            try:
+                authorization = _validate_authorization_request(params, client, redirect_uri)
+            except RedirectError as exc:
+                return RedirectResponse(
+                    _error_redirect(
+                        redirect_uri, error=exc.error, description=exc.description, state=params.get("state", "")
+                    ),
+                    status_code=302,
+                )
+
     if session is None or session.tenant_id != client.tenant_id:
         # 会话要么不存在，要么属于**另一个租户**（用户先授权了别的客户端）。租户是
         # 会话的边界：acme 租户的登录态不能给缺省租户的客户端签授权码 —— 同意的
@@ -317,7 +344,7 @@ async def authorize(request: Request) -> Response:
             "login.html",
             client_name=client.client_name,
             params=authorization.params,
-            tenant_required=client.tenant_id == UNBOUND_TENANT,
+            tenant_required=await _login_needs_tenant(client),
             form_action_origins=_form_action_origins(authorization),
         )
     return render_page(
@@ -325,6 +352,34 @@ async def authorize(request: Request) -> Response:
         **_consent_context(authorization, session),
         form_action_origins=_form_action_origins(authorization),
     )
+
+
+async def _sole_tenant_id() -> str | None:
+    """部署内**唯一**租户的 id；存在多个租户时返回 ``None``。
+
+    为什么需要它：自助注册（DCR / CIMD）的客户端还没有租户，而登录必须指明"去哪个
+    租户的用户目录里找人"。多租户部署里这是用户才能回答的真实选择；但**只有一个
+    租户时它是伪选择** —— 唯一可能的答案就是那一个 id，而它通常是 UUID，用户无从
+    得知。要求他填写，等于把"三分钟接上助手"变成一道猜谜。
+
+    只取 2 行做判断：这里要回答的是"是否唯一"，不是"有哪些租户"。列出全部租户在
+    多租户部署下既是无谓开销，也会诱使调用方把它当租户清单用。
+    """
+    async with get_session_factory()() as session:
+        ids = (await session.execute(select(Tenant.id).order_by(Tenant.id).limit(2))).scalars().all()
+    return str(ids[0]) if len(ids) == 1 else None
+
+
+async def _login_needs_tenant(client: ClientMetadata) -> bool:
+    """登录页是否需要用户手填「组织标识」。
+
+    两个条件同时成立才问：客户端**还没绑定租户**（租户尚未确定），且部署里**存在
+    多个租户**（它确实是用户才能回答的选择）。任一不成立都说明答案唯一，再问一次
+    只是给首次接入加一道无意义的门槛。
+    """
+    if client.tenant_id != UNBOUND_TENANT:
+        return False
+    return await _sole_tenant_id() is None
 
 
 async def _revalidate_form(form: Mapping[str, object]) -> tuple[AuthorizationRequest | None, Response | None]:
@@ -362,7 +417,9 @@ async def authorize_login(request: Request) -> Response:
     # acme 租户的客户端签授权码 —— 令牌上的租户成了表单可改的字段。
     tenant_id = authorization.client.tenant_id
     if tenant_id == UNBOUND_TENANT:
-        tenant_id = str(form.get("tenant_id") or "").strip()
+        # 表单给了就用表单的；没给时退到"部署里唯一的租户"（若有）。单租户部署下
+        # 那是唯一可能的答案 —— 页面上根本没问过，用户不该因为没填而被拒。
+        tenant_id = str(form.get("tenant_id") or "").strip() or (await _sole_tenant_id() or "")
         if not tenant_id:
             return render_page(
                 "login.html",
@@ -381,7 +438,7 @@ async def authorize_login(request: Request) -> Response:
             status_code=401,
             client_name=authorization.client.client_name,
             params=authorization.params,
-            tenant_required=authorization.client.tenant_id == UNBOUND_TENANT,
+            tenant_required=await _login_needs_tenant(authorization.client),
             error="邮箱或密码不正确。",
             form_action_origins=_form_action_origins(authorization),
         )
@@ -475,7 +532,7 @@ async def authorize_logout(request: Request) -> Response:
         "login.html",
         client_name=authorization.client.client_name,
         params=authorization.params,
-        tenant_required=authorization.client.tenant_id == UNBOUND_TENANT,
+        tenant_required=await _login_needs_tenant(authorization.client),
         form_action_origins=_form_action_origins(authorization),
     )
     response.delete_cookie(SESSION_COOKIE_NAME, path="/", secure=settings.is_production, httponly=True)

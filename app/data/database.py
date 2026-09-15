@@ -32,11 +32,16 @@ _async_session_factory: async_sessionmaker[AsyncSession] | None = None
 def _apply_tenant_context(session: Session, _transaction: object, connection: object) -> None:
     """Reapply local RLS context after every commit starts a new transaction."""
     tenant_id = session.info.get("tenant_id")
-    if tenant_id:
-        connection.execute(  # type: ignore[attr-defined]
-            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-            {"tenant_id": tenant_id},
-        )
+    if not tenant_id:
+        return
+    # RLS 是 PostgreSQL 的机制（set_config 是 PG 函数）；SQLite（单测）上没有
+    # 也不需要 —— 强行执行会让所有设置租户上下文的路径在单测里直接炸掉。
+    if getattr(connection, "dialect", None) is not None and connection.dialect.name == "sqlite":  # type: ignore[attr-defined]
+        return
+    connection.execute(  # type: ignore[attr-defined]
+        text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+        {"tenant_id": tenant_id},
+    )
 
 
 def _init_engine() -> None:

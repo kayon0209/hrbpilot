@@ -78,7 +78,11 @@ services:
     user: "10001:10001"
     env_file: env.docker
     environment:
-      PUBLIC_BASE_URL: http://localhost:8001
+      # 必须是**用户实际访问的对外 origin**（本机是 nginx 入口 :3001，浏览器也从这里进）。
+      # 它决定 401 挑战里广播的 resource_metadata 与 token audience（RFC 8707）——
+      # 写成内部端口（如 8001）会让助手侧的自动发现拿一个连不上的地址，且错误只出现在助手侧。
+      # 正式部署时改成 https 域名，两处 PUBLIC_BASE_URL 必须一致。
+      PUBLIC_BASE_URL: http://localhost:3001
       MCP_AUTHORIZATION_SERVERS: http://localhost:8002
       OAUTH_ISSUER: http://localhost:8002
       OAUTH_INTERNAL_BASE_URL: http://oauth-as:8000
@@ -108,7 +112,9 @@ services:
     user: "10001:10001"
     env_file: env.docker
     environment:
-      PUBLIC_BASE_URL: http://localhost:8001
+      # 与 app 服务保持一致：AS 签发的 access token 以 <PUBLIC_BASE_URL>/mcp 为 audience，
+      # RS（app）按自己的同一配置校验 —— 两边不一致时令牌会被 RS 拒收。
+      PUBLIC_BASE_URL: http://localhost:3001
       MCP_AUTHORIZATION_SERVERS: http://localhost:8002
       OAUTH_ISSUER: http://localhost:8002
       OAUTH_ENABLE_DYNAMIC_REGISTRATION: "true"

@@ -135,3 +135,38 @@ async def test_dcr_client_is_unbound_until_the_first_authenticated_tenant_claims
         row = await session.get(OAuthClient, "dcr_first-login")
     assert row is not None
     assert row.tenant_id == "acme"
+
+
+@pytest.mark.asyncio()
+async def test_a_cimd_client_can_be_claimed_by_the_first_logged_in_tenant(
+    client_factory: async_sessionmaker[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CIMD 与 DCR 同待遇：注册时无租户，首次授权登录的租户用 CAS 认领。
+
+    CIMD 的身份锚点（文档所在的 HTTPS 域名，client_id 与 URL 逐字节一致）不弱于
+    DCR 的自造随机 id —— 把它排除在认领之外，走 CIMD 发现的客户端就永远无法
+    完成授权。已绑定后的行为与 DCR 相同：别的租户认领失败。
+    """
+    import app.oauth.storage as storage
+
+    cimd_id = "https://client.example.com/meta.json"
+    metadata = validate_client_metadata(
+        {**_DOCUMENT, "client_id": cimd_id},
+        client_id=cimd_id,
+        registration_source="cimd",
+        tenant_id=UNBOUND_TENANT,
+        metadata_document_url=cimd_id,
+    )
+    async with client_factory() as session:
+        await save_client(session, metadata)
+        await session.commit()
+
+    monkeypatch.setattr(storage, "get_session_factory", lambda: client_factory)
+    claimed = await bind_dynamic_client_tenant(cimd_id, "acme")
+    assert claimed is not None
+    assert claimed.tenant_id == "acme"
+
+    assert await bind_dynamic_client_tenant(cimd_id, "other-tenant") is None
+    async with client_factory() as session:
+        row = await session.get(OAuthClient, cimd_id)
+    assert row is not None and row.tenant_id == "acme"

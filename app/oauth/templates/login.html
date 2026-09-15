@@ -5,23 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 · HRBPilot 授权</title>
   <style>
-    :root { color-scheme: light; }
-    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-           background: #f4f6f8; color: #1f2328; display: flex; min-height: 100vh;
-           align-items: center; justify-content: center; }
-    main { width: 100%; max-width: 400px; background: #fff; border: 1px solid #d8dee4;
-           border-radius: 10px; padding: 28px 28px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-    h1 { font-size: 18px; margin: 0 0 6px; }
-    .muted { color: #59636e; font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
-    .error { background: #fff2f0; border: 1px solid #ffc9c0; color: #a40e26;
+    /* 视觉与工作台保持一致。授权页是用户判断"这是不是真的 HRBPilot"的关键一屏 ——
+       风格不一致会削弱这个判断依据（也更容易被当成钓鱼页）。取色见 web/src/styles/tokens.css。 */
+    :root {
+      color-scheme: light;
+      --canvas: #F6F6F1; --surface: #FFFFFF;
+      --ink: #1E2420; --muted: #626A63; --line: #E1E4DD; --line-strong: #C7CDC4;
+      --action: #1F5A48; --action-hover: #184939;
+      --danger: #B4473D; --danger-soft: #F7E7E5;
+      --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      --font-body: "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    }
+    body { margin: 0; font-family: var(--font-body); background: var(--canvas); color: var(--ink);
+           display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+    main { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line);
+           border-radius: 8px; padding: 28px 28px 24px; box-shadow: 0 1px 3px rgba(30,36,32,.06); }
+    h1 { font-family: var(--font-display); font-size: 18px; margin: 0 0 6px; }
+    .muted { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
+    .error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
              border-radius: 6px; padding: 9px 11px; font-size: 13px; margin: 0 0 16px; }
-    label { display: block; font-size: 13px; color: #1f2328; margin-bottom: 12px; }
+    label { display: block; font-size: 13px; color: var(--ink); margin-bottom: 12px; }
     input[type=email], input[type=password], input[type=text] { width: 100%; box-sizing: border-box; margin-top: 5px;
-           padding: 9px 11px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; }
-    input:focus { outline: 2px solid #0969da33; border-color: #0969da; }
-    button { width: 100%; padding: 10px; font-size: 14px; font-weight: 600; color: #fff;
-             background: #1f6feb; border: 0; border-radius: 6px; cursor: pointer; }
-    button:hover { background: #1a60cf; }
+           padding: 9px 11px; font-size: 14px; border: 1px solid var(--line-strong); border-radius: 6px; }
+    input:focus { outline: 2px solid rgba(31,90,72,.25); border-color: var(--action); }
+    button { width: 100%; padding: 10px; font-family: var(--font-body); font-size: 14px; font-weight: 600; color: #fff;
+             background: var(--action); border: 0; border-radius: 6px; cursor: pointer; }
+    button:hover { background: var(--action-hover); }
   </style>
 </head>
 <body>
@@ -37,9 +46,13 @@
       {% endfor %}
       {% if tenant_required %}
       <label>组织标识
-        <input type="text" name="tenant_id" autocomplete="organization" required placeholder="例如：acme">
+        <input type="text" name="tenant_id" autocomplete="organization" required placeholder="你组织的标识">
       </label>
-      <p class="muted">首次连接时会将这个 AI 助手绑定到你的组织，后续不能由客户端自行更改。</p>
+      <p class="muted">
+        用来确定这个助手接在哪个组织上：它和你的账号一起决定"同意的是哪个组织里的哪个人"。
+        首次连接后会固定在这个助手上，不能由客户端自行更改。
+        如果你不清楚它是什么，向你所在组织里已经在用 HRBPilot 的同事要一下。
+      </p>
       {% endif %}
       <label>邮箱
         <input type="email" name="email" autocomplete="username" required autofocus>

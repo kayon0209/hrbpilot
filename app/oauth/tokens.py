@@ -52,6 +52,7 @@ ACCESS_TOKEN_TYPE = "at+jwt"
 
 REVOKED_REASON_USER_REVOKED = "user_revoked"
 REVOKED_REASON_REUSE_DETECTED = "refresh_token_reuse_detected"
+REVOKED_REASON_SUPERSEDED = "superseded_by_new_authorization"
 
 #: 撤销记录的存活时间比 access token 的 TTL 多这么一点，用来兜住时钟偏差：
 #: 早一秒删掉撤销记录，就等于让一把已被撤销的令牌重新生效一小段时间。
@@ -170,6 +171,52 @@ def _build_tokens(
     return access_token, refresh_raw, row
 
 
+async def _supersede_prior_families(
+    session: AsyncSession,
+    *,
+    client_id: str,
+    tenant_id: str,
+    user_id: str,
+    now: datetime.datetime,
+) -> None:
+    """同一助手重新授权时，让**旧连接**整体让位（撤销 + 连带作废其待审批办理）。
+
+    为什么必须在签发时做：接入页告诉用户"想改权限，重新走一遍接入"——
+    若旧 family 原样留着，"改权限"实际是**加**了一条新连接、旧的照常生效，
+    用户以为收窄了的权限其实没收窄（这是权限语义上的安全误导）。
+
+    走完整的 ``revoke_family``（而不是只把旧 token 标记失效）：与用户手动断开
+    同一套语义 —— 它名下的 PENDING/APPROVED 审批一并作废。留着不撤的话，那些
+    审批会在决定时撞上"发起授权已被撤销"而变成批不了的僵尸单。
+    """
+    # 先绑定租户再发第一条语句：after_begin 钩子读它设置 RLS 上下文。
+    session.info["tenant_id"] = tenant_id
+    rows = (
+        (
+            await session.execute(
+                select(OAuthToken.family_id)
+                .where(
+                    OAuthToken.tenant_id == tenant_id,
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.client_id == client_id,
+                    OAuthToken.revoked_at.is_(None),
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for old_family in rows:
+        await revoke_family(
+            session,
+            old_family,
+            reason=REVOKED_REASON_SUPERSEDED,
+            tenant_id=tenant_id,
+            now=now,
+        )
+
+
 async def issue_tokens_for_authorization(
     *,
     client_id: str,
@@ -197,6 +244,8 @@ async def issue_tokens_for_authorization(
         now=now,
     )
     async with oauth_session() as session:
+        # 新链生效前先让同一 (租户, 用户, 助手) 的旧链让位 —— 见 helper 的说明。
+        await _supersede_prior_families(session, client_id=client_id, tenant_id=tenant_id, user_id=user_id, now=now)
         session.add(row)
     return IssuedTokens(
         access_token=access_token,
