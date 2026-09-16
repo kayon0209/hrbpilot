@@ -37,6 +37,10 @@ class RetrievedChunk:
     # Answer builders surface it as "第 N 页" — for policy questions, being
     # able to point at the page is part of the answer's credibility.
     page_number: int | None = None
+    #: 来源级别（``SourceAuthority`` 的取值）。由 ``Retriever`` 在融合后统一回填
+    #: —— 见 ``Retriever._attach_authority``。默认 ``unknown`` 表示"没人声明过"。
+    #: 调用方据此判断："这条能当依据吗"，还是"这只是第三方模板/无关材料"。
+    authority: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         """Return the unified dict shape consumed by orchestrators/citations."""
@@ -55,6 +59,7 @@ class RetrievedChunk:
             "sparse_score": self.sparse_score,
             "rerank_score": self.rerank_score,
             "page_number": self.page_number,
+            "authority": self.authority,
         }
 
 

@@ -18,6 +18,7 @@ from typing import Any, cast
 from app.guardrails.input_guard import InputGuardrail
 from app.guardrails.output_guard import OutputGuardrail
 from app.rag.config_loader import load_scenario_config
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 from app.scenarios.policy_qa import orchestrator as policy_qa_module
 from app.scenarios.policy_qa import preprocessors as preprocessors_module
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
@@ -68,6 +69,11 @@ class _QueryCapturingRetriever:
     async def retrieve(self, **kwargs) -> list[dict]:
         self.query = kwargs["query"]
         return self._chunks
+
+    async def retrieve_with_diagnostics(self, **kwargs) -> tuple[list[dict], RetrievalDiagnostics]:
+        # 记录查询文本仍然是本类存在的理由（护栏顺序断言）；降级诊断默认无降级。
+        self.query = kwargs["query"]
+        return self._chunks, RetrievalDiagnostics(strategy="hybrid")
 
 
 class _LLM:

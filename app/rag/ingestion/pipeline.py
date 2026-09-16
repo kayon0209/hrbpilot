@@ -11,6 +11,9 @@ Key invariants:
   - A chunk whose content_sha256 already existed in the previous version
     keeps its old embedding vector — identical text is never re-embedded.
   - Only txt / pdf / docx are supported. .doc / .xls / .ppt are rejected.
+  - No chunk is unbounded: "section" splitting caps every chunk at
+    MAX_SECTION_CHARS. A marker-free stretch (typical of a 表单/表格 section)
+    would otherwise become one arbitrarily large chunk — see MAX_SECTION_CHARS.
 """
 
 from __future__ import annotations
@@ -42,6 +45,19 @@ from app.shared.logger import get_logger
 logger = get_logger(__name__)
 
 SUPPORTED_TYPES = {"txt", "pdf", "docx"}
+
+#: "section" 策略下单块字符上限。
+#:
+#: 没有它是实测出来的 bug，不是预防性设计：``kb_docs/05_hrtools_人力资源制度大全v2.docx``
+#: 解析出 43640 字符 / 197 个 marker，但其中一段**没有任何章节标记**（招聘费用登记表
+#: 那类表单区），于是整段 19236 字符被装进一个 chunk —— 送进 bge-m3 报
+#: ``400 The ... sample exceeds the 8192 token limit (actual 12556)``，整篇文档入库失败。
+#: 同一批文件里 ``04_...v1.docx`` 的 marker 密集（最长 1601 字符）就没事，
+#: 所以这个缺陷只在"章节标记稀疏 + 段落很长"的文档上暴露。
+#:
+#: 取 1200 而不是 512：section 策略的价值是保住"一条/一章"的完整性，
+#: 512 会把一条较长的条款从中间切断，检索时引用就不完整了。
+MAX_SECTION_CHARS = 1200
 
 # --- page-stitching / page-level quality signals (batch #2, §6.2) ----------
 # Characters that legitimately terminate a sentence in zh/en source docs.
@@ -292,6 +308,39 @@ class DocumentParser:
         return text
 
 
+def _split_oversized(raw: str, max_chars: int) -> list[tuple[int, str]]:
+    """Cut an oversized section into contiguous pieces of at most ``max_chars``.
+
+    Returns ``(offset, piece)`` pairs where ``offset`` is relative to ``raw``,
+    so the caller can keep every chunk's ``start_char``/``end_char`` absolute
+    into the document.
+
+    Boundaries are preferred in this order — paragraph break, sentence end,
+    hard cut — because a chunk that ends mid-sentence produces a citation the
+    reader cannot verify. A boundary landing in the first half of the window is
+    rejected in favour of the hard cut: a 100-character tail chunk is worse
+    than a clean 1200-character one.
+    """
+    if len(raw) <= max_chars:
+        return [(0, raw)]
+
+    pieces: list[tuple[int, str]] = []
+    start = 0
+    total = len(raw)
+    while start < total:
+        end = min(start + max_chars, total)
+        if end < total:
+            window = start + max_chars // 2
+            cut = raw.rfind("\n", window, end)
+            if cut == -1:
+                cut = max((raw.rfind(ch, window, end) for ch in _SENTENCE_ENDINGS), default=-1)
+            if cut != -1:
+                end = cut + 1
+        pieces.append((start, raw[start:end]))
+        start = end
+    return pieces
+
+
 class Chunker:
     """Split parsed text into chunks for embedding."""
 
@@ -328,7 +377,7 @@ class Chunker:
             )
         return chunks
 
-    def _chunk_by_section(self, text: str, source: str) -> list[dict[str, Any]]:
+    def _chunk_by_section(self, text: str, source: str, max_chars: int = MAX_SECTION_CHARS) -> list[dict[str, Any]]:
         pattern = r"(第[一二三四五六七八九十\d]+[章节条]|[一二三四五六七八九十\d]+、|\d+\.\d+)"
         parts = re.split(pattern, text)
         chunks: list[dict[str, Any]] = []
@@ -337,18 +386,31 @@ class Chunker:
         current_start = 0
         cursor = 0
 
+        def emit(start: int, raw: str, section: str) -> None:
+            """Emit one section, split further if it exceeds ``max_chars``.
+
+            Offsets stay absolute into ``text`` so the existing invariant
+            ``text[start_char:end_char].strip() == content`` holds for every
+            sub-chunk — page attribution still maps back to the right page.
+            """
+            for offset, piece in _split_oversized(raw, max_chars):
+                body = piece.strip()
+                if not body:
+                    continue
+                chunks.append(
+                    {
+                        "content": body,
+                        "index": len(chunks),
+                        "section": section,
+                        "start_char": start + offset,
+                        "end_char": start + offset + len(piece),
+                    }
+                )
+
         for part in parts:
             if re.match(pattern, part):
                 if current_text.strip():
-                    chunks.append(
-                        {
-                            "content": current_text.strip(),
-                            "index": len(chunks),
-                            "section": current_section,
-                            "start_char": current_start,
-                            "end_char": current_start + len(current_text),
-                        }
-                    )
+                    emit(current_start, current_text, current_section)
                 current_section = part.strip()
                 current_text = part
                 current_start = cursor
@@ -357,15 +419,7 @@ class Chunker:
             cursor += len(part)
 
         if current_text.strip():
-            chunks.append(
-                {
-                    "content": current_text.strip(),
-                    "index": len(chunks),
-                    "section": current_section,
-                    "start_char": current_start,
-                    "end_char": current_start + len(current_text),
-                }
-            )
+            emit(current_start, current_text, current_section)
 
         return chunks if chunks else self.chunk(text, source=source)
 

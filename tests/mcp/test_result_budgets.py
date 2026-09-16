@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from app.mcp import read_dispatch
 from app.mcp.auth.principal import AuthMethod, McpPrincipal
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 from app.scenarios.hr_case_agent import read_executors
 from app.scenarios.hr_case_agent.read_context import (
     bind_read_principal,
@@ -162,10 +163,12 @@ async def test_policy_search_concise_is_smaller_than_detailed(monkeypatch) -> No
     }
 
     async def fake_retriever(self, **kwargs):
-        return [dict(chunk)]
+        return [dict(chunk)], RetrievalDiagnostics(strategy="hybrid")
 
     monkeypatch.setattr(read_executors, "_resolve_kb_id", _fake_kb)
-    monkeypatch.setattr("app.rag.retrieval.retriever.Retriever.retrieve", fake_retriever)
+    monkeypatch.setattr(
+        "app.rag.retrieval.retriever.Retriever.retrieve_with_diagnostics", fake_retriever
+    )
 
     tenant_token = bind_read_tenant("tenant-1")
     try:
@@ -195,10 +198,12 @@ async def test_concise_is_the_default(monkeypatch) -> None:
     }
 
     async def fake_retriever(self, **kwargs):
-        return [dict(chunk)]
+        return [dict(chunk)], RetrievalDiagnostics(strategy="hybrid")
 
     monkeypatch.setattr(read_executors, "_resolve_kb_id", _fake_kb)
-    monkeypatch.setattr("app.rag.retrieval.retriever.Retriever.retrieve", fake_retriever)
+    monkeypatch.setattr(
+        "app.rag.retrieval.retriever.Retriever.retrieve_with_diagnostics", fake_retriever
+    )
     tenant_token = bind_read_tenant("tenant-1")
     try:
         result = await read_dispatch.run_read_tool("search_policy", {"query": "q"}, "tenant-1")

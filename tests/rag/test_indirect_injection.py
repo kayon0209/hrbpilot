@@ -13,6 +13,7 @@ instructions…``). The system prompt must be structurally protected:
 from app.guardrails.input_guard import InputGuardrail, contains_prompt_injection
 from app.guardrails.output_guard import OutputGuardrail
 from app.rag.llm.orchestrator import _build_system_prompt
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 
 
 class _FakeLLM:
@@ -45,13 +46,17 @@ class _FakeLLM:
 
 
 class _FakeRetriever:
-    """Returns a fixed chunk list; matches the Retriever.retrieve contract."""
+    """Returns a fixed chunk list; matches the Retriever retrieval contract."""
 
     def __init__(self, chunks) -> None:
         self._chunks = chunks
 
     async def retrieve(self, query, kb_id, strategy, top_k, rerank, tenant_id):
         return self._chunks
+
+    async def retrieve_with_diagnostics(self, **kwargs):
+        # policy_qa 现在走带诊断的入口（2026-09-16 降级可见性）。
+        return self._chunks, RetrievalDiagnostics(strategy="hybrid")
 
 
 def _load_policy_template() -> str:

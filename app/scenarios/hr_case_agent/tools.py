@@ -39,6 +39,10 @@ class SearchPolicyInput(BaseModel):
     # 结果分档（响应预算，任务书 T4-3）：concise 只给 出处+片段正文（引用问答够用）；
     # detailed 才带 chunk_id/document_id 等后续调用需要的标识字段。默认 concise。
     detail: DetailLevel = "concise"
+    # 只要"能当依据"的命中（国家法规 / 本单位制度）。默认 False：行为零变化。
+    # 这个字段必须在这里声明 —— validate_tool_call 走 pydantic，**未声明的参数
+    # 会被静默丢弃**（这就是它第一次上线时在端到端验证里原样穿透的原因）。
+    authoritative_only: bool = False
 
 
 class GetPolicySourceInput(BaseModel):

@@ -22,7 +22,7 @@ from app.rag.llm.model_router import ModelRouter
 from app.rag.llm.orchestrator import LLMOrchestrator
 from app.rag.pipeline import SegmentTimer, _schedule_background_task
 from app.rag.retrieval.fusion import fuse_query_variants
-from app.rag.retrieval.retriever import Retriever
+from app.rag.retrieval.retriever import RetrievalDiagnostics, Retriever
 from app.scenarios.policy_qa.context_manager import ContextManager, build_policy_qa_messages
 from app.scenarios.policy_qa.postprocessors import no_evidence_fallback
 from app.scenarios.policy_qa.preprocessors import rewrite_query
@@ -35,6 +35,24 @@ logger = get_logger(__name__)
 def _fingerprint(text: str) -> str:
     """Short content hash for log correlation — never log raw query text."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _worst_diagnostics(
+    left: RetrievalDiagnostics, right: RetrievalDiagnostics
+) -> RetrievalDiagnostics:
+    """两路检索取**更差**的那份诊断（降级腿的并集）。
+
+    为什么取更差而不是取最好：融合后的排序同时受两路影响，只要任一路少了腿，
+    "这条为什么排第一"就已经不可靠。取最好会让降级在融合处被悄悄抹平 ——
+    那正是本类缺陷最初的样子：信息在某一层被丢掉，而没人发现。
+    """
+    degraded = tuple(dict.fromkeys([*left.degraded_legs, *right.degraded_legs]))
+    if not degraded:
+        return left
+    notes = tuple(dict.fromkeys([*left.notes, *right.notes]))
+    return RetrievalDiagnostics(
+        strategy=left.strategy or right.strategy, degraded_legs=degraded, notes=notes
+    )
 
 
 class PolicyQAOrchestrator:
@@ -53,6 +71,19 @@ class PolicyQAOrchestrator:
         kb_id: str,
         tenant_id: str,
     ) -> list[dict]:
+        """只返回片段（既有签名）。需要降级诊断的调用方用下面那个带诊断的版本。"""
+        chunks, _ = await self._retrieve_with_query_variants_with_diagnostics(
+            original_query, rewritten_query, kb_id, tenant_id
+        )
+        return chunks
+
+    async def _retrieve_with_query_variants_with_diagnostics(
+        self,
+        original_query: str,
+        rewritten_query: str,
+        kb_id: str,
+        tenant_id: str,
+    ) -> tuple[list[dict], RetrievalDiagnostics]:
         """Retrieve with BOTH the original and the rewritten query, then fuse.
 
         §6.1: replacing the original query with the rewrite is a regression
@@ -60,11 +91,14 @@ class PolicyQAOrchestrator:
         not rewriting at all. Running both and fusing with RRF keeps the
         original's recall and adds whatever the rewrite found.
 
+        降级诊断取**两路里更差的那个**：两路只要有一路少了腿，融合结果的排序就
+        已经不可靠 —— 取"最好"会让降级在融合处被悄悄抹平。
+
         The second retrieval runs ONLY when the rewrite actually changed the
         text; an unchanged rewrite would just repeat the identical query and
         pay for it twice.
         """
-        chunks = await self.retriever.retrieve(
+        chunks, diags = await self.retriever.retrieve_with_diagnostics(
             query=original_query,
             kb_id=kb_id,
             strategy=self.config.retrieval_strategy,
@@ -73,8 +107,8 @@ class PolicyQAOrchestrator:
             tenant_id=tenant_id,
         )
         if not rewritten_query or rewritten_query == original_query:
-            return chunks
-        variant = await self.retriever.retrieve(
+            return chunks, diags
+        variant, variant_diags = await self.retriever.retrieve_with_diagnostics(
             query=rewritten_query,
             kb_id=kb_id,
             strategy=self.config.retrieval_strategy,
@@ -82,7 +116,8 @@ class PolicyQAOrchestrator:
             rerank=self.config.rerank_enabled,
             tenant_id=tenant_id,
         )
-        return fuse_query_variants(chunks, variant, top_k=self.config.retrieval_top_k)
+        fused = fuse_query_variants(chunks, variant, top_k=self.config.retrieval_top_k)
+        return fused, _worst_diagnostics(diags, variant_diags)
 
     def _model_request(self, *, latency_sensitive: bool = False):
         """Frozen per-request model selection (P1-05): provider, model and
@@ -157,14 +192,23 @@ class PolicyQAOrchestrator:
         # §6.1: the rewrite does NOT replace the original query. Retrieval runs
         # on both and fuses them, so a rewrite that drops the user's intent
         # cannot make recall worse than not rewriting at all.
-        context_chunks = []
+        context_chunks: list[dict] = []
+        retrieval_diags = RetrievalDiagnostics(strategy=str(self.config.retrieval_strategy))
         target_kb_id = kb_id or self.config.knowledge_base_id
         if target_kb_id:
             timer.start("retrieval")
-            context_chunks = await self._retrieve_with_query_variants(
+            context_chunks, retrieval_diags = await self._retrieve_with_query_variants_with_diagnostics(
                 guarded_input, rewritten_query, target_kb_id, tenant_id
             )
             timer.stop("retrieval")
+            if retrieval_diags.is_degraded:
+                # 降级要进日志，也要进提示词。只做前者等于让用户承担排序失准的后果。
+                logger.warning(
+                    "policy_qa_retrieval_degraded",
+                    tenant_id=tenant_id,
+                    kb_id=target_kb_id,
+                    degraded_legs=list(retrieval_diags.degraded_legs),
+                )
 
         if any(contains_prompt_injection(str(chunk.get("content", ""))) for chunk in context_chunks):
             logger.warning("policy_qa_indirect_injection_blocked", tenant_id=tenant_id, kb_id=target_kb_id)
@@ -173,6 +217,8 @@ class PolicyQAOrchestrator:
                 citations=[],
                 confidence=0.0,
                 has_evidence=False,
+                retrieval_degraded=list(retrieval_diags.degraded_legs),
+                retrieval_note=retrieval_diags.notes[0] if retrieval_diags.notes else None,
                 guardrail_flags={
                     "input": input_flags,
                     "output": {"indirect_injection_detected": True, "blocked": True},
@@ -188,6 +234,7 @@ class PolicyQAOrchestrator:
             query=guarded_input,
             evidence=context_chunks,
             history=history,
+            retrieval_notice=retrieval_diags.prompt_directive(),
         )
         raw_output, tokens_used = await self.llm.generate(
             prompt_template=self.config.prompt_template,
@@ -249,6 +296,8 @@ class PolicyQAOrchestrator:
             citations=citations,
             confidence=confidence,
             has_evidence=evidence_used,
+            retrieval_degraded=list(retrieval_diags.degraded_legs),
+            retrieval_note=retrieval_diags.notes[0] if retrieval_diags.notes else None,
             guardrail_flags={"input": input_flags, "output": output_flags, "history": meta},
             latency_ms=latency_ms,
             tokens_used=tokens_used,
@@ -325,14 +374,23 @@ class PolicyQAOrchestrator:
         # §6.1: the rewrite does NOT replace the original query. Retrieval runs
         # on both and fuses them, so a rewrite that drops the user's intent
         # cannot make recall worse than not rewriting at all.
-        context_chunks = []
+        context_chunks: list[dict] = []
+        retrieval_diags = RetrievalDiagnostics(strategy=str(self.config.retrieval_strategy))
         target_kb_id = kb_id or self.config.knowledge_base_id
         if target_kb_id:
             timer.start("retrieval")
-            context_chunks = await self._retrieve_with_query_variants(
+            context_chunks, retrieval_diags = await self._retrieve_with_query_variants_with_diagnostics(
                 guarded_input, rewritten_query, target_kb_id, tenant_id
             )
             timer.stop("retrieval")
+            if retrieval_diags.is_degraded:
+                # 降级要进日志，也要进提示词。只做前者等于让用户承担排序失准的后果。
+                logger.warning(
+                    "policy_qa_retrieval_degraded",
+                    tenant_id=tenant_id,
+                    kb_id=target_kb_id,
+                    degraded_legs=list(retrieval_diags.degraded_legs),
+                )
 
         if any(contains_prompt_injection(str(chunk.get("content", ""))) for chunk in context_chunks):
             # Mirror the non-stream guard: evidence carrying instruction hijack
@@ -379,6 +437,7 @@ class PolicyQAOrchestrator:
                 query=guarded_input,
                 evidence=context_chunks,
                 history=history,
+                retrieval_notice=retrieval_diags.prompt_directive(),
             )
             async for chunk_text in self.llm.generate_stream(
                 prompt_template=self.config.prompt_template,
@@ -463,6 +522,12 @@ class PolicyQAOrchestrator:
                         "final_answer": final_output,
                         "confidence": confidence,
                         "has_evidence": confidence >= settings.guardrail_confidence_threshold,
+                        # 流式路径同样要透出降级：否则"非流式能看见、流式看不见"
+                        # 就成了又一处"约定只在部分地方落实"。
+                        "retrieval_degraded": list(retrieval_diags.degraded_legs),
+                        "retrieval_note": (
+                            retrieval_diags.notes[0] if retrieval_diags.notes else None
+                        ),
                         "latency_ms": latency_ms,
                         "guardrail_flags": {"input": input_flags, "output": output_flags, "history": meta},
                         "tokens_used": output_tokens,

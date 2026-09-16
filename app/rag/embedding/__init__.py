@@ -69,6 +69,20 @@ def get_embedder() -> EmbeddingClient:
     api_key = settings.effective_embedding_api_key
     if not api_key:
         raise RuntimeError("No embedding API key configured. Set EMBEDDING_API_KEY (or LLM_API_KEY) in .env")
+    if not settings.embedding_base_url.strip():
+        # 空 base_url **不会**回落到 api.openai.com：实测 ``AsyncOpenAI(base_url="")``
+        # 在请求时抛 ``APIConnectionError("Connection error.")``。那条错误在
+        # ``Retriever._hybrid`` 里会被 ``return_exceptions=True`` 吞掉，dense 腿静默
+        # 死亡、排序退化成纯关键词 —— 2026-09-16 事故的真实机制。
+        #
+        # 教训是：**模糊的错误比没有错误更糟**。原始报错看不出是配置缺失，于是只能从
+        # "检索结果为什么不对"逆推回"少了一个环境变量"。这里把它变成指名道姓的失败。
+        raise RuntimeError(
+            "EMBEDDING_BASE_URL is empty. Set it to the OpenAI-compatible embeddings endpoint "
+            "(for example https://api.siliconflow.cn/v1 or https://ai.gitee.com/v1). "
+            "Without it every embed call fails with an opaque connection error, and the hybrid "
+            "retriever silently degrades to keyword-only ranking."
+        )
     return EmbeddingClient(
         base_url=settings.embedding_base_url,
         api_key=api_key,

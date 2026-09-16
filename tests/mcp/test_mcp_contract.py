@@ -31,6 +31,7 @@ from app.mcp.contract import (
     read_outcome,
 )
 from app.mcp.read_dispatch import anonymous_read_envelope, run_read_tool
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 from app.scenarios.hr_case_agent import read_executors
 from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, validate_tool_call
 
@@ -50,17 +51,29 @@ def _chunk() -> dict:
         "source": "薪酬福利管理制度.docx",
         "section": "第三章 加班费",
         "content": "加班费按 1.5/2/3 倍计算",
+        # 代表一次**正常**的制度命中：有权威来源。
+        # 不给这个值，本文件的"健康响应不应多字段"类断言会被"没有可依据来源"的
+        # 警示前缀打断 —— 那是另一条路径，由 tests/hr_case 专测。
+        "authority": "company_policy",
     }
 
 
-def _install_retriever(monkeypatch, *, chunks: list[dict] | None = None, boom: Exception | None = None) -> None:
+def _install_retriever(
+    monkeypatch,
+    *,
+    chunks: list[dict] | None = None,
+    boom: Exception | None = None,
+    diags: RetrievalDiagnostics | None = None,
+) -> None:
     monkeypatch.setattr(read_executors, "_resolve_kb_id", _fake_resolve_kb_id)
 
     class FakeRetriever:
-        async def retrieve(self, **kwargs):
+        async def retrieve_with_diagnostics(self, **kwargs):
             if boom is not None:
                 raise boom
-            return chunks if chunks is not None else [_chunk()]
+            return (chunks if chunks is not None else [_chunk()]), (
+                diags or RetrievalDiagnostics(strategy="hybrid")
+            )
 
     monkeypatch.setattr("app.rag.retrieval.retriever.Retriever", lambda *a, **k: FakeRetriever())
 
@@ -133,6 +146,42 @@ async def test_search_policy_distinguishes_empty_from_unavailable(monkeypatch) -
     assert down["error_code"] == "RETRIEVAL_UNAVAILABLE"
     # 原始异常内容只进日志。
     assert "milvus unreachable" not in str(down)
+
+
+async def test_degraded_retrieval_reaches_the_mcp_envelope(monkeypatch) -> None:
+    """降级标记必须穿过信封到达 MCP 客户端。
+
+    只测 `execute_search_policy` 的返回不够：信封由 `read_outcome` + `envelope`
+    构造，中间任何一步按白名单挑字段都会把它丢掉，而这种丢失在工具层测试里
+    完全看不出来。这里直接从 MCP 出口断言。
+    """
+    degraded = RetrievalDiagnostics(
+        strategy="hybrid",
+        degraded_legs=("dense",),
+        notes=("语义（向量）检索本次不可用，结果排序已退化为仅依赖剩余的一种检索方式。",),
+    )
+    _install_retriever(monkeypatch, diags=degraded)
+
+    result = await run_read_tool("search_policy", {"query": "年假"}, "tenant-1")
+
+    assert result["retrieval_degraded"] == ["dense"]
+    assert "语义（向量）" in result["retrieval_note"]
+    assert "【注意】" in result["summary"]
+    # 降级不是失败：outcome 仍是 FOUND，片段照常返回。
+    assert result["outcome"] == ToolOutcome.FOUND.value
+    assert result["ok"] is True
+    assert result["chunks"]
+
+
+async def test_healthy_retrieval_adds_no_degradation_fields(monkeypatch) -> None:
+    """没有降级时响应里不该多出字段 —— 否则"字段存在"不再是信号。"""
+    _install_retriever(monkeypatch)
+
+    result = await run_read_tool("search_policy", {"query": "年假"}, "tenant-1")
+
+    assert "retrieval_degraded" not in result
+    assert "retrieval_note" not in result
+    assert "【注意】" not in result["summary"]
 
 
 async def test_get_policy_source_actually_reaches_the_registered_executor(monkeypatch) -> None:

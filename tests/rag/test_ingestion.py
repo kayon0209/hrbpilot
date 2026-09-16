@@ -6,11 +6,13 @@ import io
 import pytest
 
 from app.rag.ingestion.pipeline import (
+    MAX_SECTION_CHARS,
     OCR_NEEDS_RATIO,
     Chunker,
     DocumentParser,
     IngestionService,
     _detect_table_continuations,
+    _split_oversized,
     _stitch_pages,
     _stitch_pages_with_spans,
     page_numbers_for_offsets,
@@ -236,6 +238,79 @@ def test_chunk_section_offsets_are_document_offsets():
     text = "前言\n第一章 总则\n第一条 工作时间\n第二章 附则"
     chunks = Chunker().chunk(text, strategy="section")
     assert all(text[c["start_char"] : c["end_char"]].strip() == c["content"] for c in chunks)
+
+
+def test_chunk_section_caps_a_marker_free_stretch():
+    """回归：真实文件暴露的 400。
+
+    ``kb_docs/05_hrtools_人力资源制度大全v2.docx`` 有一段没有任何章节标记的
+    表单区（招聘费用登记表），旧实现把它整段 19236 字符装进一个 chunk，
+    送进 bge-m3 报 ``400 ... exceeds the 8192 token limit (actual 12556)``，
+    整篇文档入库失败。section 切分必须有单块上限。
+    """
+    text = "第一章 总则\n" + ("招聘费用登记表内容" * 3000)  # 24000 字符，无后续标记
+
+    chunks = Chunker().chunk(text, strategy="section")
+
+    assert len(chunks) > 1
+    assert max(len(c["content"]) for c in chunks) <= MAX_SECTION_CHARS
+
+
+def test_capped_chunks_keep_the_offset_invariant():
+    """切分不能破坏 text[start:end].strip() == content，否则页码归属会错。"""
+    text = "第一章 总则\n" + ("很多内容" * 2000)
+
+    chunks = Chunker().chunk(text, strategy="section")
+
+    assert all(text[c["start_char"] : c["end_char"]].strip() == c["content"] for c in chunks)
+    assert [c["index"] for c in chunks] == list(range(len(chunks)))
+
+
+def test_capped_chunks_keep_the_section_label():
+    text = "第一章 总则\n" + ("内容" * 2000)
+
+    chunks = Chunker().chunk(text, strategy="section")
+
+    assert {c["section"] for c in chunks} == {"第一章"}
+
+
+def test_split_oversized_returns_contiguous_pieces():
+    raw = "甲" * 2000 + "\n" + "乙" * 2000
+
+    pieces = _split_oversized(raw, 1200)
+
+    expected_offsets: list[int] = []
+    acc = 0
+    for _, piece in pieces:
+        expected_offsets.append(acc)
+        acc += len(piece)
+
+    assert "".join(piece for _, piece in pieces) == raw
+    assert [offset for offset, _ in pieces] == expected_offsets
+    assert max(len(p) for _, p in pieces) <= 1200
+
+
+def test_split_oversized_short_text_is_untouched():
+    assert _split_oversized("短文本", 1200) == [(0, "短文本")]
+
+
+def test_split_oversized_prefers_a_paragraph_boundary():
+    """在段落边界切开，而不是把句子劈成两半。"""
+    raw = "甲" * 800 + "\n" + "乙" * 800
+
+    pieces = _split_oversized(raw, 1200)
+
+    assert pieces[0][1] == "甲" * 800 + "\n"
+    assert pieces[1][1] == "乙" * 800
+
+
+def test_split_oversized_ignores_a_boundary_in_the_early_window():
+    """边界出现在窗口前半段时改用硬切：留一个 50 字的尾巴比 1200 字的整块更差。"""
+    raw = "甲" * 100 + "\n" + "乙" * 1900
+
+    pieces = _split_oversized(raw, 1200)
+
+    assert pieces[0][1] == raw[:1200]
 
 
 # --- sha256 ---

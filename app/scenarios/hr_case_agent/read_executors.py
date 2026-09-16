@@ -25,7 +25,12 @@ from sqlalchemy import select
 
 from app.data.database import make_tenant_session
 from app.data.models.hr_case import ApprovalRequest, HRCase
-from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
+from app.data.models.knowledge_base import (
+    AUTHORITATIVE_AUTHORITIES,
+    Document,
+    DocumentChunk,
+    KnowledgeBase,
+)
 from app.scenarios.hr_case_agent.agent_loop import register_tool_executor
 from app.scenarios.hr_case_agent.read_context import current_read_principal, current_read_tenant
 from app.scenarios.hr_case_agent.tools import ToolError
@@ -70,12 +75,85 @@ async def _resolve_kb_id(tenant_id: str, kb_id: str | None) -> str:
     return str(row)
 
 
-def _summary_from_chunks(chunks: list[dict], kb_id: str) -> str:
+def _degradation_payload(diags: Any) -> dict[str, Any]:
+    """把检索诊断翻成工具响应里的降级标记。
+
+    正常时返回**空 dict**，而不是 ``{"retrieval_degraded": []}``：没有降级就不该
+    在响应里多一个字段。让"字段出现"本身携带信息，调用方只需判断键在不在，
+    不必再理解空数组的语义。
+    """
+    if diags is None or not getattr(diags, "is_degraded", False):
+        return {}
+    return {
+        "retrieval_degraded": list(diags.degraded_legs),
+        "retrieval_note": (
+            diags.notes[0] if diags.notes else "检索能力不完整，本次排序可信度下降，请核对原文。"
+        ),
+    }
+
+
+def _summary_from_chunks(chunks: list[dict], kb_id: str, diags: Any = None) -> str:
     head = chunks[0]
     section = head.get("section") or "未标注章节"
     source = head.get("source") or "未知文档"
     preview = str(head.get("content", "")).strip().replace("\n", " ")[:180]
-    return f"命中 {len(chunks)} 条制度片段（kb={kb_id}）：{source} / {section} — {preview}"
+    body = f"命中 {len(chunks)} 条制度片段（kb={kb_id}）：{source} / {section} — {preview}"
+    prefix = ""
+    if diags is not None and getattr(diags, "is_degraded", False):
+        # 摘要是最可能被模型/人直接读到的字段，降级必须先在这里说一次：
+        # 只在结构字段里标降级，等于假设调用方一定会检查那个字段。
+        note = diags.notes[0] if diags.notes else "检索能力不完整"
+        prefix += f"【注意】{note}"
+    if not _has_authoritative_source(chunks):
+        # 命中里一条"能当依据"的都没有 —— 这跟"没查到"是两件不同的事：
+        # 很可能查到了，但查到的全是第三方模板/无关材料。必须在同一句话里说清，
+        # 否则模型会照旧把排第一的片段当制度讲出去。
+        prefix += (
+            "【注意】本次命中里没有国家法规或本单位制度，"
+            f"只有{_authority_label(chunks[0].get('authority'))}等非权威来源，"
+            "不能作为制度依据回答。"
+        )
+    return f"{prefix}{body}" if prefix else body
+
+
+#: 来源级别 → 面向 HR 的说法。工具响应里不能出现 national_law / vendor_template
+#: 这类只有实现者才懂的取值（与 ``_LEG_LABEL`` 同一约定）。
+_AUTHORITY_LABEL: dict[str, str] = {
+    "national_law": "国家法规",
+    "company_policy": "本单位制度",
+    "vendor_template": "第三方模板",
+    "reference": "参考资料",
+    "unknown": "未标注来源的文件",
+}
+
+
+def _authority_label(value: Any) -> str:
+    return _AUTHORITY_LABEL.get(str(value or "unknown"), _AUTHORITY_LABEL["unknown"])
+
+
+def _has_authoritative_source(chunks: list[dict]) -> bool:
+    """命中里有没有"能回答依据是什么"的来源（国家法规 / 本单位制度）。"""
+    return any(str(c.get("authority") or "") in AUTHORITATIVE_AUTHORITIES for c in chunks)
+
+
+def _authority_payload(chunks: list[dict]) -> dict[str, Any]:
+    """命中**完全没有**权威来源时，在响应里显式标出来。
+
+    与 ``_degradation_payload`` 同一约定：正常情况返回空 dict，让"字段出现"本身
+    携带信息。这里不逐条暴露来源级别（那会让每次响应都变长），只在最危险的那种
+    情况下——手里一条依据都没有——明确说没有。
+    """
+    if _has_authoritative_source(chunks):
+        return {}
+    labels = sorted({_authority_label(c.get("authority")) for c in chunks})
+    return {
+        "authoritative_source": False,
+        "authority_note": (
+            f"命中 {len(chunks)} 条片段，但没有任何一条来自国家法规或本单位制度，"
+            f"来源性质为：{'、'.join(labels)}。这些材料不能作为制度依据，"
+            "应视为无依据，或先补充本单位制度文件。"
+        ),
+    }
 
 
 #: concise 档的单片段正文预算。detailed 档不复用这个值 —— 它的用途是
@@ -90,27 +168,42 @@ def _chunk_view(chunk: dict, detail: str) -> dict[str, Any]:
     concise：出处（source/section）+ 片段正文 —— 引用式问答需要的全部。
     detailed：额外带 chunk_id/document_id/kb_id 与未截断的 content —— 只有
     需要后续按 id 精读（get_policy_source）或落库对账时才值得多花这些 token。
+
+    ``source_type`` 两档都带：它是"这条能不能当依据"的唯一线索，而知识库里
+    同时存在国家法规、本单位制度和第三方模板 —— 少了它，调用方只看文档名
+    无法分辨，而这正是曾经把酒店考核表当成"公司年假规定"的直接原因。
     """
     if detail == "concise":
         return {
             "source": chunk.get("source"),
             "section": chunk.get("section"),
+            "source_type": _authority_label(chunk.get("authority")),
             "content": str(chunk.get("content", ""))[:_CONCISE_SNIPPET_CHARS],
         }
-    return dict(chunk)
+    view = dict(chunk)
+    view["source_type"] = _authority_label(chunk.get("authority"))
+    return view
 
 
 async def execute_search_policy(params: dict) -> dict:
-    """Hybrid RAG search over the tenant's policy knowledge base."""
+    """Hybrid RAG search over the tenant's policy knowledge base.
+
+    用 ``retrieve_with_diagnostics`` 而不是 ``retrieve``：降级只写日志是不够的。
+    2026-09-16 的真实事故里，dense 腿因 embedding 401 静默消失后本工具照回
+    ``outcome: FOUND`` + 一段自信摘要，调用方完全看不出排序已经退化成纯关键词，
+    结果把《职工带薪年休假条例》换成了字面命中"年""假"的酒店考核表。
+    降级必须写进响应契约，否则"可见"只对运维成立、对作答者不成立。
+    """
     tenant_id = _require_tenant()
     kb_id = await _resolve_kb_id(tenant_id, params.get("kb_id"))
     top_k = int(params.get("top_k") or 3)
     detail = str(params.get("detail") or "concise")
+    authoritative_only = bool(params.get("authoritative_only"))
 
     from app.rag.retrieval.retriever import Retriever
 
     try:
-        chunks = await Retriever().retrieve(
+        chunks, diags = await Retriever().retrieve_with_diagnostics(
             query=str(params["query"]),
             kb_id=kb_id,
             top_k=top_k,
@@ -120,17 +213,49 @@ async def execute_search_policy(params: dict) -> dict:
         logger.warning("read_tool_retrieval_failed", tool="search_policy", kb_id=kb_id, error=repr(e))
         raise ToolError("RETRIEVAL_UNAVAILABLE", f"{type(e).__name__}: {e}") from e
 
+    # 零命中分支也带上降级标记：否则"两腿都正常但确实没有"和
+    # "关键词腿也没命中"看起来一模一样，而后者并不说明库里没有该制度。
+    degradation = _degradation_payload(diags)
+
     if not chunks:
         return {
             "summary": f"未命中制度片段（kb={kb_id}）：检索通道可用但无匹配，应按无依据处理",
             "chunks": [],
             "kb_id": kb_id,
+            **degradation,
         }
+
+    if authoritative_only:
+        # 调用方只要"能当依据"的命中（国家法规 / 本单位制度）。
+        # 过滤后为空**必须**显式说清"命中过但全被过滤掉了"——这与"真的没查到"
+        # 是两种不同的无依据，混在一起会误导调用方去怀疑检索通道而不是语料。
+        kept = [c for c in chunks if str(c.get("authority") or "") in AUTHORITATIVE_AUTHORITIES]
+        if not kept:
+            labels = sorted({_authority_label(c.get("authority")) for c in chunks})
+            return {
+                "summary": (
+                    f"命中 {len(chunks)} 条，但均为{'、'.join(labels)}，"
+                    "开启仅权威来源过滤后无剩余片段，应按无依据处理"
+                ),
+                "chunks": [],
+                "kb_id": kb_id,
+                "detail": detail,
+                "authoritative_source": False,
+                "authority_note": (
+                    "开启 authoritative_only 后没有剩余命中：知识库检索到了内容，"
+                    "但没有一条来自本单位制度或国家法规。"
+                ),
+                **degradation,
+            }
+        chunks = kept
+
     return {
-        "summary": _summary_from_chunks(chunks, kb_id),
+        "summary": _summary_from_chunks(chunks, kb_id, diags=diags),
         "chunks": [_chunk_view(c, detail) for c in chunks[:top_k]],
         "kb_id": kb_id,
         "detail": detail,
+        **_authority_payload(chunks),
+        **degradation,
     }
 
 

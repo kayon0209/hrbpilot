@@ -17,7 +17,7 @@ from app.mcp.contract import FAILURE_HINTS, failure_envelope
 from app.mcp.read_dispatch import run_read_tool
 from app.mcp.server import mcp_server
 from app.mcp.tool_descriptions import DESCRIPTIONS_VERSION, TOOL_DESCRIPTIONS
-from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
+from app.scenarios.hr_case_agent.tools import TOOL_CATALOG, validate_tool_call
 
 READ_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "read")
 WRITE_TOOL_NAMES = tuple(t.name for t in TOOL_CATALOG.tools if t.kind.value == "write")
@@ -63,6 +63,20 @@ def test_descriptions_are_centralized_and_three_part() -> None:
     assert DESCRIPTIONS_VERSION, "描述集必须带版本号（评测基线据此对账）"
 
 
+def test_search_policy_description_tells_the_model_what_to_do_when_degraded() -> None:
+    """降级字段必须"有人告诉模型怎么用"，否则透出字段只是摆设。
+
+    2026-09-16 事故的残留：`retrieval_degraded` 已经出现在响应里，但没有一条指令
+    要求模型据此调整作答 —— 模型照旧会把排第一位的片段（当时是酒店技能考核表）
+    当成适用条款。这条测试锁住"描述里必须写清降级时该怎么做"。
+    """
+    description = TOOL_DESCRIPTIONS["search_policy"]
+
+    assert "retrieval_degraded" in description, "模型需要认得这个字段名才能据它行动"
+    assert "核对原文" in description, "必须给出可执行动作，而不是泛泛提示"
+    assert "定论" in description, "必须明确禁止把首位片段当作确定结论"
+
+
 def test_failure_envelope_carries_fix_and_retryable() -> None:
     """失败信封带自纠错字段；未登记的 code 也不得谎称可重试。"""
     payload = failure_envelope("search_policy", "RETRIEVAL_UNAVAILABLE")
@@ -83,3 +97,22 @@ async def test_invalid_params_names_the_field_and_constraint() -> None:
     detail = result["detail"]
     assert "query" in detail, f"detail 必须点名出错的字段，实际: {detail}"
     assert "at least 1 character" in detail or "min_length" in detail, "detail 必须写清约束"
+
+
+# ── 工具参数必须能穿透参数校验（2026-09-16）────────────────────────────────
+# `authoritative_only` 第一次上线时，MCP 工具签名和执行器都改了，唯独漏了
+# `TOOL_SCHEMAS` 里的 pydantic 模型 —— 而 `validate_tool_call` 对未声明字段
+# 是 pydantic 默认的 extra=ignore：**静默丢弃，不报错**。结果参数在本地单测
+# 全绿，真实调用里原样穿透，直到端到端验证才暴露。
+#
+# 这条测试的意义：给读工具加参数时，"签名 + schema"必须一起改，否则这里红。
+
+
+def test_search_policy_accepts_authoritative_only_in_its_param_schema():
+    validated = validate_tool_call("search_policy", {"query": "年假", "authoritative_only": True})
+    assert validated["authoritative_only"] is True
+
+
+def test_search_policy_param_defaults_keep_the_old_behavior():
+    validated = validate_tool_call("search_policy", {"query": "年假"})
+    assert validated["authoritative_only"] is False

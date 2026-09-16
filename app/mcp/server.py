@@ -200,11 +200,14 @@ async def search_policy(
     kb_id: str | None = None,
     top_k: int = 3,
     detail: Literal["concise", "detailed"] = "concise",
+    authoritative_only: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {"query": query, "top_k": top_k, "detail": detail}
     if kb_id is not None:
         params["kb_id"] = kb_id
+    if authoritative_only:
+        params["authoritative_only"] = True
     return await _run_read("search_policy", params, ctx)
 
 

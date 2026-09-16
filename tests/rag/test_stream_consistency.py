@@ -10,9 +10,29 @@ from typing import Any, cast
 
 import pytest
 
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
 from app.scenarios.policy_qa.postprocessors import NO_EVIDENCE_TEMPLATE
 from app.scenarios.policy_qa.schemas import QAResponse
+
+
+@pytest.fixture(autouse=True)
+def _no_live_llm_rewrite(monkeypatch):
+    """本文件测的是流式与非流式的一致性，与查询改写无关 —— 不该为它调外部 LLM。
+
+    ``rewrite_query`` 的 Step 2 会真的构造 ``LLMOrchestrator`` 并发起网络请求
+    （``app/scenarios/policy_qa/preprocessors.py``）。本文件的 ``_orchestrator``
+    只替换了 llm / retriever / guardrails，**没有**替换改写步骤，于是每个用例都会
+    打一次真实 LLM：延迟一抖，整个测试就会挂住（2026-09-16 全量套件两次被拖到
+    超时 SIGTERM），CI 在无外网时同样会挂。
+
+    autouse 是为了让"以后新增的用例"默认不带这个外部依赖。
+    """
+
+    async def keep_question(question: str, _config) -> str:
+        return question
+
+    monkeypatch.setattr("app.scenarios.policy_qa.orchestrator.rewrite_query", keep_question)
 
 
 class _LLM:
@@ -30,6 +50,11 @@ class _Retriever:
 
     async def retrieve(self, **kwargs):
         return self._chunks
+
+    async def retrieve_with_diagnostics(self, **kwargs):
+        # policy_qa 现在走带诊断的入口（2026-09-16 降级可见性）；假件必须跟上，
+        # 否则测的是一条已经不存在的调用路径。
+        return self._chunks, RetrievalDiagnostics(strategy="hybrid")
 
 
 class _ReplacingOutputGuard:

@@ -15,6 +15,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from app.rag.llm.model_router import ModelRequest, ModelRouter, _downshift
+from app.rag.retrieval.retriever import RetrievalDiagnostics
 
 
 def test_model_request_is_immutable():
@@ -370,6 +371,11 @@ class _QueryCapturingRetriever:
 
     async def retrieve(self, **kwargs):
         return self._chunks
+
+    async def retrieve_with_diagnostics(self, **kwargs):
+        # policy_qa 现在走带诊断的入口（2026-09-16 降级可见性）；本文件断言的是
+        # model_request 是否被透传，与降级无关。
+        return self._chunks, RetrievalDiagnostics(strategy="hybrid")
 
 
 def test_route_metadata_is_content_free():

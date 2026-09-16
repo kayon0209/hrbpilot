@@ -14,12 +14,65 @@ by default. A chunk appearing in both lists accumulates score from both.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
+from app.data.models.knowledge_base import SourceAuthority
 from app.rag.retrieval.types import RetrievedChunk
 
 DEFAULT_K = 60
+
+#: 分数**完全相等**时的次级排序：更权威的来源排前（数值越大越靠前）。
+#: 刻意不把 ``company_policy`` 排在 ``national_law`` 之上/之下 —— 两者都是
+#: 可作依据的来源，平局场景里谁先都有理，不为极少见的组合引入更多语义。
+_AUTHORITY_TIE_RANK: dict[str, int] = {
+    SourceAuthority.NATIONAL_LAW.value: 2,
+    SourceAuthority.COMPANY_POLICY.value: 2,
+    SourceAuthority.VENDOR_TEMPLATE.value: 1,
+    SourceAuthority.REFERENCE.value: 1,
+    SourceAuthority.UNKNOWN.value: 0,
+}
+
+
+def apply_authority_tie_break(
+    items: list[Any],
+    *,
+    score_of: Callable[[Any], float],
+    authority_of: Callable[[Any], str],
+) -> list[Any]:
+    """仅对**分数完全相等**的相邻项，按来源级别从高到低稳定重排。
+
+    为什么需要它
+    ------------
+    ``fused.sort(key=score)`` 是稳定排序：分数持平的先后由**插入顺序**决定 ——
+    也就是"哪条检索腿先产出谁"，与相关性和来源权威性都无关。真实事故里，
+    《职工带薪年休假条例》与一份酒店技能考核表的融合分**完全相同**（0.0167），
+    名次由这种偶然顺序决定。
+
+    为什么是"完全相等"而不是"接近"
+    ------------------------------
+    RRF 的不同取值之间相差 1e-2 量级；把阈值放宽到"接近"，来源级别就开始
+    干预**有分差**的排序 —— 那是相关性判断，不该被覆盖。所以这里用精确相等，
+    只裁决真正的平局。
+
+    已知边界：``_rerank`` 在本函数之后重排，rerank 分数的平局不再经过本裁决
+    （当前配置 rerank 关闭；开启时需要把同样的裁决接到 rerank 之后）。
+    """
+    ordered = list(items)
+    start = 0
+    while start < len(ordered):
+        end = start + 1
+        while end < len(ordered) and score_of(ordered[end]) == score_of(ordered[start]):
+            end += 1
+        if end - start > 1:
+            group = sorted(
+                ordered[start:end],
+                key=lambda item: -_AUTHORITY_TIE_RANK.get(authority_of(item), 0),
+            )
+            ordered[start:end] = group
+        start = end
+    return ordered
 
 
 def dense_confidence(score: float | None) -> float:
@@ -68,6 +121,11 @@ def rrf_fusion(
         confidence = 1.0 - (1.0 - dense_value) * (1.0 - sparse_value)
         fused.append(replace(chunk, score=scores[cid], confidence=confidence))
     fused.sort(key=lambda c: c.score, reverse=True)
+    # 来源级别须在融合**前**回填（见 Retriever._hybrid_with_diagnostics），
+    # 否则这里人人都是 unknown，裁决形同虚设。
+    fused = apply_authority_tie_break(
+        fused, score_of=lambda c: c.score, authority_of=lambda c: c.authority
+    )
 
     if top_k is not None:
         fused = fused[:top_k]
@@ -125,4 +183,12 @@ def fuse_query_variants(
         item["fused_score"] = score
         fused.append(item)
     fused.sort(key=lambda item: item["fused_score"], reverse=True)
+    # 与 rrf_fusion 同一裁决：dict 形态的命中带有 retrieve() 回填的 authority。
+    # 若这里不接，policy_qa 的 query 变体路径就会把平局裁决静默丢掉 ——
+    # "约定只在部分地方落实"正是本项目反复出现的缺陷形状。
+    fused = apply_authority_tie_break(
+        fused,
+        score_of=lambda item: item["fused_score"],
+        authority_of=lambda item: str(item.get("authority") or "unknown"),
+    )
     return fused[:top_k] if top_k is not None else fused

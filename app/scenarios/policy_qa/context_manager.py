@@ -250,6 +250,7 @@ def build_policy_qa_messages(
     evidence: list[dict] | None = None,
     history: list[dict[str, str]] | None = None,
     system_policy: str = _SYSTEM_POLICY,
+    retrieval_notice: str = "",
 ) -> list[dict[str, str]]:
     """Convert the policy QA prompt template into structured messages.
 
@@ -258,6 +259,11 @@ def build_policy_qa_messages(
     tail (headings must be preserved) become the task; evidence goes into its
     own untrusted user-role block (never a system message; see P1-04) and the
     current question is the final user message.
+
+    ``retrieval_notice`` 是检索侧的降级指令（``RetrievalDiagnostics.prompt_directive()``）。
+    它追加到【任务】段而**不是**证据块里：它是系统给模型的规则，不是待判读的素材 ——
+    混进 ``UNTRUSTED_EVIDENCE`` 会让模型把它当成可以被"忽略以上"覆盖的内容。
+    默认空串，不改变任何既有调用方的行为。
     """
     head, _, rest = prompt_template.partition("## 系统边界与制度文档片段")
     tail = ""
@@ -265,6 +271,8 @@ def build_policy_qa_messages(
         _, _, tail = rest.partition("## 用户问题")
         tail = "\n".join(line for line in tail.splitlines() if "{{ query }}" not in line).strip()
     task = (head.strip() + "\n\n" + tail).strip()
+    if retrieval_notice.strip():
+        task = f"{task}\n\n{retrieval_notice.strip()}"
     return build_chat_messages(
         task=task,
         query=query,

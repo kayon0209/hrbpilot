@@ -227,3 +227,158 @@ async def test_hybrid_degradation_is_logged_not_silent(caplog, capsys):
     blob = "\n".join(stdlib_events) + capsys.readouterr().out
     assert "retrieval_leg_failed" in blob
     assert "hybrid_retrieval_degraded_to_single_leg" in blob
+
+
+# ── 降级诊断透出到调用方（2026-09-16） ────────────────────────────────────────
+# 背景：`_hybrid` 的降级原先只写 ERROR 日志 + 反映在 /api/ready 上，**没有一条
+# 到达调用方**。真实事故：dense 腿因 embedding 401 静默消失后，
+# search_policy("公司的年假是怎么规定的？") 的 top-1 从《职工带薪年休假条例》
+# 变成一份酒店工程部技能考核表（字面命中"年""假"），而工具响应照回
+# `outcome: FOUND` 加一段自信摘要。这一组测试锁住"降级必须到达调用方"。
+#
+# 同时锁住一个反向约束：**降级标记不能滥用**。腿正常返回空（窄查询）不是故障，
+# 不能标降级 —— 否则标记会在大量正常回答上出现，调用方学会忽略它，
+# 等于把这次修复抵消掉。
+
+
+def _diag_failing(leg: str):
+    async def _fn(q, kb, t, k):
+        raise RuntimeError(f"{leg} down")
+
+    return _fn
+
+
+async def test_retrieve_with_diagnostics_reports_a_failed_dense_leg():
+    """dense 腿挂掉 → 诊断指名 dense，并给出人话原因；片段仍然返回。"""
+    r = Retriever()
+    r._dense = _diag_failing("dense")
+
+    async def ok_sparse(q, kb, t, k):
+        return [_chunk("s1", 5.0)]
+
+    r._sparse = ok_sparse
+    chunks, diags = await r.retrieve_with_diagnostics(query="年假", kb_id="k1", tenant_id="t")
+
+    assert [c["chunk_id"] for c in chunks] == ["s1"]
+    assert diags.is_degraded is True
+    assert diags.degraded_legs == ("dense",)
+    assert diags.notes and "语义（向量）" in diags.notes[0]
+
+
+async def test_retrieve_with_diagnostics_reports_a_failed_sparse_leg():
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("d1", 0.9)]
+
+    r._dense = ok_dense
+    r._sparse = _diag_failing("sparse")
+    chunks, diags = await r.retrieve_with_diagnostics(query="年假", kb_id="k1", tenant_id="t")
+
+    assert [c["chunk_id"] for c in chunks] == ["d1"]
+    assert diags.degraded_legs == ("sparse",)
+    assert diags.notes and "关键词" in diags.notes[0]
+
+
+async def test_retrieve_with_diagnostics_is_clean_when_both_legs_agree():
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("a", 0.9)]
+
+    async def ok_sparse(q, kb, t, k):
+        return [_chunk("b", 5.0)]
+
+    r._dense = ok_dense
+    r._sparse = ok_sparse
+    _, diags = await r.retrieve_with_diagnostics(query="年假", kb_id="k1", tenant_id="t")
+
+    assert diags.is_degraded is False
+    assert diags.degraded_legs == ()
+    assert diags.notes == ()
+
+
+async def test_an_empty_but_healthy_leg_is_not_a_degradation():
+    """腿返回空 ≠ 腿坏了。窄查询（字面全不命中）不该被标成降级。
+
+    这条是防止降级标记变成噪声的关键约束：sparse 对纯语义提问 0 命中是常态。
+    """
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("d1", 0.9)]
+
+    async def empty_sparse(q, kb, t, k):
+        return []
+
+    r._dense = ok_dense
+    r._sparse = empty_sparse
+    chunks, diags = await r.retrieve_with_diagnostics(query="英文提问", kb_id="k1", tenant_id="t")
+
+    assert len(chunks) == 1
+    assert diags.is_degraded is False
+
+
+async def test_an_explicit_single_leg_strategy_is_not_a_degradation():
+    """调用方显式要一条腿时，只走那一条腿是**要求**，不是降级。"""
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("d1", 0.9)]
+
+    r._dense = ok_dense
+    _, diags = await r.retrieve_with_diagnostics(
+        query="年假", kb_id="k1", strategy=RetrievalStrategy.DENSE, tenant_id="t"
+    )
+
+    assert diags.strategy == "dense"
+    assert diags.is_degraded is False
+
+
+async def test_retrieve_with_diagnostics_still_raises_when_both_legs_fail():
+    """两条腿都坏 → 仍然抛出，不用"空上下文"冒充"没有结果"。"""
+    r = Retriever()
+    r._dense = _diag_failing("dense")
+    r._sparse = _diag_failing("sparse")
+    with pytest.raises(RuntimeError):
+        await r.retrieve_with_diagnostics(query="年假", kb_id="k1", tenant_id="t")
+
+
+async def test_hybrid_signature_is_unchanged_for_existing_callers():
+    """向后兼容锁：`_hybrid` 必须继续返回**裸列表**，不是 (chunks, diags)。
+
+    既有 6 个测试与集成用例直接调 `_hybrid`；把诊断塞进它的返回值会让它们全部
+    静默变成"解包两个值"，所以这里显式钉死返回类型。
+    """
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("a", 0.9)]
+
+    async def ok_sparse(q, kb, t, k):
+        return [_chunk("b", 5.0)]
+
+    r._dense = ok_dense
+    r._sparse = ok_sparse
+    out = await r._hybrid("q", "k1", "t", 5)
+
+    assert isinstance(out, list)
+    assert {c.chunk_id for c in out} == {"a", "b"}
+
+
+async def test_retrieve_signature_is_unchanged_for_existing_callers():
+    """同样钉死 `retrieve` 只返回片段列表（5 处生产调用方依赖它）。"""
+    r = Retriever()
+
+    async def ok_dense(q, kb, t, k):
+        return [_chunk("a", 0.9)]
+
+    async def ok_sparse(q, kb, t, k):
+        return []
+
+    r._dense = ok_dense
+    r._sparse = ok_sparse
+    out = await r.retrieve(query="q", kb_id="k1", tenant_id="t")
+
+    assert isinstance(out, list)
+    assert [c["chunk_id"] for c in out] == ["a"]
