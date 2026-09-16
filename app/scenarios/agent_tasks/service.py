@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -907,12 +908,27 @@ class AgentTaskService:
             return
 
     def _project_execution_refs(self, task: AgentTask, execution: ToolExecution) -> None:
-        """执行成功后把真实产出的 id 投影回任务（只接受结果里的真实字段）。"""
+        """执行成功后把真实产出的 id 投影回任务。
+
+        New structured execution records carry a JSON result.  The governed
+        dispatcher predates the task gateway and stores a concise text summary,
+        so the one legacy ``create_work_task`` format is parsed narrowly too.
+        It is emitted only by our controlled executor and must match the whole
+        string; arbitrary summaries never become object references.
+        """
         if not execution.result_summary:
             return
         try:
             result = json.loads(execution.result_summary)
         except (TypeError, ValueError):
+            result = None
+        if result is None:
+            legacy_work_task = re.fullmatch(r"work task ([0-9a-f-]{36}) created", execution.result_summary)
+            if legacy_work_task and execution.tool_name == "create_work_task":
+                try:
+                    task.work_task_id = str(uuid.UUID(legacy_work_task.group(1)))
+                except ValueError:
+                    pass
             return
         if not isinstance(result, dict):
             return

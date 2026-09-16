@@ -2,7 +2,7 @@
   "mcpServers": {
     "hrbpilot": {
       "type": "streamableHttp",
-      "url": "https://hrbpilot.example.com/mcp",
+      "url": "https://hrbpilot.example.com/mcp/tasks",
       "timeout": 30000
     }
   }

@@ -15,7 +15,7 @@ from app.access.middleware.decorators import require_auth
 from app.access.middleware.tenant import require_tenant_id
 from app.data.database import get_db, tenant_session
 from app.data.models.chat import ChatMessage, ChatSession
-from app.data.models.knowledge_base import Document, KnowledgeBase
+from app.data.models.knowledge_base import AUTHORITATIVE_AUTHORITIES, Document, KnowledgeBase
 from app.scenarios.policy_qa.context_manager import ContextManager
 from app.scenarios.policy_qa.orchestrator import PolicyQAOrchestrator
 from app.scenarios.policy_qa.schemas import QAResponse
@@ -49,7 +49,17 @@ async def _resolve_policy_kb(session: AsyncSession, tenant_id: str, requested_kb
     if requested_kb_id:
         stmt = stmt.where(KnowledgeBase.id == requested_kb_id)
     else:
-        stmt = stmt.order_by(KnowledgeBase.created_at.asc()).limit(1)
+        authoritative_documents = (
+            select(func.count(Document.id))
+            .where(
+                Document.tenant_id == tenant_id,
+                Document.kb_id == KnowledgeBase.id,
+                Document.authority.in_(AUTHORITATIVE_AUTHORITIES),
+            )
+            .correlate(KnowledgeBase)
+            .scalar_subquery()
+        )
+        stmt = stmt.order_by(authoritative_documents.desc(), KnowledgeBase.created_at.asc()).limit(1)
     kb = (await session.execute(stmt)).scalars().first()
     if kb is None:
         raise NotFoundError("Active policy knowledge base", requested_kb_id or tenant_id)

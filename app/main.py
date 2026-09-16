@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.applications import Starlette
 
 from app.access.middleware.auth import AuthMiddleware
 from app.access.middleware.cors import add_cors_middleware
@@ -103,9 +104,12 @@ async def lifespan(app: FastAPI):
     # sub-apps, so the session manager must be started here explicitly —
     # otherwise every /mcp request 500s with "Task group is not initialized".
     from app.mcp.server import mcp_server as _mcp_server
+    from app.mcp.task_server import task_mcp_server as _task_mcp_server
 
     _register_agent_read_tools()
-    async with _mcp_server.session_manager.run():
+    # Mounted Streamable-HTTP sub-apps do not run their own lifespan.  Both
+    # protocol surfaces therefore need an explicitly managed session group.
+    async with _mcp_server.session_manager.run(), _task_mcp_server.session_manager.run():
         await _ensure_infrastructure()
         try:
             yield
@@ -155,19 +159,19 @@ def create_app() -> FastAPI:
     # 同一纯函数的结论提前到 HTTP 层 —— 见该模块的文档字符串。
     from app.mcp.transport_guard import InsufficientScopeGuard
 
+    # 两条出口共用一个 /mcp 挂载：任务服务器在内部注册精确的 /tasks
+    # 路由，原子服务器注册根路由。不能把一个内部根路由再嵌套挂到
+    # /mcp/tasks —— 客户端对无尾斜杠 POST 不跟随 Starlette 的 307，初始化会失败。
+    task_protocol = task_mcp_server.streamable_http_app(
+        streamable_http_path="/tasks", json_response=False, stateless_http=True
+    )
+    atomic_protocol = _mcp_server.streamable_http_app(
+        streamable_http_path="/", json_response=False, stateless_http=True
+    )
+    mcp_protocol = Starlette(routes=[*task_protocol.routes, *atomic_protocol.routes])
     app.mount(
         "/mcp",
-        InsufficientScopeGuard(
-            _mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
-        ),
-    )
-    # 任务型网关是第二台 MCPServer（同一份合并目录、同一个纯函数判定），
-    # 挂在 /mcp/tasks：普通 HR 的 7+2 高频工具，高级/兼容的原子工具仍在 /mcp。
-    app.mount(
-        "/mcp/tasks",
-        InsufficientScopeGuard(
-            task_mcp_server.streamable_http_app(streamable_http_path="/", json_response=False, stateless_http=True)
-        ),
+        InsufficientScopeGuard(mcp_protocol),
     )
     app.include_router(auth_router)
     app.include_router(hr_case_router)

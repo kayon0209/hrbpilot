@@ -4,8 +4,8 @@
 ----------------------------------------------------------
 同一套 ``ToolDefinition`` 契约、同一个 ``authorize_tool_call`` 判定；这里只是
 **另一份 bundle**：任务型 facade 挂在 ``/mcp/tasks``，原子工具保留在 ``/mcp``
-作为高级/兼容端点。两份目录按名字互不重叠，合并视图（``MCP_DISCOVERY_CATALOG``）
-供发现接口与传输守卫使用 —— 守卫对两条出口共用同一个纯函数判定，不存在
+作为高级/兼容端点。只有连接自检工具 ``get_my_access_profile`` 同时出现在两份
+目录里；合并视图按名字去重后供发现接口与传输守卫使用 —— 守卫对两条出口共用同一个纯函数判定，不存在
 "第二套规则"。
 
 task_type 是稳定对外契约
@@ -82,6 +82,10 @@ class GetCaseContextInput(BaseModel):
     response_format: Literal["concise", "detailed"] = "concise"
 
 
+class GetMyAccessProfileInput(BaseModel):
+    model_config = {"extra": "forbid"}
+
+
 TASK_TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "prepare_hr_action": PrepareHrActionInput,
     "submit_hr_action": SubmitHrActionInput,
@@ -91,6 +95,7 @@ TASK_TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "cancel_task": CancelTaskInput,
     "answer_policy_question": AnswerPolicyQuestionInput,
     "get_case_context": GetCaseContextInput,
+    "get_my_access_profile": GetMyAccessProfileInput,
 }
 
 #: (kind, capability, scope, risk) —— 与原子目录同一语义：scope 是"这类动作需要
@@ -106,6 +111,7 @@ _TASK_TOOL_METADATA: dict[str, tuple[ToolKind, str, Scope, str]] = {
     "list_my_tasks": (ToolKind.READ, "hr_case", Scope.CASE_READ, "low"),
     "answer_policy_question": (ToolKind.READ, "policy_qa", Scope.POLICY_READ, "low"),
     "get_case_context": (ToolKind.READ, "hr_case", Scope.CASE_READ, "low"),
+    "get_my_access_profile": (ToolKind.READ, "self_profile", Scope.PROFILE_READ, "low"),
 }
 
 #: 这些工具会在服务端创建草稿/审批记录，kind=WRITE 让 approval_required/idempotency
@@ -154,4 +160,6 @@ def validate_task_tool_call(tool_name: str, params: dict) -> dict:
 def combined_catalog() -> ToolCatalog:
     from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
 
-    return ToolCatalog(version="mcp-discovery-v1", tools=tuple(TOOL_CATALOG.tools) + tuple(AGENT_TASK_CATALOG.tools))
+    by_name = {tool.name: tool for tool in TOOL_CATALOG.tools}
+    by_name.update({tool.name: tool for tool in AGENT_TASK_CATALOG.tools})
+    return ToolCatalog(version="mcp-discovery-v1", tools=tuple(by_name.values()))

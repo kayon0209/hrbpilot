@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from app.scenarios.hr_case_agent.tools import TOOL_CATALOG
+from app.scenarios.agent_tasks.tools import AGENT_TASK_CATALOG
 
 _PACKAGE = Path(__file__).resolve().parents[2] / "connectors" / "workbuddy"
-_TOOL_NAMES = {tool.name for tool in TOOL_CATALOG.tools}
+_TOOL_NAMES = {tool.name for tool in AGENT_TASK_CATALOG.tools}
 
 
 def _load(name: str) -> dict:
@@ -89,6 +89,7 @@ def test_the_remote_url_uses_https(mcp: dict) -> None:
     server = next(iter(mcp["mcpServers"].values()))
     assert server["type"] == "streamableHttp"
     assert server["url"].startswith("https://"), "远程 MCP 必须使用 HTTPS"
+    assert server["url"].endswith("/mcp/tasks"), "普通用户连接器必须默认使用任务型入口"
 
 
 def test_disabled_tools_actually_exist(mcp: dict) -> None:

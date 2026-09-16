@@ -4,11 +4,11 @@ MCP + Skill 方案的连接器包，提交 WorkBuddy 团队审核后进入连接
 
 ## 提交前必须替换的两处
 
-1. **`mcp.json` 里的 `url`**。当前是占位域名 `https://hrbpilot.example.com/mcp`，
+1. **`mcp.json` 里的 `url`**。当前是占位域名 `https://hrbpilot.example.com/mcp/tasks`，
    必须换成真实的对外地址（HTTPS，且在反向代理后面时要把可信代理与
    `PUBLIC_BASE_URL` 一并配好）。占位地址若被提交上去，连接器在市场里对所有人
    都连不通 —— 而且是"连不上"，不是"报一个能看懂的错"。
-2. **`icon.svg`**。当前是占位图，请替换为正式图标（市场建议透明背景、小尺寸下可辨）。
+`icon.svg` 已作为 v1 正式图标：透明画布、64×64 viewBox，并在小尺寸下保留清晰轮廓。
 
 ## 服务端需要打开的开关
 

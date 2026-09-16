@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
 
 from app.data.models.agent_task import AgentTask
+from app.main import create_app
 from app.mcp.auth.principal import AuthMethod, McpPrincipal
 from app.mcp.capabilities import assert_manifest_is_current, build_manifest
 from app.mcp.task_descriptions import TASK_TOOL_DESCRIPTIONS
@@ -71,17 +75,29 @@ def test_intent_never_invents_owner_id() -> None:
     assert "_owner_user_id" not in result.params
 
 
-def test_catalog_bundles_do_not_overlap() -> None:
+def test_catalog_bundles_only_share_connection_profile() -> None:
     atomic = {tool.name for tool in TOOL_CATALOG.tools}
     task = {tool.name for tool in AGENT_TASK_CATALOG.tools}
-    assert atomic.isdisjoint(task)
+    assert atomic & task == {"get_my_access_profile"}
     merged = {tool.name for tool in combined_catalog().tools}
     assert merged == atomic | task
 
 
+def test_task_projection_keeps_the_legacy_governed_work_task_reference() -> None:
+    task = SimpleNamespace(work_task_id=None)
+    execution = SimpleNamespace(
+        tool_name="create_work_task",
+        result_summary="work task 11111111-1111-4111-8111-111111111111 created",
+    )
+
+    AgentTaskService._project_execution_refs(None, task, execution)  # type: ignore[arg-type]
+
+    assert task.work_task_id == "11111111-1111-4111-8111-111111111111"
+
+
 def test_task_catalog_uses_stable_scopes() -> None:
     scopes = {tool.required_scope.value for tool in AGENT_TASK_CATALOG.tools}
-    assert scopes <= {"hrb:case:read", "hrb:case:propose", "hrb:policy:read"}
+    assert scopes <= {"hrb:case:read", "hrb:case:propose", "hrb:policy:read", "hrb:profile:read"}
 
 
 def test_facade_registers_every_task_tool_with_annotations() -> None:
@@ -123,6 +139,22 @@ def test_manifest_is_current_and_bundles_are_stable() -> None:
     assert (
         manifest["scope_packages"]["query_and_propose"]["scopes"] != manifest["scope_packages"]["query_only"]["scopes"]
     )
+
+
+def test_task_gateway_is_matched_before_atomic_mcp_mount() -> None:
+    """`/mcp` is a prefix mount, so the more specific task endpoint must win."""
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/mcp/tasks",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test"}},
+            },
+        )
+    assert response.status_code == 401
+    assert "resource_metadata" in response.headers["www-authenticate"]
 
 
 # --------------------------------------------------------------------------- #

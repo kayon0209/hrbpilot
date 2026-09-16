@@ -7,7 +7,7 @@
   "description_en": "Search company policy documents with citations, browse the HR cases you are allowed to see, and submit approval requests for sensitive actions. Every answer cites its source; actions affecting employees are only submitted for approval, never executed directly.",
   "source": "hrbpilot",
   "type": "mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minWorkbuddyVersion": "4.24.0",
   "examples_zh": [
     "公司的年假是怎么规定的？",

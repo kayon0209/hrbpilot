@@ -17,6 +17,7 @@ import bcrypt
 
 from app.config.settings import settings
 from app.data.database import make_tenant_session
+from app.data.models.access_scope import ManagerOrgScope, OrgUnit
 from app.data.models.knowledge_base import Document, DocumentChunk, KnowledgeBase
 from app.data.models.user import User
 
@@ -45,6 +46,8 @@ async def seed() -> None:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     knowledge_base_id = str(uuid4())
     document_id = str(uuid4())
+    org_unit_id = str(uuid4())
+    account_ids = {role: str(uuid4()) for role in _ROLES}
     content_sha256 = hashlib.sha256(_POLICY_TEXT.encode("utf-8")).hexdigest()
 
     # The local development configuration may enable SQLAlchemy echo. Account
@@ -52,6 +55,8 @@ async def seed() -> None:
     settings.app_debug = False
     session = await make_tenant_session(tenant_id)
     try:
+        session.add(OrgUnit(id=org_unit_id, tenant_id=tenant_id, name="E2E MCP 验收组织"))
+        await session.flush()
         knowledge_base = KnowledgeBase(
             id=knowledge_base_id,
             tenant_id=tenant_id,
@@ -73,6 +78,7 @@ async def seed() -> None:
             size_bytes=len(_POLICY_TEXT.encode("utf-8")),
             content_sha256=content_sha256,
             status="indexed",
+            authority="company_policy",
         )
         session.add(document)
         await session.flush()
@@ -96,15 +102,24 @@ async def seed() -> None:
         session.add_all(
             [
                 User(
-                    id=str(uuid4()),
+                    id=account_ids[role],
                     tenant_id=tenant_id,
                     name=f"E2E {role}",
                     email=f"e2e-{role}-{run_id}@hrbpilot.test",
                     hashed_password=password_hash,
                     role=role,
+                    org_unit_id=org_unit_id,
                 )
                 for role in _ROLES
             ]
+        )
+        await session.flush()
+        session.add(
+            ManagerOrgScope(
+                tenant_id=tenant_id,
+                manager_user_id=account_ids["hr_manager"],
+                org_unit_id=org_unit_id,
+            )
         )
         await session.commit()
     except Exception:

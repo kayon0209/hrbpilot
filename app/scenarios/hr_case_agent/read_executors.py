@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.data.database import make_tenant_session
 from app.data.models.hr_case import ApprovalRequest, HRCase
@@ -57,15 +57,36 @@ def _require_tenant() -> str:
 
 
 async def _resolve_kb_id(tenant_id: str, kb_id: str | None) -> str:
-    """Use the requested KB, else the tenant's oldest active policy KB."""
+    """Use the requested KB, else prefer the active policy KB with evidence.
+
+    A tenant can retain an old sandbox KB beside a later, curated policy KB.
+    Choosing by creation time alone makes the sandbox silently win even when it
+    contains only unknown/template sources.  Prefer the base with the most
+    declared national-law or company-policy documents; creation time remains a
+    deterministic tie-breaker for equally curated bases.
+    """
     if kb_id:
         return str(kb_id)
     session = await make_tenant_session(tenant_id)
     try:
+        authoritative_documents = (
+            select(func.count(Document.id))
+            .where(
+                Document.tenant_id == tenant_id,
+                Document.kb_id == KnowledgeBase.id,
+                Document.authority.in_(AUTHORITATIVE_AUTHORITIES),
+            )
+            .correlate(KnowledgeBase)
+            .scalar_subquery()
+        )
         row = await session.scalar(
             select(KnowledgeBase.id)
-            .where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.status == "active")
-            .order_by(KnowledgeBase.created_at.asc())
+            .where(
+                KnowledgeBase.tenant_id == tenant_id,
+                KnowledgeBase.scenario_id == DEFAULT_KB_SCENARIO,
+                KnowledgeBase.status == "active",
+            )
+            .order_by(authoritative_documents.desc(), KnowledgeBase.created_at.asc())
             .limit(1)
         )
     finally:

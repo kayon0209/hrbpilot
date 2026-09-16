@@ -51,6 +51,7 @@ _READ_TASK_TOOLS = frozenset(
         "list_my_tasks",
         "answer_policy_question",
         "get_case_context",
+        "get_my_access_profile",
     }
 )
 
@@ -58,6 +59,7 @@ _READ_TASK_TOOLS = frozenset(
 _TASK_READ_ALIAS: dict[str, str] = {
     "answer_policy_question": "search_policy",
     "get_case_context": "get_case_summary",
+    "get_my_access_profile": "get_my_access_profile",
 }
 
 
@@ -217,8 +219,10 @@ async def _invoke(tool_name: str, params: dict[str, Any], ctx: Context | None) -
                     "top_k": read_params.get("top_k", 3),
                     "detail": "concise",
                 }
-            else:
+            elif tool_name == "get_case_context":
                 read_params = {"case_id": str(read_params.pop("case_ref")), "detail": "concise"}
+            else:
+                read_params = {}
             read_params.pop("response_format", None)
             result = await run_read_tool(alias, read_params, principal.tenant_id, principal=principal)
             result = dict(result)
@@ -346,3 +350,13 @@ async def get_case_context(
     case_ref: str, response_format: Literal["concise", "detailed"] = "concise", ctx: Context | None = None
 ) -> dict[str, Any]:
     return await _invoke("get_case_context", {"case_ref": case_ref, "response_format": response_format}, ctx)
+
+
+@task_mcp_server.tool(
+    name="get_my_access_profile",
+    description=_describe("get_my_access_profile"),
+    annotations=_annotations("get_my_access_profile"),
+    structured_output=True,
+)
+async def get_my_access_profile(ctx: Context | None = None) -> dict[str, Any]:
+    return await _invoke("get_my_access_profile", {}, ctx)

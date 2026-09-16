@@ -10,8 +10,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-  [string]$ServerName = $(if ($env:HRBPILOT_MCP_NAME) { $env:HRBPILOT_MCP_NAME } else { 'hrbpilot-local' }),
-  [string]$ResourceUrl = $(if ($env:HRBPILOT_MCP_URL) { $env:HRBPILOT_MCP_URL } else { 'http://localhost:8001/mcp' }),
+  [string]$ServerName = $(if ($env:HRBPILOT_MCP_NAME) { $env:HRBPILOT_MCP_NAME } else { 'hrbpilot-tasks' }),
+  [string]$ResourceUrl = $(if ($env:HRBPILOT_MCP_URL) { $env:HRBPILOT_MCP_URL } else { 'http://localhost:8001/mcp/tasks' }),
   # 跳过交互确认（用于自动化场景）；套餐仍需 -Tier 显式给出。
   [switch]$NonInteractive,
   [ValidateSet('1', '2')]
@@ -25,7 +25,7 @@ function Fail([string]$Message) {
   exit 1
 }
 
-$ReadyUrl = ($ResourceUrl -replace '/mcp$', '') + '/api/ready'
+$ReadyUrl = ($ResourceUrl -replace '/mcp(?:/tasks)?$', '') + '/api/ready'
 
 # --- 前置检查 -------------------------------------------------------------
 
@@ -77,8 +77,7 @@ else {
   Write-Host "添加本机 MCP 服务：$ServerName → $ResourceUrl"
   & $codexPath mcp add $ServerName `
     --url $ResourceUrl `
-    --oauth-client-registration dcr `
-    --oauth-resource $ResourceUrl
+    --oauth-client-registration dcr
   if ($LASTEXITCODE -ne 0) { Fail 'codex mcp add 失败（见上方输出）。' }
 }
 
@@ -125,8 +124,8 @@ Invoke-Smoke '身份与 scope 套餐（get_my_access_profile）' `
   }
 
 # 3) 业务只读工具：一句固定问句，必须带回出处
-Invoke-Smoke '业务只读工具（search_policy 带出处）' `
-  '调用 MCP 工具 search_policy 查询「公司的年假是怎么规定的」，返回条文与出处（制度名称与条款位置）。' `
+Invoke-Smoke '业务只读工具（answer_policy_question 带出处）' `
+  '调用 MCP 工具 answer_policy_question 查询「公司的年假是怎么规定的」，返回条文与出处（制度名称与条款位置）。' `
   {
     param($out)
     if ($out -match 'AUTH_REQUIRED|FORBIDDEN|FAILED') { return $false }
