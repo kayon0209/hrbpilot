@@ -100,3 +100,10 @@ web/_mg_e2e.mjs
 # secrets: key material (HRBPILOT MCP P0)
 *.pem
 *.b64
+
+# --- Local one-off diagnostic / probe scripts (not project code) ---
+scripts/_*.py
+scripts/demo_my_access_profile.py
+
+# --- Reproducible eval run outputs (regenerable; not evidence) ---
+evaluation/results/*.jsonl
