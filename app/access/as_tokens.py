@@ -384,7 +384,17 @@ async def _decode_signed_claims(token: str, *, issuer: str, kid: str) -> dict[st
                 algorithms=[ALGORITHM],
                 audience=settings.mcp_resource_url,
             )
-        except JWTError:
+        except JWTError as exc:
+            # 验签失败 / 过期 / audience 不符 —— 三者都退化成同一个 ``MALFORMED``，
+            # 但它们要改的地方完全不同（换密钥轮换、校时钟、改 PUBLIC_BASE_URL）。
+            # 原因**只进日志，不进响应**：对客户端说清"为什么没通过"，等于给攻击者
+            # 送一份免费的探测反馈（本模块开头的分流说明有同一条理由）。
+            logger.warning(
+                "as_token_decode_failed",
+                kid=kid,
+                expected_audience=settings.mcp_resource_url,
+                detail=str(exc)[:160],
+            )
             return None
         return claims
     return None
@@ -485,6 +495,21 @@ async def verify_as_access_token(token: str) -> AsAccessClaims | TokenRejection:
     )
 
 
+def _looks_like_an_authorization_server(issuer: str | None) -> bool:
+    """令牌自称的 issuer 是否像"某个授权服务器"（绝对 http(s) URL）。
+
+    这个判别器存在的唯一理由是**把噪声关掉**：平台自签令牌的 ``iss`` 是
+    ``hrbp-ai-workbench``（不是 URL），它本来就走平台分支、本来就是正常路径。
+    如果无条件记日志，每一笔平台令牌流量都会写一行 WARNING，真正的问题反而被刷没。
+
+    它不参与任何信任判断 —— 信任只看 ``accepts_issuer``。这里只是"要不要说一声"。
+    """
+    if not issuer:
+        return False
+    parts = urlsplit(issuer)
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
 async def resolve_access_claims(token: str) -> AccessClaims | AsAccessClaims | TokenRejection:
     """**本层的唯一凭据入口**：一个 bearer 值 → 已校验的身份，或一个拒绝类别。
 
@@ -497,4 +522,28 @@ async def resolve_access_claims(token: str) -> AccessClaims | AsAccessClaims | T
     issuer = unverified_issuer(token)
     if issuer is not None and accepts_issuer(issuer):
         return await verify_as_access_token(token)
+
+    # 落到这里有两种情况，必须分开看：
+    #   ① 平台自签令牌（正常路径，静默）；
+    #   ② **一个自称是 AS 的令牌，但那个 issuer 不在信任列表里** —— 它会被退回
+    #      平台校验，而平台校验用 HS256 + 平台密钥，**永远验不过** ES256 的 AS 令牌。
+    #      最终只留下中间件那一句 ``mcp_token_rejected reason=malformed``。
+    #
+    # ② 以前是静默的，代价实测很大：``MCP_AUTHORIZATION_SERVERS`` 留空时所有 AS 令牌
+    # 都掉进这条分支，而"信任列表为空"这件事在日志里查不到，只能从 ``malformed``
+    # 逆推（2026-09-16 花了十几轮排查才定位到一个没配的环境变量）。
+    if _looks_like_an_authorization_server(issuer):
+        trusted = settings.authorization_servers
+        logger.warning(
+            "as_token_issuer_not_trusted",
+            issuer=(issuer or "")[:200],
+            trusted_issuers=list(trusted),
+            hint=(
+                "MCP_AUTHORIZATION_SERVERS is empty, so every AS-issued token is routed to platform "
+                "verification; that path uses an HS256 platform secret and can never validate an ES256 "
+                "AS token, so the only visible symptom is 'malformed'."
+                if not trusted
+                else "the token's issuer is not listed in MCP_AUTHORIZATION_SERVERS"
+            ),
+        )
     return read_access_claims(token)

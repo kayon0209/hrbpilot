@@ -75,7 +75,7 @@ def _stop(name: str) -> bool:
 
 
 def _start(name: str) -> bool:
-    code, out = _docker("start", name)
+    code, _ = _docker("start", name)
     if code == 0 and name.endswith("postgres-1"):
         _wait_pg_healthy(name)
     return code == 0
@@ -114,14 +114,14 @@ def _make_client():
     脱离上下文管理器使用会让 DB 连接跨循环失效（首版实测踩到：
     ``AttributeError: 'NoneType' object has no attribute 'send'``）。
     """
-    from app.main import app  # noqa: PLC0415
     from fastapi.testclient import TestClient
+
+    from app.main import app
 
     return TestClient(app)
 
 
 def _make_token(role: str = "hrbp") -> str:
-    import datetime
 
     from app.access.routes.auth import _create_access_token
 

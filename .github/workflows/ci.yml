@@ -10,6 +10,18 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://hrbp_ci_app:hrbp_ci_app_password@127.0.0.1:5432/hrbp_ci
       REDIS_URL: redis://127.0.0.1:6379/0
+      # 打开被环境变量门控的安全/并发回归（2026-09-16）。
+      #
+      # 这两项此前**没有设置**，后果是：下面那两步专门为这些测试准备了一个
+      # RLS-bound 数据库角色并断言连接确实受 RLS 约束，而 19 个测试文件里约 30 个
+      # 用例却在测试函数开头就 `pytest.skip(...)` —— 那份准备工作等于白做。
+      # 被跳过的正是最要紧的一批：RLS 租户隔离、租户外键、审批竞态/崩溃一致性、
+      # outbox 租约栅栏、工具网关、执行授权、dispatcher 并发、OAuth 竞态。
+      #
+      # 本地（同类连接、非 superuser、非 bypassrls）打开开关实测：
+      #   324 passed / 1 skipped in 30.11s —— 用例本身是好的，只是从未被启用。
+      HRBP_RUN_DB_SECURITY_TESTS: "true"
+      HRBP_RUN_CONCURRENCY_TESTS: "true"
     services:
       postgres:
         image: postgres:16
@@ -33,6 +45,45 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # ── Milvus 栈（etcd + minio + milvus standalone）───────────────────────────
+      # 没有它，tests/integration/test_hybrid_rag.py（dense+sparse RRF 融合，
+      # 2026-09-16 检索事故的那条链路）在 CI 里永远 skip —— 也就是**事故链路
+      # 在 CI 中零覆盖**。镜像版本取自 docker-compose.yml（tag 一致；
+      # 镜像源换回官方 registry，compose 里的 docker.1ms.run 是国内镜像，
+      # GitHub runner 拉它不稳定）。测试自带确定性 embedder（无 API key 时），
+      # 每次运行建独立租户/集合，不会污染数据库状态。
+      # 注意：Actions 服务无法在本地完全验证，首次真实运行需观察 milvus 健康探针
+      # 是否在 retries 内变绿（standalone 启动偏慢）。
+      etcd:
+        image: quay.io/coreos/etcd:v3.5.5
+        env:
+          ETCD_AUTO_COMPACTION_MODE: revision
+          ETCD_AUTO_COMPACTION_RETENTION: "1000"
+          ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      minio:
+        image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      milvus:
+        image: milvusdb/milvus:v2.5.0
+        command: ["milvus", "run", "standalone"]
+        env:
+          ETCD_ENDPOINTS: etcd:2379
+          MINIO_ADDRESS: minio:9000
+        ports:
+          - 19530:19530
+        options: >-
+          --health-cmd "curl -f http://localhost:9091/healthz"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 90s
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -116,6 +167,30 @@ jobs:
         run: mypy app
       - name: Test
         run: pytest -q
+      # 只设 env 开关是不够的：开关被人删掉、改名，或门控条件被改写，测试会**静默**
+      # 回到 skip 状态，而全量 `pytest -q` 依然显示绿色。所以这里再单独跑一遍这批
+      # 用例，只要出现一个 skipped 就让构建失败 —— 让"安全网没通电"变成红灯，
+      # 而不是又一条没人注意的 warning。
+      - name: Assert the gated security/concurrency regressions actually ran
+        run: |
+          pytest -q -rs \
+            tests/hr_case/test_rls_postgres.py \
+            tests/runtime/test_dispatcher_postgres.py \
+            tests/runtime/test_outbox_postgres.py \
+            tests/runtime/test_tool_gateway_postgres.py \
+            tests/runtime/test_execution_grants_postgres.py \
+            tests/connectors/test_oauth_races.py | tee /tmp/gated.txt
+          if grep -qE "[0-9]+ skipped" /tmp/gated.txt; then
+            echo "::error::被门控的安全/并发回归没有真正执行 —— 检查本 job env 里的 HRBP_RUN_* 开关与测试内的门控条件"
+            exit 1
+          fi
+      - name: Assert the Milvus hybrid-RAG integration actually ran
+        run: |
+          pytest -q -rs tests/integration/test_hybrid_rag.py | tee /tmp/integration.txt
+          if grep -qE "[0-9]+ skipped" /tmp/integration.txt; then
+            echo "::error::Milvus 融合链路集成测试没有执行 —— 检查 etcd/minio/milvus 服务健康与 VECTOR_DB_* 配置"
+            exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest

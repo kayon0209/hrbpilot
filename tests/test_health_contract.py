@@ -317,6 +317,51 @@ def _patch_healthy(monkeypatch):
     monkeypatch.setattr(settings_module.settings, "embedding_api_key", "test-key")
 
 
+def test_embedding_check_is_a_configuration_fact_not_a_reachability_probe(monkeypatch):
+    """把 ``embedding`` 项的真实语义钉死：**配了就算 ok，连不通也算 ok**。
+
+    2026-09-16 实测过这个坑：把 ``EMBEDDING_BASE_URL`` 指向一个不可达的地址后，
+    ``checks["embedding"]`` 仍然返回 ``ok``，而 dense 检索腿实际上已经死了 ——
+    检索于是静默退化成纯关键词，把《职工带薪年休假条例》换成了一份酒店技能考核表。
+
+    这条测试不是"验证功能正确"，而是**记录一个容易致命的语义**：
+    ``embedding: ok`` 只能读作"端点与密钥都填了"，绝不能读作"dense 检索可用"。
+    将来若有人把它换成真可达性探测，这条会失败 —— 那正是一次需要被看见的决定。
+    """
+    _patch_healthy(monkeypatch)
+    from app.config import settings as settings_module
+
+    # 配了一个**必然连不通**的端点。
+    monkeypatch.setattr(settings_module.settings, "embedding_base_url", "http://127.0.0.1:9/v1")
+
+    with _client() as client:
+        resp = client.get("/api/ready")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["checks"]["embedding"] == {"status": "ok", "tier": "optional"}, (
+        "若这里不再是 ok，说明 embedding 检查已升级为可达性探测 —— 请同步更新 "
+        "health.py 的模块 docstring 与本测试的说明，别让文档继续骗人"
+    )
+    assert body["status"] == "ok"
+
+
+def test_missing_embedding_configuration_is_reported_unavailable(monkeypatch):
+    """反面对照：**没配**才会报 ``unavailable``（这才是它能指路的那次）。"""
+    _patch_healthy(monkeypatch)
+    from app.config import settings as settings_module
+
+    monkeypatch.setattr(settings_module.settings, "embedding_base_url", "")
+
+    with _client() as client:
+        resp = client.get("/api/ready")
+
+    body = resp.json()
+    assert body["checks"]["embedding"] == {"status": "unavailable", "tier": "optional"}
+    assert "embedding" in body["optional_unavailable"]
+    assert body["status"] == "degraded"
+
+
 def test_ready_check_is_time_boxed(monkeypatch):
     """A hung dependency must not hang the probe (K8s default timeout is 1s).
 

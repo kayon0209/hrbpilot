@@ -311,3 +311,108 @@ def test_internal_session_tokens_are_still_refused_when_the_switch_is_off(
 
     assert refused.status_code == 401
     assert accepted.status_code != 401
+
+
+# --------------------------------------------------------------------------- #
+# 5. 拒绝原因必须可诊断（2026-09-16）
+# --------------------------------------------------------------------------- #
+# 本文件开头的意图已经写明了："拒绝的原因要落在正确的类别上 —— 否则运维只能看到一堆
+# 「验证失败」，分不清是配置错了、密钥轮换了、还是有人撤销了授权。"
+#
+# 但 ``MALFORMED`` 这一族当时没有落实这句话：签名不过 / 过期 / audience 不符 /
+# issuer 不在信任列表，四种原因共用一个值，日志里只有
+# ``mcp_token_rejected reason=malformed``。
+#
+# 实测代价：``MCP_AUTHORIZATION_SERVERS`` 留空时，所有 AS 令牌被静默退回平台校验，
+# 而平台校验用 HS256 + 平台密钥，永远验不过 ES256 的 AS 令牌 —— 结果就一句
+# ``malformed``。从这个原因逆推出"少配了一个环境变量"花了十几轮排查。
+#
+# 下面几条锁住两件事：**原因要落到日志里**，以及**不要噪声化**。
+
+
+def _log_blob(caplog, capsys) -> str:
+    """两路都收：structlog 的落点取决于 setup_logging() 有没有被调用过。"""
+    import logging
+
+    stdlib_events = [rec.getMessage() for rec in caplog.records if rec.levelno >= logging.WARNING]
+    return "\n".join(stdlib_events) + capsys.readouterr().out
+
+
+async def test_untrusted_as_issuer_is_logged_with_the_trust_list(
+    as_server: FakeAuthorizationServer, caplog, capsys
+) -> None:
+    """自称是 AS、却不在信任列表里 —— 必须留下可诊断的一行。"""
+    import logging
+
+    token = as_server.token(iss="https://evil.example.test")
+
+    with caplog.at_level(logging.WARNING):
+        rejection = await resolve_access_claims(token)
+
+    assert rejection is TokenRejection.MALFORMED
+    blob = _log_blob(caplog, capsys)
+    assert "as_token_issuer_not_trusted" in blob
+    assert "evil.example.test" in blob, "日志必须带上那个不被信任的 issuer，否则无法比对配置"
+
+
+async def test_the_empty_trust_list_hint_names_the_variable(
+    as_server: FakeAuthorizationServer, monkeypatch, caplog, capsys
+) -> None:
+    """信任列表为空是本机事故的确切形态 —— 提示语必须点名那个环境变量。
+
+    这一条是整组测试存在的主要理由：它把"看起来像令牌坏了"变回
+    "你少配了一个变量"。
+    """
+    import logging
+
+    token = as_server.token(iss="https://evil.example.test")
+    monkeypatch.setattr(settings, "mcp_authorization_servers", "")
+
+    with caplog.at_level(logging.WARNING):
+        await resolve_access_claims(token)
+
+    blob = _log_blob(caplog, capsys)
+    assert "as_token_issuer_not_trusted" in blob
+    assert "MCP_AUTHORIZATION_SERVERS is empty" in blob
+
+
+async def test_a_platform_token_does_not_log_the_routing_warning(caplog, capsys) -> None:
+    """反向约束：平台令牌本来就走平台路径，不许写日志。
+
+    平台自签令牌的 ``iss`` 是 ``hrbp-ai-workbench``（不是 URL）。如果无条件记日志，
+    每一笔平台令牌流量都会写一行 WARNING，真正的问题反而被刷没 ——
+    一个"到处都报警"的信号等于没有信号。
+    """
+    import logging
+
+    from app.access.routes.auth import _create_access_token
+
+    token = _create_access_token("u-1", "hrbp", "tenant-a", "u-1@example.test")
+
+    with caplog.at_level(logging.WARNING):
+        claims = await resolve_access_claims(token)
+
+    assert isinstance(claims, AccessClaims)
+    assert "as_token_issuer_not_trusted" not in _log_blob(caplog, capsys)
+
+
+async def test_decode_failure_logs_the_expected_audience(
+    as_server: FakeAuthorizationServer, caplog, capsys
+) -> None:
+    """签名不过 / 过期 / audience 不符三者必须能分辨。
+
+    audience 是这三者里最容易被误判成"令牌坏了"的一种：真正的原因是服务端
+    ``PUBLIC_BASE_URL`` 配错，而 ``mcp_resource_url`` 就是从它推出来的。
+    日志里带上期望值，排查就不必再去读一遍 settings。
+    """
+    import logging
+
+    token = as_server.token(aud="https://other.example.test/mcp")
+
+    with caplog.at_level(logging.WARNING):
+        rejection = await verify_as_access_token(token)
+
+    assert rejection is TokenRejection.MALFORMED
+    blob = _log_blob(caplog, capsys)
+    assert "as_token_decode_failed" in blob
+    assert settings.mcp_resource_url in blob, "日志要给出期望的 audience 供比对"

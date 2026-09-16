@@ -25,8 +25,33 @@ Dependencies are therefore split by **blast radius**:
   - ``milvus``: dense retrieval (hybrid falls back to sparse — see
     ``Retriever._hybrid``).
   - ``minio``: object storage for uploads/attachments.
-  - ``embedding``: dense vectors + rerank (sparse/FTS retrieval still works).
+  - ``embedding``: **配置存在性**，不是可达性 —— ``ok`` 表示"端点与密钥都填了"，
+    **不表示**"调得通"。详见下面 "Why ``embedding`` means configured, not reachable"。
   - ``llm``: **observed** provider health, not a probe — see below.
+
+Why ``embedding`` means configured, not reachable (added 2026-09-16)
+--------------------------------------------------------------------
+This check is deliberately a *configuration presence* test:
+
+    embedding_configured = bool(settings.embedding_base_url and settings.effective_embedding_api_key)
+
+There is no cheap "is the vendor up" call that does not spend tokens, so a
+configured-but-unreachable endpoint reports ``ok``. Measured on this machine
+(2026-09-16): with ``EMBEDDING_BASE_URL`` pointed at an unreachable host, the
+check still returned ``ok`` while the dense retrieval leg was in fact dead.
+
+Consequence worth internalising: **``embedding: ok`` must never be read as
+"dense retrieval works".** The dense leg needs *both* ``embedding`` (to embed
+the query) and ``milvus`` (to search) — and even then a vendor-side failure can
+degrade it at request time. That is exactly why the *response contract* carries
+the degradation signal (``retrieval_degraded``) instead of relying on a
+readiness probe: see ``docs/ops/2026-09-16-检索静默降级为稀疏单腿-定位与修复.md``.
+
+Renaming or annotating this field was considered and **rejected**: the payload
+is deliberately limited to ``status`` + ``tier`` per check (pinned by
+``tests/test_health_contract.py``), and check names are matched by consumers.
+The semantics are therefore documented here — in the endpoint docstring, which
+is what API consumers read.
 
 Why ``llm`` is reported but not probed (added 2026-09-12)
 --------------------------------------------------------
@@ -161,6 +186,11 @@ async def readiness_check():
     * ``503`` + ``status: not_ready`` — a critical dependency is down
 
     The payload is PUBLIC (no auth) and never discloses internal topology.
+
+    One caveat that has already misled a reader once: ``checks.embedding`` is a
+    **configuration presence** check, not a reachability probe — an unreachable
+    but configured endpoint reports ``ok``. Do not read ``embedding: ok`` as
+    "dense retrieval works"; see the module docstring.
     """
     checks = {
         "database": await _run_check("database", CRITICAL, _check_database),

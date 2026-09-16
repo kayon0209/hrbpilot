@@ -8,6 +8,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: 允许使用明文 http 的主机。仅限本机开发 —— 见 ``_normalize_public_base_url``。
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+#: ``oauth_issuer`` 的内置默认值（单端口部署：AS 挂在 app 自己身上）。
+#: 单独提出来是给一致性校验用的：**"issuer 还是默认值"等价于"没有人有意指向过一个
+#: 真实 AS"**。校验不该靠猜"用户有没有配"，而要有一个确定的参照物。
+#:
+#: 它必须与 ``app_port`` / ``public_base_url`` 的默认值**同源**（都是 8000）：
+#: 单端口部署下三者指的是同一个 origin，任何一项单独漂移都会让 iss/aud 比对失败，
+#: 而失败只发生在客户端、服务端日志里只留一句 ``malformed``。
+_DEFAULT_OAUTH_ISSUER_ORIGIN = "http://localhost:8000"
+
 
 def _normalize_origin(value: str, *, production: bool, name: str) -> str:
     """校验并规范化一个对外 origin，返回不带尾斜杠的形式。
@@ -207,7 +216,7 @@ class Settings(BaseSettings):
     #     而不是 ADR 里写的无后缀路径 —— 即原文那一条本身就与规范不符。
     # issuer 是 AS 的对外身份，与 resource 是 RS 的对外身份，两者是**不同的东西**，
     # 各自显式配置比用一个拼接触发的不一致假设更稳。
-    oauth_issuer: str = "http://localhost:8001"
+    oauth_issuer: str = _DEFAULT_OAUTH_ISSUER_ORIGIN
     # Optional container/service-mesh address used only to fetch this trusted
     # issuer's metadata and JWKS. Token `iss` and public discovery always keep
     # using oauth_issuer; this is transport routing, not another trusted issuer.
@@ -422,6 +431,49 @@ class Settings(BaseSettings):
         self.oauth_issuer = _normalize_origin(self.oauth_issuer, production=self.is_production, name="OAUTH_ISSUER")
         if self.is_production and not self.oauth_signing_key_pem.strip():
             raise ValueError("OAUTH_SIGNING_KEY_PEM must be configured in staging or production")
+        return self
+
+    @model_validator(mode="after")
+    def validate_mcp_auth_can_accept_something(self) -> "Settings":
+        """挡住"配置自相矛盾导致 /mcp 没有任何凭据能通过"的两种写法。
+
+        为什么值得在启动期拒绝，而不是等第一个客户端撞 401
+        ----------------------------------------------------
+        2026-09-16 实测：`.env` 里指了 AS（``OAUTH_ISSUER=http://localhost:8002``）
+        但 ``MCP_AUTHORIZATION_SERVERS`` 留空，结果是**所有**外部令牌被判
+        ``malformed`` —— 而日志里只有 ``mcp_token_rejected reason=malformed``。
+        ``malformed`` 把"签名不过 / 过期 / audience 不符 / issuer 不在信任列表"
+        揉成一个值，运维要从这里逆推出"其实少配了一个环境变量"，成本极高。
+        这两条矛盾在启动期是**确定的**，没有理由留到请求期才暴露。
+
+        刻意检查"矛盾"而不是"必须填"：单端口部署、仅平台令牌部署都是合法的，
+        无脑要求非空会把它们一起打死。触发条件都带 ``mcp_external_enabled``，
+        给"就是要关掉外部 MCP"的部署留出口。
+        """
+        if not self.mcp_external_enabled:
+            return self
+
+        trusted = self.authorization_servers
+        if trusted:
+            return self
+
+        # 矛盾一：issuer 被有意指向了一个真实 AS，但信任列表是空的。
+        # "我在某个地方跑着 AS" + "我不信任任何 AS" 不可能同时成立。
+        if self.oauth_issuer != _DEFAULT_OAUTH_ISSUER_ORIGIN:
+            raise ValueError(
+                f"OAUTH_ISSUER is set to {self.oauth_issuer!r} but MCP_AUTHORIZATION_SERVERS is empty: "
+                "the resource server would trust no issuer, so every external token would be rejected as "
+                "'malformed'. Set MCP_AUTHORIZATION_SERVERS to the same issuer "
+                f"(for example MCP_AUTHORIZATION_SERVERS={self.oauth_issuer}), or set MCP_EXTERNAL_ENABLED=false."
+            )
+
+        # 矛盾二：外部令牌无人可信、平台令牌又被策略关闭 → /mcp 无任何可用凭据。
+        if not self.mcp_accepts_platform_tokens:
+            raise ValueError(
+                "MCP_AUTHORIZATION_SERVERS is empty and MCP_ACCEPTS_PLATFORM_TOKENS is false: no credential "
+                "type could ever be accepted, so /mcp is unreachable. Configure MCP_AUTHORIZATION_SERVERS, "
+                "or set MCP_ACCEPTS_PLATFORM_TOKENS=true, or set MCP_EXTERNAL_ENABLED=false."
+            )
         return self
 
     @model_validator(mode="after")
