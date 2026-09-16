@@ -162,7 +162,7 @@ python -m app.outbox.worker
 
 | 使用场景 | 是否需要公网 HTTPS | 谁运行 HRBPilot | MCP 地址示例 |
 | --- | --- | --- | --- |
-| **个人本机自托管（推荐先从这里开始）** | **不需要**。本机 `localhost` 可使用 HTTP。 | 用户自己在电脑上以 Docker Compose 运行完整项目。 | `http://localhost:8001/mcp` |
+| **个人本机自托管（推荐先从这里开始）** | **不需要**。本机 `localhost` 可使用 HTTP。 | 用户自己在电脑上以 Docker Compose 运行完整项目。 | `http://localhost:3001/mcp` |
 | 团队/公司集中托管 | **需要**。服务暴露给其他人的电脑时必须使用受信任的 HTTPS 域名。 | 管理员部署一套共享服务；用户无需部署项目。 | `https://hr.example.com/mcp` |
 | 另一台设备访问个人实例 | 建议需要。局域网或公网暴露都应使用 HTTPS、访问控制和备份。 | 实例拥有者。 | `https://hr.example.com/mcp` |
 

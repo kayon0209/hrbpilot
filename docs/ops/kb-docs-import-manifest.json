@@ -1,0 +1,605 @@
+{
+  "generated_at": "2026-09-16T01:55:17.306690+00:00",
+  "root": "/Users/mac/Documents/Codex/AI项目迁移_2026-09-10/03_HRBPilot/HRBPilot/kb_docs",
+  "tenant": "eval-runner",
+  "kb_id": "policy_kb",
+  "kb_name": "HR 制度库",
+  "scenario_id": "policy_qa",
+  "chunk_strategy": "section",
+  "counts": {
+    "importable": 11,
+    "indexed": 1,
+    "skipped_duplicate": 10,
+    "rejected": 113,
+    "failed": 0
+  },
+  "indexed": [
+    {
+      "path": "11_hrtools_员工手册模板v3(由doc转换).txt",
+      "document_id": "4c62c3c2-a47b-4416-88ca-0e4e2401cbf3",
+      "file_type": "txt",
+      "bytes": 21924,
+      "chunks": 85
+    }
+  ],
+  "skipped_duplicate": [
+    "01_用友_HR工具书_人力资源制度流程模板.pdf",
+    "02_圆台_岗位调整管理全流程指南与风险防控.pdf",
+    "03_hrtools_员工手册模板v2.docx",
+    "03_三茅_试用期员工综合考核管理制度.pdf",
+    "04_hrtools_人力资源制度大全v1.docx",
+    "05_hrtools_人力资源制度大全v2.docx",
+    "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/11_酒店工程部员工转正、晋级技能考核表.docx",
+    "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/业绩与能力管理-普华永道.pdf",
+    "09_国务院_职工带薪年休假条例(国务院令第514号).txt",
+    "10_人社部_企业职工带薪年休假实施办法(人社部令第1号).txt"
+  ],
+  "rejected": [
+    {
+      "path": "02_hrtools_员工手册模板v1.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "06_hrtools_员工手册模板v3.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/10_经理绩效考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/12_保洁员考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/13_厨师绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/14_行政助理绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/15_护理人员绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/16_区经理绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/17_定期考绩汇总表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/18_公司员工晋升管理方法.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/19_管理才能考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/1_销售部kpi绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/20_管理员工考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/21_绩效考核面谈表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/22_经理人员能力考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/23_经理人员综合素质考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/24_面谈构成表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/25_年度考绩表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/26_普通员工服务成绩考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/27_普通员工考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/28_试用员工考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/29_业务人员考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/2_研发人员绩效考核表.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/30_员工通用项目考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/31_员工专项考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/32_员工自我鉴定表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/33_职员阶段考绩表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/34_职员具体工作能力考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/35_职员品行分析表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/36_职员品行考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/37_职员品行评定表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/38_重要任务考评表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/39_主管人员服务成绩考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/3_技术人员能力考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/40_专业技术人员考核表(萧山评工程师).doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/41_专业人员服务成绩考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/42_转正、晋升员工考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/43_综合能力考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/44_部门工作综合测量表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/45_部属行为意识分析表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/46_管理人员升迁计划表.rtf",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/47_会计部门业务能力分析表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/48_间接员工考绩表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/49_考核表范例.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/4_行政人员绩效考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/50_面谈记录表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/51_人事考评表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/52_生产部门业务能力分析表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/53_提高能力的对策表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/54_提高能力方法表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/55_相互评价表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/56_新员工试用申请及核定表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/57_选拔干部候选人评分表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/58_业务能力规定表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/59_业务员工作日报.rtf",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/5_软件工程师考评表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/60_员工出勤记录表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/61_职员考核表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/62_职员签到簿.rtf",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/63_自我报告书.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/64_自我鉴定表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/65_总务部门业务能力分析表.RTF",
+      "ext": "rtf",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/6_事业部经理绩效考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/7_营销人员能力考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/8_主管人员考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "07_hrtools_HR制度模板包1/HR必备人资管理工具—考核激励(65个文档)/9_公司部门中层领导年度工作考核表.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/HR部门平衡计分卡.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/人力资源绩效考核指标-KPI（结合bsc）.DOC",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/平衡计分卡模式KPI指标库.xls",
+      "ext": "xls",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/平衡记分卡的应用（PPT 136pages).PPT",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/年度绩效目标回顾（平衡记分卡）.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/某电力平衡计分卡指标.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/酒店平衡计分卡案例.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/平衡计分卡指标库与案例/销售公司绩效考核指标库.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/BSC、KPI和绩效管理— 化战略为行动.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/HAY GROUP－绩效管理体系方法论.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/KPI绩效管理体系及薪酬分配.PPT",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/KPI绩效管理体系及薪酬分配操作手册.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/三木集团--绩效考核实务培训.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/北大方正的绩效考核激励体系PPT.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/商业银行绩效管理与绩效改进.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/建立完善的绩效管理体系－－平衡记分卡.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/某咨询公司做的薪酬方案与绩效考核体系.PPT",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/电力行业绩效管理培训讲义.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/绩效管理HAN CONSULTING.PPT",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/绩效管理体系,薪资与职工股的设计.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/绩效管理体系再设计.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理PPT/绩效考核与绩效管理.ppt",
+      "ext": "ppt",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/IT－华建绩效管理制度.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/LAS的绩效考评制度.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/中信华南（集团）东莞公司绩效考核方案完整版.dot",
+      "ext": "dot",
+      "reason": "表单/课件类，不是制度正文：转换后仍不应进制度库"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/宁波贝发集团有限公司员工绩效考核手册.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/山东鲁能积成电子股份有限公司绩效考核体系.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/当代集团经营绩效检讨会议制度.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/某房地产企业绩效考核制度.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/绩效考核工作规定（联想电脑）.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/通讯－中国网通绩效考核管理制度.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理体系与制度范例/集团房地产项目部绩效考核体系.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/360度回馈绩效评估制度的应用及发展.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/360度培训绩效评估.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/CRM绩效评估实践.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/IBM绩效管理五大原则.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/Motorola的绩效管理.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/不容忽视的IT绩效评估.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/从岗位胜任到绩效卓越.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/关于“绩效回顾”的思考.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/关键绩效与岗位绩效.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/抓住关键员工的绩效.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/绩效反馈面谈的SMART原则.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/绩效沟通的“三重境界”.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/绩效管理的成功，取决于过程的控制.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/绩效管理：警惕“表格依赖症”.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    },
+    {
+      "path": "08_hrtools_HR制度模板包2/48招构建全面绩效考核方案（ppt+制度+案例）/绩效管理的实践/部门绩效VS个人绩效.doc",
+      "ext": "doc",
+      "reason": "格式不受支持（pipeline 仅接受 docx/pdf/txt）"
+    }
+  ],
+  "failed": []
+}

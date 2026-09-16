@@ -1,0 +1,55 @@
+{
+  "note": [
+    "知识库来源级别映射（人工声明，不做推断）。",
+    "为什么不能用文件名规则自动判：'看起来像模板'正是最不可靠的判据，而且猜错",
+    "的代价是把第三方条款当成本单位制度答出去。每一条都必须有人负责。",
+    "取值见 app/data/models/knowledge_base.py 的 SourceAuthority。",
+    "执行：.venv/bin/python scripts/classify_kb_authority.py --tenant <租户> --kb-id <库>"
+  ],
+  "documents": {
+    "09_国务院_职工带薪年休假条例(国务院令第514号).txt": {
+      "authority": "national_law",
+      "why": "国务院令第514号，公开行政法规。是法定最低标准，对任何单位都适用——但不等于本单位的制度。"
+    },
+    "10_人社部_企业职工带薪年休假实施办法(人社部令第1号).txt": {
+      "authority": "national_law",
+      "why": "人社部令第1号，部门规章。含折算公式与 300% 补偿口径。"
+    },
+    "05_hrtools_人力资源制度大全v2.docx": {
+      "authority": "vendor_template",
+      "why": "第三方（hrtools）销售的制度模板合集，写法参考用，非本单位发布。"
+    },
+    "04_hrtools_人力资源制度大全v1.docx": {
+      "authority": "vendor_template",
+      "why": "同上，v1 版本。"
+    },
+    "01_用友_HR工具书_人力资源制度流程模板.pdf": {
+      "authority": "vendor_template",
+      "why": "用友公开的 HR 工具书，模板与流程示例，非本单位制度。"
+    },
+    "11_hrtools_员工手册模板v3(由doc转换).txt": {
+      "authority": "vendor_template",
+      "why": "hrtools 员工手册模板。其'带薪年假'条款的数值是 × 占位符（未填写），若是本单位制度不会留占位符。"
+    },
+    "03_hrtools_员工手册模板v2.docx": {
+      "authority": "vendor_template",
+      "why": "同上，v2 版本。"
+    },
+    "03_三茅_试用期员工综合考核管理制度.pdf": {
+      "authority": "vendor_template",
+      "why": "三茅网公开的考核制度样本。"
+    },
+    "业绩与能力管理-普华永道.pdf": {
+      "authority": "reference",
+      "why": "咨询机构的方法论材料，与制度无关，仅背景参考。"
+    },
+    "02_圆台_岗位调整管理全流程指南与风险防控.pdf": {
+      "authority": "reference",
+      "why": "第三方操作指南，非本单位制度正文。"
+    },
+    "11_酒店工程部员工转正、晋级技能考核表.docx": {
+      "authority": "reference",
+      "why": "一份考核表单，与政策文本无关。曾被检索降级误排为'公司年假规定'的第一名——保留它正是为了留下这个反例。"
+    }
+  }
+}
