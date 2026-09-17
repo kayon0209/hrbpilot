@@ -1,12 +1,12 @@
 {
-  "frozen_at": "2026-09-13T08:55:05.426558+00:00",
-  "commit": "cabcc5db900f685f7e092231dd7a25bd4f28d4c9",
+  "frozen_at": "2026-09-17T03:54:15.866549+00:00",
+  "commit": "0cdc2c1134d1075c7e39aaac1b493f853cfa86ba",
   "dirty": false,
   "python": "3.13.15",
   "pytest": {
     "command": "python -m pytest tests/ -q",
     "exit_code": 0,
-    "passed": 530,
+    "passed": 1008,
     "skipped": 50,
     "failed": 0,
     "errors": 0
@@ -37,8 +37,8 @@
     "vitest": {
       "command": "corepack pnpm --dir web test:run",
       "exit_code": 0,
-      "test_files": 13,
-      "tests_passed": 37
+      "test_files": 16,
+      "tests_passed": 73
     }
   },
   "locks": {
@@ -51,9 +51,9 @@
     "postgres_reachable": true,
     "redis_reachable": true,
     "minio_reachable": true,
-    "embedding_mode": "deterministic",
-    "config_fingerprint": "a32b3e0e3fbc2988",
+    "embedding_mode": "cloud",
+    "config_fingerprint": "1decbdf719e4dd46",
     "note": "deps reachable at freeze time; a skipped integration test means a missing container, not a regression"
   },
-  "content_hash": "75ae5722ff8da1a0bdca9451170ba6aa15b595b571db293c1b29ee51b5259c7c"
+  "content_hash": "36925cffb4c2909e6f9e786bd5f3cb0c3378ff2a508c076e40dd803f2916493e"
 }

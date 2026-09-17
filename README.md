@@ -50,6 +50,7 @@
 - [覆盖的 HR 场景](#-覆盖的-hr-场景)
 - [HR Case Agent：受控执行与通知](#-hr-case-agent受控执行与通知)
 - [外部 AI Agent 接入（MCP + OAuth）](#-外部-ai-agent-接入mcp--oauth)
+- [3 分钟演示与对外介绍](./docs/release/2026-09-17-v1.0-demo-and-showcase.md)
 - [系统架构](#-系统架构)
 - [评测结果](#-评测结果真实-llm-跑通)
 - [快速开始](#-快速开始)
@@ -120,6 +121,14 @@ python -m app.outbox.worker
 ```
 
 可用 `python -m app.outbox.worker --once --max-messages 100` 做受限的排障/运维轮询。接口示例、DLQ 重放与 `UNKNOWN` 对账流程见 [运维手册](./docs/upgrade/HR_CASE_AGENT_RUNBOOK.md)，设计取舍见 [ADR](./docs/upgrade/ADR-0001-single-bounded-agent.md)。
+
+想快速展示系统为什么“可控”，可直接运行不依赖 LLM 或网络的三旅程脚本：
+
+```bash
+.venv/bin/python scripts/demo_hr_case.py
+```
+
+它依次演示审批后建单、未批准写操作被拒绝、故障重试不重复发送。完整 3 分钟讲解顺序、可对外使用的介绍文案与发布边界见[演示与对外介绍](./docs/release/2026-09-17-v1.0-demo-and-showcase.md)。
 
 ---
 
