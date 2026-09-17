@@ -46,3 +46,7 @@ The latest full local baseline passed 1,008 backend tests, static checks, and th
 - 只引用已验证数字；基线变更后重新执行 `python scripts/freeze_production_baseline.py`，不要沿用旧数字。
 - 不宣称已上架 WorkBuddy、已获得企业客户或可替代 HR 判断；这些均不在当前已验证范围内。
 - 本机使用不需要公网 HTTPS；只有跨设备或团队部署才需要 HTTPS、访问控制、备份和密钥轮换。
+
+## 把反馈带回来
+
+对项目感兴趣的 HR 从业者或工程师可以从 [HR workflow feedback](https://github.com/kayon0209/hrbpilot/issues/new/choose) 表单提交匿名化场景。表单刻意要求说明人应当批准什么、需要什么证据与审计，而不是只收集一句“加一个功能”。
