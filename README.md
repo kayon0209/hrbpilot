@@ -128,7 +128,8 @@ python -m app.outbox.worker
 在 WorkBuddy、Codex、Claude Code 等**你自己日常使用的 AI Agent** 里，通过标准 MCP
 实时调用 HRBPilot。HRBPilot 侧负责认证、租户与权限判定、最小化返回、审批与审计。
 
-**接入方式**：远程 MCP（Streamable HTTP）+ OAuth 2.1 + PKCE。客户端首次调用未带凭据时
+**接入方式**：MCP Streamable HTTP + OAuth 2.1 + PKCE。个人本机使用任务优先入口
+`/mcp/tasks`；客户端首次调用未带凭据时
 会收到 `401` 与 RFC 9728 挑战，据此自动完成发现、授权与令牌交换 —— 用户只需在浏览器里
 登录并点一次同意。
 
@@ -150,6 +151,12 @@ python -m app.outbox.worker
 | `hrb:approval:read` | 查询有权查看的审批状态 |
 | `hrb:profile:read` | 读取当前身份与可用能力的摘要 |
 
+**任务优先工具**：`get_my_access_profile`、`answer_policy_question`、`get_case_context`、
+`prepare_hr_action`、`provide_task_input`、`submit_hr_action`、`get_task_status`、
+`list_my_tasks` 与 `cancel_task`。其中前四类读取受当前身份和案件 ACL 限制；提交动作会先
+冻结草稿并进入审批，审批通过后才由受控 Worker 执行。需要低层兼容时，仍可使用 `/mcp`，
+但日常 Agent 应优先连接 `/mcp/tasks`。
+
 **部署与运维**：
 
 - 管理员部署与故障排查：`docs/ops/2026-09-14-external-mcp-deployment-and-runbook.md`
@@ -162,8 +169,8 @@ python -m app.outbox.worker
 
 | 使用场景 | 是否需要公网 HTTPS | 谁运行 HRBPilot | MCP 地址示例 |
 | --- | --- | --- | --- |
-| **个人本机自托管（推荐先从这里开始）** | **不需要**。本机 `localhost` 可使用 HTTP。 | 用户自己在电脑上以 Docker Compose 运行完整项目。 | `http://localhost:3001/mcp` |
-| 团队/公司集中托管 | **需要**。服务暴露给其他人的电脑时必须使用受信任的 HTTPS 域名。 | 管理员部署一套共享服务；用户无需部署项目。 | `https://hr.example.com/mcp` |
+| **个人本机自托管（推荐先从这里开始）** | **不需要**。本机 `localhost` 可使用 HTTP。 | 用户自己在电脑上以 Docker Compose 运行完整项目。 | `http://127.0.0.1:8001/mcp/tasks` |
+| 团队/公司集中托管 | **需要**。服务暴露给其他人的电脑时必须使用受信任的 HTTPS 域名。 | 管理员部署一套共享服务；用户无需部署项目。 | `https://hr.example.com/mcp/tasks` |
 | 另一台设备访问个人实例 | 建议需要。局域网或公网暴露都应使用 HTTPS、访问控制和备份。 | 实例拥有者。 | `https://hr.example.com/mcp` |
 
 开源不等于必须公网部署：用户可以完整地在自己电脑运行 HRBPilot，再由同一台电脑上的
@@ -177,16 +184,16 @@ Codex / WorkBuddy 通过 `localhost` 调用；HR 数据不会因这一步离开�
 ./scripts/connect-codex-local-mcp.sh
 ```
 
-首次运行会登记 `hrbpilot-local`，并打开 OAuth 授权页。Safari 和 Chrome 都可用；两者与
+首次运行默认登记 `hrbpilot-tasks`，并打开 OAuth 授权页。可用 `--tier 1` 或 `--tier 2`
+选择最小 scope 集；Safari 和 Chrome 都可用；两者与
 运行脚本的 Codex CLI 必须处于同一台 Mac，才能接收 PKCE 的 `127.0.0.1` 回调。
 
-WorkBuddy 连接器包已随本仓库提供，但**有三项需要人工替换或确认**（占位域名、图标、
-服务端开关），见该目录的 `README.md`。
+WorkBuddy 连接器包已随本仓库提供。它是面向未来公网部署的发布包：个人本机无需配置
+公网域名，也不能把其中的占位域名提交到市场；详情见该目录的 `README.md`。
 
-**当前状态**：协议验收 10 条全过、端到端 74/74（含 CIMD 主路径、多租户路由、密钥轮换、
-用户角色变更后的即时失效）；已完成 Codex / WorkBuddy 的发现与授权前置验证，完整的
-真实工具调用仍待在非隔离的本机客户端或公网环境完成。兼容矩阵如实标注每一格，见
-`docs/ops/2026-09-14-client-compatibility-matrix.md`。
+**当前状态**：本机 OAuth 登录、身份读取、制度问答和“创建案件 → 冻结草稿 → 审批 →
+受控执行 → 状态回写”闭环已完成验证。WorkBuddy 市场的实际导入仍以真实公网 HTTPS
+地址为前提，不影响个人本机的 MCP 使用。
 
 ---
 
@@ -473,11 +480,9 @@ E2E_EMAIL=your-account E2E_PASSWORD=your-password corepack pnpm --dir web exec p
 - `culture_content` 的关键词命中（0.104）低：创意生成类场景与关键词口径不匹配（引用覆盖率仍为 1.0），同样需要更合适的评测方式。
 - `policy_qa` 的引用覆盖率为 0.9（端到端 REAL-LLM 口径）；结构化引用门禁（source_recall 0.9333 / source_precision 1.0，OFFLINE-DETERMINISTIC 模式）已在 Phase 2 落地，端到端 REAL-LLM 复测已于 2026-08-28 完成。
 - HR Case Agent 的质量门禁目前仍是离线确定性评测，尚未宣称 REAL-LLM 端到端指标。`send_case_notification` 仍没有可验证的外部 Provider；该调用会进入 DLQ，不会伪造投递成功。
-- **外部 Agent 接入尚未完成逐客户端工具验收**：协议验收 10 条全过、端到端 74/74
-  （含 CIMD 主路径、多租户路由、密钥轮换与用户角色变更失效）。浏览器授权回调曾被
-  CSP 阻断，现已修复并有回归测试；WorkBuddy / Codex 的服务发现、DCR 与授权页面已验证，
-  仍需分别完成一次真实 `get_my_access_profile` 调用。兼容矩阵记录实际版本、证据与后续
-  验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
+- **外部 Agent 接入按客户端分别验收**：本机 Codex 已完成身份读取、制度问答和审批执行
+  闭环；WorkBuddy 市场导入未验收，因为其需要真实公网 HTTPS 地址。兼容矩阵记录历史
+  版本、证据与后续验证方法（`docs/ops/2026-09-14-client-compatibility-matrix.md`）。
 - **外部接入没有独立的指标端点**：告警依赖结构化日志采集，见运维手册 §7 的事件名清单。
 - **多租户**：外部 Agent 的授权登录已按客户端租户路由（`oauth_clients.tenant_id`；
   DCR 客户端首次成功登录时原子绑定到该用户租户，预注册客户端由配置声明）；平台网页端

@@ -69,6 +69,7 @@ err.txt
 # --- Local agent/tooling config (machine-specific paths; not shared) ---
 .ignore
 AGENTS.md
+!AGENTS.md
 docs/superpowers/
 
 # --- Incomplete golden eval runs (marked unclaimable; not evidence) ---
