@@ -4,6 +4,8 @@
 
 这套素材对应 [`v0.2.0`](https://github.com/kayon0209/hrbpilot/releases/tag/v0.2.0)。它面向对 HR AI、Agent 工程或可控自动化感兴趣的人；不把项目包装成已面向公众运营的 SaaS。国内传播使用中文，国外传播使用英文；中英双语 Release 说明见 [v0.2.0 release notes](./2026-09-17-v0.2.0-release-notes.md)。
 
+即刻、小红书、知乎与 LinkedIn 的可直接粘贴版本见 [平台发布稿](./2026-09-17-platform-posts.md)。
+
 ## 一句话定位
 
 **HRBPilot 是一个本地优先的 HR AI 工作台：回答给证据，行动要审批，执行可审计。**
