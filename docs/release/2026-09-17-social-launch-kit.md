@@ -2,7 +2,7 @@
 
 ![HRBPilot 发布主视觉：来源证据、保护、人工批准与可审计执行组成一条可信的 HR AI 工作流。](../../assets/hrbpilot-release-social-cover.png)
 
-这套素材对应 [`v0.2.0`](https://github.com/kayon0209/hrbpilot/releases/tag/v0.2.0)。它面向对 HR AI、Agent 工程或可控自动化感兴趣的人；不把项目包装成已面向公众运营的 SaaS。
+这套素材对应 [`v0.2.0`](https://github.com/kayon0209/hrbpilot/releases/tag/v0.2.0)。它面向对 HR AI、Agent 工程或可控自动化感兴趣的人；不把项目包装成已面向公众运营的 SaaS。国内传播使用中文，国外传播使用英文；中英双语 Release 说明见 [v0.2.0 release notes](./2026-09-17-v0.2.0-release-notes.md)。
 
 ## 一句话定位
 

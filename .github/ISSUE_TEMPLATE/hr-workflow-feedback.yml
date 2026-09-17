@@ -1,5 +1,5 @@
-name: HR workflow feedback
-description: Share a real HR workflow or governance requirement that HRBPilot should support.
+name: HR workflow feedback / HR 工作流反馈
+description: Share a real HR workflow or governance requirement / 提交真实、匿名化的 HR 工作流与治理需求。
 title: "[HR workflow] "
 labels:
   - enhancement
@@ -8,11 +8,13 @@ body:
     attributes:
       value: |
         Thank you for helping shape HRBPilot. Please describe a workflow, not personal or employee data.
-        Do not include names, contact details, policy documents with restricted content, tokens, or screenshots containing sensitive information.
+        感谢帮助改进 HRBPilot。请描述工作流，不要提交个人或员工数据。
+        Do not include names, contact details, restricted policy content, tokens, or sensitive screenshots.
+        请勿包含姓名、联系方式、受限制度原文、令牌或含敏感信息的截图。
   - type: dropdown
     id: perspective
     attributes:
-      label: Your perspective
+      label: Your perspective / 你的视角
       options:
         - HR practitioner
         - HR operations / shared service
@@ -25,29 +27,29 @@ body:
   - type: textarea
     id: workflow
     attributes:
-      label: Workflow to improve
-      description: Describe the trigger, the human decision, and the intended outcome using anonymized examples.
+      label: Workflow to improve / 希望改进的工作流
+      description: Describe the trigger, human decision, and intended outcome using anonymized examples. 请用匿名化示例说明触发条件、人工决策和预期结果。
       placeholder: "Example: An employee raises a payroll concern; HR needs evidence before deciding whether to create a case."
     validations:
       required: true
   - type: textarea
     id: current_pain
     attributes:
-      label: What is difficult today?
-      description: Include the handoffs, repeated work, risk, or failure mode that matters most.
+      label: What is difficult today? / 当前困难是什么？
+      description: Include the handoffs, repeated work, risk, or failure mode that matters most. 请说明最关键的交接、重复劳动、风险或失败模式。
     validations:
       required: true
   - type: textarea
     id: guardrail
     attributes:
-      label: Required guardrails
-      description: What must a human approve? What evidence, access control, audit trail, or recovery behavior is required?
+      label: Required guardrails / 必要的护栏
+      description: What must a human approve? What evidence, access control, audit trail, or recovery behavior is required? 哪些动作必须人工批准，需要何种证据、权限、审计或恢复机制？
     validations:
       required: true
   - type: dropdown
     id: deployment
     attributes:
-      label: Intended deployment
+      label: Intended deployment / 预期部署方式
       options:
         - Personal local machine
         - Team internal environment
@@ -57,7 +59,7 @@ body:
   - type: checkboxes
     id: privacy
     attributes:
-      label: Privacy confirmation
+      label: Privacy confirmation / 隐私确认
       options:
-        - label: I removed personal data, credentials, and restricted company information from this issue.
+        - label: I removed personal data, credentials, and restricted company information from this issue. / 我已移除个人数据、凭据和受限公司信息。
           required: true
