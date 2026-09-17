@@ -51,6 +51,7 @@
 - [HR Case Agent：受控执行与通知](#-hr-case-agent受控执行与通知)
 - [外部 AI Agent 接入（MCP + OAuth）](#-外部-ai-agent-接入mcp--oauth)
 - [3 分钟演示与对外介绍](./docs/release/2026-09-17-release-demo-and-showcase.md)
+- [0.2.0 发布文案包](./docs/release/2026-09-17-social-launch-kit.md)
 - [系统架构](#-系统架构)
 - [评测结果](#-评测结果真实-llm-跑通)
 - [快速开始](#-快速开始)
